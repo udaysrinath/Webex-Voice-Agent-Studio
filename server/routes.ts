@@ -230,7 +230,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   const syncRequestSchema = z.object({
-    days: z.number().min(1).max(365).default(30),
+    days: z.number().min(1).max(365).default(15),
   });
 
   const chatMessageSchema = z.object({
@@ -260,7 +260,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       console.log(`Syncing Webex messages from last ${days} days...`);
 
-      const rooms = await paginateGet('rooms', { max: '100' }, token, 10);
+      const rooms = await paginateGet('rooms', { max: '100' }, token, 5);
       console.log(`Found ${rooms.length} rooms`);
 
       const activeRooms = rooms.filter((room: any) => {
@@ -285,7 +285,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           'messages',
           { roomId: room.id, max: '100' },
           token,
-          10
+          5
         );
 
         for (const msg of messages) {
