@@ -1,7 +1,7 @@
 import { useState, useRef } from "react";
 import { Link, useLocation } from "wouter";
 import { motion } from "framer-motion";
-import { ArrowLeft, Check, Play, Mic, Cpu, Globe, User, Sparkles, Loader2, Square } from "lucide-react";
+import { ArrowLeft, Check, Play, Mic, Cpu, Globe, User, Sparkles, Loader2, Square, MessageSquare, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
@@ -10,8 +10,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
-import { useMutation } from "@tanstack/react-query";
-import { agentsApi, ttsApi, type TTSRequest } from "@/lib/api";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { agentsApi, ttsApi, webexApi, type TTSRequest } from "@/lib/api";
 import type { InsertAgent } from "@shared/schema";
 
 const LLMS = [
@@ -40,6 +40,7 @@ You are knowledgeable about the user's team and their ongoing projects.`;
 export default function Build() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   
   const [agentName, setAgentName] = useState("Agent Alpha-1");
   const [systemPrompt, setSystemPrompt] = useState(DEFAULT_SYSTEM_PROMPT);
@@ -51,6 +52,29 @@ export default function Build() {
   const [previewingVoice, setPreviewingVoice] = useState<string | null>(null);
   const [playingVoice, setPlayingVoice] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  const { data: webexStats } = useQuery({
+    queryKey: ["webex-stats"],
+    queryFn: () => webexApi.getStats(),
+  });
+
+  const syncWebexMutation = useMutation({
+    mutationFn: (days: number) => webexApi.sync(days),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ["webex-stats"] });
+      toast({
+        title: "Webex Sync Complete",
+        description: `Synced ${result.messagesSynced} messages from ${result.roomsSynced} rooms.`,
+      });
+    },
+    onError: (error) => {
+      toast({
+        title: "Sync Failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
 
   const createAgentMutation = useMutation({
     mutationFn: (data: InsertAgent) => agentsApi.create(data),
@@ -330,6 +354,75 @@ export default function Build() {
                  </div>
               </div>
 
+            </div>
+          </motion.section>
+
+          <motion.section 
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.4, delay: 0.2 }}
+          >
+            <div className="flex items-center gap-3 mb-6">
+              <div className="w-10 h-10 rounded-full bg-green-500/10 flex items-center justify-center text-green-400">
+                <MessageSquare className="w-5 h-5" />
+              </div>
+              <div>
+                <h2 className="text-2xl font-display font-semibold">Knowledge Base</h2>
+                <p className="text-muted-foreground text-sm">Connect your Webex messages to give your agent context.</p>
+              </div>
+            </div>
+
+            <div className="bg-card/30 p-6 rounded-2xl border border-white/5">
+              {!webexStats?.hasToken ? (
+                <div className="text-center py-6">
+                  <MessageSquare className="w-12 h-12 mx-auto mb-4 text-muted-foreground/50" />
+                  <p className="text-muted-foreground mb-2">Webex integration not configured</p>
+                  <p className="text-sm text-muted-foreground/70">
+                    Add your Webex access token to sync messages as knowledge base.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="font-medium">Webex Messages</p>
+                      <p className="text-sm text-muted-foreground">
+                        {webexStats.messageCount > 0 
+                          ? `${webexStats.messageCount} messages from ${webexStats.roomCount} rooms`
+                          : "No messages synced yet"}
+                      </p>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => syncWebexMutation.mutate(30)}
+                      disabled={syncWebexMutation.isPending}
+                      data-testid="button-sync-webex"
+                    >
+                      {syncWebexMutation.isPending ? (
+                        <>
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          Syncing...
+                        </>
+                      ) : (
+                        <>
+                          <RefreshCw className="w-4 h-4 mr-2" />
+                          Sync Messages
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                  
+                  {webexStats.messageCount > 0 && (
+                    <div className="pt-3 border-t border-white/5">
+                      <p className="text-xs text-green-400 flex items-center gap-2">
+                        <Check className="w-3 h-3" />
+                        Knowledge base ready - your agent can access these messages
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </motion.section>
           

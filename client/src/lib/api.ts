@@ -1,4 +1,4 @@
-import type { Agent, InsertAgent, Evaluation, InsertEvaluation } from "@shared/schema";
+import type { Agent, InsertAgent, Evaluation, InsertEvaluation, WebexRoom, WebexMessage } from "@shared/schema";
 
 const API_BASE = "/api";
 
@@ -65,6 +65,83 @@ export const ttsApi = {
     if (!res.ok) {
       const error = await res.json();
       throw new Error(error.error || "Failed to generate speech");
+    }
+    return res.json();
+  },
+};
+
+export interface WebexStats {
+  roomCount: number;
+  messageCount: number;
+  hasToken: boolean;
+}
+
+export interface WebexSyncResult {
+  success: boolean;
+  roomsSynced: number;
+  messagesSynced: number;
+}
+
+export interface ChatMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+export interface ChatRequest {
+  message: string;
+  systemPrompt?: string;
+  agentId?: number;
+  history?: ChatMessage[];
+}
+
+export interface ChatResponse {
+  response: string;
+}
+
+export const chatApi = {
+  send: async (data: ChatRequest): Promise<ChatResponse> => {
+    const res = await fetch(`${API_BASE}/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      const error = await res.json();
+      throw new Error(error.error || "Failed to send message");
+    }
+    return res.json();
+  },
+};
+
+export const webexApi = {
+  getStats: async (): Promise<WebexStats> => {
+    const res = await fetch(`${API_BASE}/webex/stats`);
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  },
+
+  getRooms: async (): Promise<WebexRoom[]> => {
+    const res = await fetch(`${API_BASE}/webex/rooms`);
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  },
+
+  getMessages: async (limit?: number): Promise<WebexMessage[]> => {
+    const url = limit ? `${API_BASE}/webex/messages?limit=${limit}` : `${API_BASE}/webex/messages`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  },
+
+  sync: async (days: number = 30): Promise<WebexSyncResult> => {
+    const res = await fetch(`${API_BASE}/webex/sync`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ days }),
+    });
+    if (!res.ok) {
+      const error = await res.json();
+      throw new Error(error.error || "Failed to sync Webex messages");
     }
     return res.json();
   },

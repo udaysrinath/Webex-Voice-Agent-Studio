@@ -1,7 +1,7 @@
 import { drizzle } from "drizzle-orm/neon-serverless";
 import { Pool, neonConfig } from "@neondatabase/serverless";
 import ws from "ws";
-import { eq } from "drizzle-orm";
+import { eq, desc } from "drizzle-orm";
 import {
   type User,
   type InsertUser,
@@ -9,9 +9,15 @@ import {
   type InsertAgent,
   type Evaluation,
   type InsertEvaluation,
+  type WebexRoom,
+  type InsertWebexRoom,
+  type WebexMessage,
+  type InsertWebexMessage,
   users,
   agents,
   evaluations,
+  webexRooms,
+  webexMessages,
 } from "@shared/schema";
 
 neonConfig.webSocketConstructor = ws;
@@ -30,6 +36,14 @@ export interface IStorage {
   
   createEvaluation(evaluation: InsertEvaluation): Promise<Evaluation>;
   getEvaluationsByAgent(agentId: number): Promise<Evaluation[]>;
+  
+  upsertWebexRoom(room: InsertWebexRoom): Promise<WebexRoom>;
+  getAllWebexRooms(): Promise<WebexRoom[]>;
+  
+  upsertWebexMessage(message: InsertWebexMessage): Promise<WebexMessage>;
+  getWebexMessagesByRoom(roomId: string): Promise<WebexMessage[]>;
+  getAllWebexMessages(limit?: number): Promise<WebexMessage[]>;
+  getWebexMessageCount(): Promise<number>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -69,6 +83,65 @@ export class DatabaseStorage implements IStorage {
 
   async getEvaluationsByAgent(agentId: number): Promise<Evaluation[]> {
     return await db.select().from(evaluations).where(eq(evaluations.agentId, agentId));
+  }
+
+  async upsertWebexRoom(room: InsertWebexRoom): Promise<WebexRoom> {
+    const [result] = await db
+      .insert(webexRooms)
+      .values(room)
+      .onConflictDoUpdate({
+        target: webexRooms.id,
+        set: {
+          title: room.title,
+          type: room.type,
+          lastActivity: room.lastActivity,
+          syncedAt: new Date(),
+        },
+      })
+      .returning();
+    return result;
+  }
+
+  async getAllWebexRooms(): Promise<WebexRoom[]> {
+    return await db.select().from(webexRooms).orderBy(desc(webexRooms.lastActivity));
+  }
+
+  async upsertWebexMessage(message: InsertWebexMessage): Promise<WebexMessage> {
+    const [result] = await db
+      .insert(webexMessages)
+      .values(message)
+      .onConflictDoUpdate({
+        target: webexMessages.id,
+        set: {
+          text: message.text,
+          personEmail: message.personEmail,
+          personName: message.personName,
+          syncedAt: new Date(),
+        },
+      })
+      .returning();
+    return result;
+  }
+
+  async getWebexMessagesByRoom(roomId: string): Promise<WebexMessage[]> {
+    return await db
+      .select()
+      .from(webexMessages)
+      .where(eq(webexMessages.roomId, roomId))
+      .orderBy(desc(webexMessages.createdAt));
+  }
+
+  async getAllWebexMessages(limit: number = 1000): Promise<WebexMessage[]> {
+    return await db
+      .select()
+      .from(webexMessages)
+      .orderBy(desc(webexMessages.createdAt))
+      .limit(limit);
+  }
+
+  async getWebexMessageCount(): Promise<number> {
+    const result = await db.select().from(webexMessages);
+    return result.length;
   }
 }
 

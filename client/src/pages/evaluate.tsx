@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { Link, useLocation, useSearch } from "wouter";
 import { motion } from "framer-motion";
-import { ArrowLeft, Mic, Play, Pause, Send, Download, Settings2, Star, Loader2, Volume2 } from "lucide-react";
+import { ArrowLeft, Mic, Play, Pause, Send, Download, Settings2, Star, Loader2, Volume2, MessageCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { Separator } from "@/components/ui/separator";
@@ -11,8 +11,9 @@ import { Label } from "@/components/ui/label";
 import { Card } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { agentsApi, evaluationsApi, ttsApi, type TTSRequest } from "@/lib/api";
+import { agentsApi, evaluationsApi, ttsApi, chatApi, type TTSRequest } from "@/lib/api";
 import type { InsertEvaluation } from "@shared/schema";
+import type { ChatMessage } from "@/lib/api";
 
 export default function Evaluate() {
   const search = useSearch();
@@ -36,6 +37,9 @@ export default function Evaluate() {
     intonation: 60,
     speed: 50
   });
+
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [chatInput, setChatInput] = useState("");
 
   const { data: agent, isLoading: agentLoading } = useQuery({
     queryKey: ["agent", agentId],
@@ -90,6 +94,37 @@ export default function Evaluate() {
       });
     },
   });
+
+  const chatMutation = useMutation({
+    mutationFn: ({ message, history }: { message: string; history: ChatMessage[] }) => chatApi.send({
+      message,
+      systemPrompt: agent?.systemPrompt,
+      agentId: agent?.id,
+      history,
+    }),
+    onSuccess: (response) => {
+      setChatMessages(prev => [...prev, { role: "assistant", content: response.response }]);
+      setInputText(response.response);
+      setAudioUrl(null);
+    },
+    onError: (error) => {
+      toast({
+        title: "Chat Error",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleSendChat = () => {
+    if (!chatInput.trim() || chatMutation.isPending) return;
+    
+    const newMessage: ChatMessage = { role: "user", content: chatInput };
+    const updatedHistory = [...chatMessages, newMessage];
+    setChatMessages(updatedHistory);
+    chatMutation.mutate({ message: chatInput, history: chatMessages });
+    setChatInput("");
+  };
 
   const handleGenerateAudio = () => {
     if (!agent || !inputText.trim()) return;
@@ -237,104 +272,127 @@ export default function Evaluate() {
       <main className="flex-1 grid lg:grid-cols-12 gap-0 overflow-hidden">
         
         <div className="lg:col-span-7 flex flex-col border-r border-white/10 bg-card/20 p-6 overflow-y-auto">
-           <div className="flex-1 space-y-6">
-              <div className="flex gap-4 max-w-2xl">
-                 <Avatar className="h-10 w-10 border border-primary/50">
-                    <AvatarImage src="https://github.com/shadcn.png" />
-                    <AvatarFallback className="bg-primary text-black font-bold">AI</AvatarFallback>
-                 </Avatar>
-                 <div className="space-y-2 flex-1">
-                    <div className="text-sm font-medium text-muted-foreground">{agent.name}</div>
-                    <div className="p-4 rounded-2xl rounded-tl-none bg-white/5 border border-white/10 text-lg leading-relaxed">
-                       {inputText}
-                    </div>
-                    <div className="flex items-center gap-3 pt-1 flex-wrap">
+           <div className="flex-1 space-y-4 overflow-y-auto">
+              {chatMessages.length === 0 ? (
+                <div className="flex gap-4 max-w-2xl">
+                   <Avatar className="h-10 w-10 border border-primary/50">
+                      <AvatarFallback className="bg-primary text-black font-bold">AI</AvatarFallback>
+                   </Avatar>
+                   <div className="space-y-2 flex-1">
+                      <div className="text-sm font-medium text-muted-foreground">{agent.name}</div>
+                      <div className="p-4 rounded-2xl rounded-tl-none bg-white/5 border border-white/10 text-base leading-relaxed">
+                         Hi! I'm {agent.name}. Ask me anything and I'll use your Webex messages as context to provide relevant responses.
+                      </div>
+                   </div>
+                </div>
+              ) : (
+                chatMessages.map((msg, i) => (
+                  <div key={i} className={`flex gap-4 max-w-2xl ${msg.role === "user" ? "ml-auto flex-row-reverse" : ""}`}>
+                     <Avatar className="h-10 w-10 border border-primary/50">
+                        <AvatarFallback className={msg.role === "user" ? "bg-purple-500 text-white font-bold" : "bg-primary text-black font-bold"}>
+                          {msg.role === "user" ? "U" : "AI"}
+                        </AvatarFallback>
+                     </Avatar>
+                     <div className={`space-y-2 flex-1 ${msg.role === "user" ? "items-end" : ""}`}>
+                        <div className="text-sm font-medium text-muted-foreground">
+                          {msg.role === "user" ? "You" : agent.name}
+                        </div>
+                        <div className={`p-4 rounded-2xl text-base leading-relaxed ${
+                          msg.role === "user" 
+                            ? "rounded-tr-none bg-purple-500/10 border border-purple-500/20" 
+                            : "rounded-tl-none bg-white/5 border border-white/10"
+                        }`}>
+                           {msg.content}
+                        </div>
+                     </div>
+                  </div>
+                ))
+              )}
+              
+              {chatMutation.isPending && (
+                <div className="flex gap-4 max-w-2xl">
+                   <Avatar className="h-10 w-10 border border-primary/50">
+                      <AvatarFallback className="bg-primary text-black font-bold">AI</AvatarFallback>
+                   </Avatar>
+                   <div className="space-y-2 flex-1">
+                      <div className="text-sm font-medium text-muted-foreground">{agent.name}</div>
+                      <div className="p-4 rounded-2xl rounded-tl-none bg-white/5 border border-white/10 flex items-center gap-2">
+                         <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                         <span className="text-muted-foreground">Thinking...</span>
+                      </div>
+                   </div>
+                </div>
+              )}
+           </div>
+
+           <div className="mt-4 pt-4 border-t border-white/10 space-y-4">
+              <div className="relative">
+                 <input 
+                   className="w-full bg-background border border-white/10 rounded-xl p-4 pr-12 focus:ring-1 focus:ring-primary focus:border-primary transition-all text-base"
+                   placeholder="Ask the agent something..."
+                   value={chatInput}
+                   onChange={(e) => setChatInput(e.target.value)}
+                   onKeyDown={(e) => e.key === "Enter" && handleSendChat()}
+                   data-testid="input-chat"
+                 />
+                 <Button 
+                   size="icon" 
+                   className="absolute top-1/2 -translate-y-1/2 right-3 h-8 w-8 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90"
+                   onClick={handleSendChat}
+                   disabled={chatMutation.isPending || !chatInput.trim()}
+                 >
+                   <MessageCircle className="w-4 h-4" />
+                 </Button>
+              </div>
+
+              {inputText && (
+                <div className="bg-white/5 rounded-xl p-4 border border-white/10">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm font-medium">Latest Response (for TTS)</span>
+                    <div className="flex items-center gap-2">
                       {audioUrl ? (
                         <>
                           <Button 
                             size="sm" 
                             variant="secondary" 
-                            className="rounded-full h-8 px-4 bg-primary/10 text-primary hover:bg-primary/20 border border-primary/20"
+                            className="rounded-full h-7 px-3 bg-primary/10 text-primary hover:bg-primary/20 border border-primary/20 text-xs"
                             onClick={handlePlayPause}
                             data-testid="button-play-audio"
                           >
-                            {isPlaying ? <Pause className="w-3 h-3 mr-2" /> : <Play className="w-3 h-3 mr-2" />}
+                            {isPlaying ? <Pause className="w-3 h-3 mr-1" /> : <Play className="w-3 h-3 mr-1" />}
                             {isPlaying ? "Pause" : "Play"}
                           </Button>
                           <span className="text-xs text-muted-foreground font-mono">
                             {formatTime(currentTime)} / {formatTime(audioDuration)}
                           </span>
-                          
-                          <div className="flex items-center gap-0.5 h-4">
-                             {[40, 60, 30, 80, 50, 90, 40, 60, 30, 50, 70, 40].map((h, i) => (
-                               <div 
-                                key={i} 
-                                className={`w-0.5 rounded-full transition-all duration-300 ${isPlaying ? 'bg-primary animate-pulse' : 'bg-white/20'}`} 
-                                style={{ height: `${isPlaying ? Math.random() * 100 : h}%` }}
-                               />
-                             ))}
-                          </div>
                         </>
                       ) : (
                         <Button
                           size="sm"
                           variant="secondary"
-                          className="rounded-full h-8 px-4 bg-purple-500/10 text-purple-400 hover:bg-purple-500/20 border border-purple-500/20"
+                          className="rounded-full h-7 px-3 bg-purple-500/10 text-purple-400 hover:bg-purple-500/20 border border-purple-500/20 text-xs"
                           onClick={handleGenerateAudio}
                           disabled={generateTTSMutation.isPending || !inputText.trim()}
                           data-testid="button-generate-audio"
                         >
                           {generateTTSMutation.isPending ? (
                             <>
-                              <Loader2 className="w-3 h-3 mr-2 animate-spin" />
+                              <Loader2 className="w-3 h-3 mr-1 animate-spin" />
                               Generating...
                             </>
                           ) : (
                             <>
-                              <Volume2 className="w-3 h-3 mr-2" />
+                              <Volume2 className="w-3 h-3 mr-1" />
                               Generate Audio
                             </>
                           )}
                         </Button>
                       )}
                     </div>
-                 </div>
-              </div>
-           </div>
-
-           <div className="mt-8 pt-6 border-t border-white/10">
-              <div className="relative">
-                 <textarea 
-                   className="w-full bg-background border border-white/10 rounded-xl p-4 pr-12 min-h-[100px] resize-none focus:ring-1 focus:ring-primary focus:border-primary transition-all text-base"
-                   placeholder="Type something for the agent to say..."
-                   value={inputText}
-                   onChange={(e) => {
-                     setInputText(e.target.value);
-                     setAudioUrl(null);
-                   }}
-                   data-testid="input-evaluation-text"
-                 />
-                 <Button 
-                   size="icon" 
-                   className="absolute bottom-3 right-3 h-8 w-8 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90"
-                   onClick={handleGenerateAudio}
-                   disabled={generateTTSMutation.isPending || !inputText.trim()}
-                 >
-                   <Send className="w-4 h-4" />
-                 </Button>
-              </div>
-              <div className="flex justify-between items-center mt-3 px-1">
-                 <div className="flex gap-2">
-                    <Badge 
-                      variant="outline" 
-                      className="bg-transparent border-white/10 text-xs font-normal text-muted-foreground hover:bg-white/5 cursor-pointer"
-                      onClick={handleGenerateAudio}
-                    >
-                      {audioUrl ? "Regenerate Audio" : "Generate Audio"}
-                    </Badge>
-                 </div>
-                 <span className="text-xs text-muted-foreground">Click send or badge to generate</span>
-              </div>
+                  </div>
+                  <p className="text-sm text-muted-foreground line-clamp-2">{inputText}</p>
+                </div>
+              )}
            </div>
         </div>
 
