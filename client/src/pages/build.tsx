@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { useMutation } from "@tanstack/react-query";
 import { agentsApi, ttsApi, type TTSRequest } from "@/lib/api";
@@ -30,11 +31,18 @@ const VOICES = [
 
 const VOICE_PREVIEW_TEXT = "Hello! I'm your AI podcaster assistant. Let me help you create engaging content.";
 
+const DEFAULT_SYSTEM_PROMPT = `# Personality
+
+You are Webex Agent, a helpful and efficient personal agent.
+You are proactive, organized, and focused on providing relevant information to help the user prepare for their day.
+You are knowledgeable about the user's team and their ongoing projects.`;
+
 export default function Build() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   
   const [agentName, setAgentName] = useState("Agent Alpha-1");
+  const [systemPrompt, setSystemPrompt] = useState(DEFAULT_SYSTEM_PROMPT);
   const [selectedLLM, setSelectedLLM] = useState(LLMS[0].id);
   const [selectedVoice, setSelectedVoice] = useState(VOICES[0].id);
   const [language, setLanguage] = useState("en-US");
@@ -116,6 +124,7 @@ export default function Build() {
   const handleCreate = () => {
     createAgentMutation.mutate({
       name: agentName,
+      systemPrompt,
       llmModel: selectedLLM,
       voiceModel: selectedVoice,
       language,
@@ -155,15 +164,31 @@ export default function Build() {
               </div>
             </div>
             
-            <div className="space-y-3">
-              <Label className="text-base">Agent Name</Label>
-              <Input 
-                value={agentName}
-                onChange={(e) => setAgentName(e.target.value)}
-                placeholder="e.g., Tech Talk Host"
-                className="h-12 bg-background border-white/10"
-                data-testid="input-agent-name"
-              />
+            <div className="space-y-6">
+              <div className="space-y-3">
+                <Label className="text-base">Agent Name</Label>
+                <Input 
+                  value={agentName}
+                  onChange={(e) => setAgentName(e.target.value)}
+                  placeholder="e.g., Tech Talk Host"
+                  className="h-12 bg-background border-white/10"
+                  data-testid="input-agent-name"
+                />
+              </div>
+              
+              <div className="space-y-3">
+                <Label className="text-base">System Prompt</Label>
+                <Textarea 
+                  value={systemPrompt}
+                  onChange={(e) => setSystemPrompt(e.target.value)}
+                  placeholder="Define your agent's personality and behavior..."
+                  className="min-h-[150px] bg-background border-white/10 resize-y"
+                  data-testid="input-system-prompt"
+                />
+                <p className="text-xs text-muted-foreground">
+                  This prompt defines your agent's personality and how it should respond.
+                </p>
+              </div>
             </div>
           </motion.section>
 
