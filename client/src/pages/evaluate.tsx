@@ -11,54 +11,9 @@ import { Label } from "@/components/ui/label";
 import { Card } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { agentsApi, evaluationsApi, ttsApi, chatApi, transcribeApi, type TTSRequest } from "@/lib/api";
+import { agentsApi, evaluationsApi, ttsApi, chatApi, type TTSRequest } from "@/lib/api";
 import type { InsertEvaluation } from "@shared/schema";
 import type { ChatMessage } from "@/lib/api";
-
-function encodeWAV(samples: Float32Array, sampleRate: number): Blob {
-  const buffer = new ArrayBuffer(44 + samples.length * 2);
-  const view = new DataView(buffer);
-  
-  const writeString = (offset: number, str: string) => {
-    for (let i = 0; i < str.length; i++) {
-      view.setUint8(offset + i, str.charCodeAt(i));
-    }
-  };
-  
-  writeString(0, 'RIFF');
-  view.setUint32(4, 36 + samples.length * 2, true);
-  writeString(8, 'WAVE');
-  writeString(12, 'fmt ');
-  view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true);
-  view.setUint16(22, 1, true);
-  view.setUint32(24, sampleRate, true);
-  view.setUint32(28, sampleRate * 2, true);
-  view.setUint16(32, 2, true);
-  view.setUint16(34, 16, true);
-  writeString(36, 'data');
-  view.setUint32(40, samples.length * 2, true);
-  
-  let offset = 44;
-  for (let i = 0; i < samples.length; i++, offset += 2) {
-    const s = Math.max(-1, Math.min(1, samples[i]));
-    view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
-  }
-  
-  return new Blob([buffer], { type: 'audio/wav' });
-}
-
-async function convertToWav(audioBlob: Blob): Promise<Blob> {
-  const audioContext = new AudioContext({ sampleRate: 16000 });
-  const arrayBuffer = await audioBlob.arrayBuffer();
-  const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
-  
-  const samples = audioBuffer.getChannelData(0);
-  const wavBlob = encodeWAV(samples, audioBuffer.sampleRate);
-  
-  await audioContext.close();
-  return wavBlob;
-}
 
 export default function Evaluate() {
   const search = useSearch();
@@ -87,12 +42,11 @@ export default function Evaluate() {
   const [chatInput, setChatInput] = useState("");
   
   const [isRecording, setIsRecording] = useState(false);
-  const [isTranscribing, setIsTranscribing] = useState(false);
   const [autoPlayVoice, setAutoPlayVoice] = useState(true);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]);
+  const recognitionRef = useRef<any>(null);
   const responseAudioRef = useRef<HTMLAudioElement | null>(null);
   const chatMessagesRef = useRef<ChatMessage[]>([]);
+  const finalTranscriptRef = useRef<string>("");
 
   const { data: agent, isLoading: agentLoading } = useQuery({
     queryKey: ["agent", agentId],
@@ -212,118 +166,100 @@ export default function Evaluate() {
     setChatInput("");
   };
 
-  const startVoiceRecording = useCallback(async () => {
+  const startVoiceRecording = useCallback(() => {
     try {
       if (responseAudioRef.current) {
         responseAudioRef.current.pause();
         responseAudioRef.current = null;
       }
 
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          sampleRate: 44100,
-        }
-      });
+      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
       
-      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') 
-        ? 'audio/webm;codecs=opus' 
-        : MediaRecorder.isTypeSupported('audio/webm') 
-          ? 'audio/webm' 
-          : 'audio/mp4';
-      
-      const mediaRecorder = new MediaRecorder(stream, { 
-        mimeType,
-        audioBitsPerSecond: 128000
-      });
-      audioChunksRef.current = [];
+      if (!SpeechRecognition) {
+        toast({
+          title: "Speech Recognition Not Supported",
+          description: "Please use Chrome or Edge browser for voice input.",
+          variant: "destructive",
+        });
+        return;
+      }
 
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          audioChunksRef.current.push(event.data);
-        }
+      const recognition = new SpeechRecognition();
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.lang = 'en-US';
+      
+      finalTranscriptRef.current = "";
+
+      recognition.onstart = () => {
+        console.log('Speech recognition started');
+        setIsRecording(true);
+        setChatInput("");
       };
 
-      mediaRecorder.onstop = async () => {
-        stream.getTracks().forEach(track => track.stop());
+      recognition.onresult = (event: any) => {
+        let interimTranscript = '';
+        let finalTranscript = finalTranscriptRef.current;
         
-        if (audioChunksRef.current.length === 0) {
-          setIsRecording(false);
-          toast({
-            title: "No Audio Recorded",
-            description: "Please try again and speak into your microphone.",
-            variant: "destructive",
-          });
-          return;
-        }
-
-        const audioBlob = new Blob(audioChunksRef.current, { type: mimeType });
-        console.log('Audio blob size:', audioBlob.size, 'bytes, chunks:', audioChunksRef.current.length);
-        
-        if (audioBlob.size < 1000) {
-          toast({
-            title: "Recording Too Short",
-            description: "Please record for at least 1-2 seconds.",
-            variant: "destructive",
-          });
-          setIsRecording(false);
-          return;
-        }
-        
-        setIsTranscribing(true);
-        setChatInput("Converting audio...");
-
-        try {
-          const wavBlob = await convertToWav(audioBlob);
-          console.log('WAV blob size:', wavBlob.size, 'bytes');
-          setChatInput("Transcribing...");
-          
-          const result = await transcribeApi.transcribe(wavBlob);
-          setChatInput(result.text);
-          
-          if (result.text.trim()) {
-            const currentHistory = chatMessagesRef.current;
-            const newMessage: ChatMessage = { role: "user", content: result.text };
-            setChatMessages(prev => [...prev, newMessage]);
-            chatMutation.mutate({ message: result.text, history: currentHistory });
-            setChatInput("");
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const transcript = event.results[i][0].transcript;
+          if (event.results[i].isFinal) {
+            finalTranscript += transcript + ' ';
+            finalTranscriptRef.current = finalTranscript;
           } else {
-            toast({
-              title: "No Speech Detected",
-              description: "Please try speaking more clearly.",
-              variant: "destructive",
-            });
-            setChatInput("");
+            interimTranscript += transcript;
           }
-        } catch (error: any) {
+        }
+        
+        setChatInput(finalTranscript + interimTranscript);
+      };
+
+      recognition.onerror = (event: any) => {
+        console.error('Speech recognition error:', event.error);
+        if (event.error === 'not-allowed') {
           toast({
-            title: "Transcription Failed",
-            description: error.message || "Could not transcribe audio",
+            title: "Microphone Access Denied",
+            description: "Please allow microphone access to use voice input.",
             variant: "destructive",
           });
+        } else if (event.error !== 'aborted') {
+          toast({
+            title: "Speech Recognition Error",
+            description: `Error: ${event.error}`,
+            variant: "destructive",
+          });
+        }
+        setIsRecording(false);
+      };
+
+      recognition.onend = () => {
+        console.log('Speech recognition ended');
+        setIsRecording(false);
+        
+        const finalText = finalTranscriptRef.current.trim();
+        if (finalText) {
+          const currentHistory = chatMessagesRef.current;
+          const newMessage: ChatMessage = { role: "user", content: finalText };
+          setChatMessages(prev => [...prev, newMessage]);
+          chatMutation.mutate({ message: finalText, history: currentHistory });
           setChatInput("");
-        } finally {
-          setIsTranscribing(false);
         }
       };
 
-      mediaRecorderRef.current = mediaRecorder;
-      mediaRecorder.start(250);
-      setIsRecording(true);
+      recognitionRef.current = recognition;
+      recognition.start();
     } catch (error: any) {
       toast({
-        title: "Microphone Access Denied",
-        description: "Please allow microphone access to use voice input.",
+        title: "Speech Recognition Error",
+        description: error.message || "Could not start speech recognition.",
         variant: "destructive",
       });
     }
   }, [toast, chatMutation]);
 
   const stopVoiceRecording = useCallback(() => {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-      mediaRecorderRef.current.stop();
-      setIsRecording(false);
+    if (recognitionRef.current) {
+      recognitionRef.current.stop();
     }
   }, []);
 
@@ -546,18 +482,14 @@ export default function Evaluate() {
                    className={`h-12 w-12 rounded-full transition-all ${
                      isRecording 
                        ? "bg-red-500 hover:bg-red-600 animate-pulse" 
-                       : isTranscribing
-                         ? "bg-yellow-500 hover:bg-yellow-600"
-                         : "bg-purple-500 hover:bg-purple-600"
+                       : "bg-purple-500 hover:bg-purple-600"
                    }`}
                    onClick={handleVoiceToggle}
-                   disabled={chatMutation.isPending || isTranscribing}
+                   disabled={chatMutation.isPending}
                    data-testid="button-voice-input"
                  >
                    {isRecording ? (
                      <Square className="w-5 h-5 text-white" />
-                   ) : isTranscribing ? (
-                     <Loader2 className="w-5 h-5 text-white animate-spin" />
                    ) : (
                      <Mic className="w-5 h-5 text-white" />
                    )}
@@ -566,13 +498,13 @@ export default function Evaluate() {
                  <div className="relative flex-1">
                    <input 
                      className={`w-full bg-background border rounded-xl p-4 pr-12 focus:ring-1 focus:ring-primary focus:border-primary transition-all text-base ${
-                       isRecording ? "border-red-500/50 bg-red-500/5" : isTranscribing ? "border-yellow-500/50 bg-yellow-500/5" : "border-white/10"
+                       isRecording ? "border-red-500/50 bg-red-500/5" : "border-white/10"
                      }`}
-                     placeholder={isRecording ? "Recording..." : isTranscribing ? "Transcribing audio..." : "Ask the agent something..."}
+                     placeholder={isRecording ? "Speak now... (real-time transcription)" : "Ask the agent something..."}
                      value={chatInput}
                      onChange={(e) => setChatInput(e.target.value)}
-                     onKeyDown={(e) => e.key === "Enter" && !isRecording && !isTranscribing && handleSendChat()}
-                     disabled={isTranscribing}
+                     onKeyDown={(e) => e.key === "Enter" && !isRecording && handleSendChat()}
+                     disabled={isRecording}
                      data-testid="input-chat"
                    />
                    <Button 
@@ -589,14 +521,7 @@ export default function Evaluate() {
               {isRecording && (
                 <div className="flex items-center gap-2 text-sm text-red-400">
                   <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
-                  Recording... Click the stop button to transcribe and send
-                </div>
-              )}
-              
-              {isTranscribing && (
-                <div className="flex items-center gap-2 text-sm text-yellow-400">
-                  <Loader2 className="w-3 h-3 animate-spin" />
-                  Transcribing your audio with Whisper...
+                  Listening... Speak now. Click stop when done to send your message.
                 </div>
               )}
 
