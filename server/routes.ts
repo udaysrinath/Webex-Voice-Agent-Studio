@@ -140,6 +140,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         file: fs.createReadStream(tempFilePath),
         model: "whisper-1",
         language: "en",
+        temperature: 0,
       });
       
       console.log('Transcription result:', transcription.text);
