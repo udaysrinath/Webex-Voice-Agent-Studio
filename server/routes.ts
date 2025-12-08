@@ -569,11 +569,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       try {
+        console.log("Sending Webex message to room:", matchedRoom.title, "roomId:", matchedRoom.id);
+        console.log("Message content:", JSON.stringify(message));
+        
         const response = await fetch('https://webexapis.com/v1/messages', {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json; charset=utf-8',
+            'Content-Type': 'application/json',
           },
           body: JSON.stringify({
             roomId: matchedRoom.id,
@@ -582,20 +585,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
 
         if (!response.ok) {
-          const errorData = await response.json().catch(() => ({}));
-          console.error("Webex send message error:", response.status, JSON.stringify(errorData, null, 2));
-          const errorMsg = errorData.message || errorData.errors?.[0]?.description || response.statusText;
+          const errorText = await response.text();
+          console.error("Webex send message error - Status:", response.status);
+          console.error("Webex send message error - Response:", errorText);
+          let errorMsg = response.statusText;
+          try {
+            const errorData = JSON.parse(errorText);
+            errorMsg = errorData.message || errorData.errors?.[0]?.description || response.statusText;
+          } catch {}
           return { 
             success: false, 
             error: `Webex error (${response.status}): ${errorMsg}` 
           };
         }
 
+        console.log("Message sent successfully to", matchedRoom.title);
         return { 
           success: true, 
           result: `Message successfully sent to "${matchedRoom.title}"` 
         };
       } catch (error: any) {
+        console.error("Webex send message exception:", error);
         return { success: false, error: error.message || "Failed to send message" };
       }
     }
