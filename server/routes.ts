@@ -542,6 +542,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
     },
   ];
 
+  // Sanitize Unicode characters that cause issues with Node.js fetch
+  function sanitizeText(text: string): string {
+    return text
+      .replace(/[\u2018\u2019]/g, "'")  // Curly single quotes to straight
+      .replace(/[\u201C\u201D]/g, '"')  // Curly double quotes to straight
+      .replace(/\u2013/g, '-')          // En dash to hyphen
+      .replace(/\u2014/g, '--')         // Em dash to double hyphen
+      .replace(/\u2026/g, '...')        // Ellipsis to three dots
+      .replace(/\u00A0/g, ' ');         // Non-breaking space to regular space
+  }
+
   async function executeWebexFunction(
     functionName: string,
     args: Record<string, any>
@@ -552,7 +563,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
 
     if (functionName === "send_webex_message") {
-      const { roomTitle, message } = args;
+      const { roomTitle, message: rawMessage } = args;
+      const message = sanitizeText(rawMessage);
       
       const rooms = await storage.getAllWebexRooms();
       const matchedRoom = rooms.find(
