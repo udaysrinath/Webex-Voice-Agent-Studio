@@ -1,7 +1,7 @@
 import { useState, useRef } from "react";
 import { Link, useLocation } from "wouter";
 import { motion } from "framer-motion";
-import { ArrowLeft, Check, Play, Mic, Cpu, Globe, User, Sparkles, Loader2, Square, MessageSquare, RefreshCw, Send, Code, Copy, ChevronDown, ChevronUp } from "lucide-react";
+import { ArrowLeft, Check, Play, Mic, Cpu, Globe, User, Sparkles, Loader2, Square, MessageSquare, RefreshCw, Send, Code, Copy, ChevronDown, ChevronUp, Wrench, Link2, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
@@ -57,6 +57,16 @@ export default function Build() {
   const [messageText, setMessageText] = useState("");
   const [showFunctionCode, setShowFunctionCode] = useState(false);
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
+  const [activeKbTab, setActiveKbTab] = useState<'tools' | 'integrations'>('tools');
+  const [showAddTool, setShowAddTool] = useState(false);
+  const [showAddIntegration, setShowAddIntegration] = useState(false);
+  const [newToolName, setNewToolName] = useState("");
+  const [newToolDescription, setNewToolDescription] = useState("");
+  const [newIntegrationName, setNewIntegrationName] = useState("");
+  const [tools, setTools] = useState<Array<{name: string; description: string}>>([
+    { name: "send_webex_message", description: "Send a message to a Webex space/room" }
+  ]);
+  const [customIntegrations, setCustomIntegrations] = useState<Array<{name: string; status: string}>>([]);
 
   const { data: webexStats } = useQuery({
     queryKey: ["webex-stats"],
@@ -456,113 +466,339 @@ export default function Build() {
               </div>
               <div>
                 <h2 className="text-2xl font-display font-semibold">Knowledge Base</h2>
-                <p className="text-muted-foreground text-sm">Connect your Webex messages to give your agent context.</p>
+                <p className="text-muted-foreground text-sm">Configure tools and integrations for your agent.</p>
               </div>
             </div>
 
-            <div className="bg-card/30 p-6 rounded-2xl border border-white/5">
-              {!webexStats?.hasToken ? (
-                <div className="text-center py-6">
-                  <MessageSquare className="w-12 h-12 mx-auto mb-4 text-muted-foreground/50" />
-                  <p className="text-muted-foreground mb-2">Webex integration not configured</p>
-                  <p className="text-sm text-muted-foreground/70">
-                    Add your Webex access token to sync messages as knowledge base.
-                  </p>
-                </div>
-              ) : (
-                <div className="space-y-6">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="font-medium">Webex Messages</p>
-                      <p className="text-sm text-muted-foreground">
-                        {webexStats.messageCount > 0 
-                          ? `${webexStats.messageCount} messages from ${webexStats.roomCount} rooms`
-                          : "No messages synced yet"}
-                      </p>
-                    </div>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => syncWebexMutation.mutate(15)}
-                      disabled={syncWebexMutation.isPending}
-                      data-testid="button-sync-webex"
-                    >
-                      {syncWebexMutation.isPending ? (
-                        <>
-                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                          Syncing...
-                        </>
-                      ) : (
-                        <>
-                          <RefreshCw className="w-4 h-4 mr-2" />
-                          Sync Messages
-                        </>
-                      )}
-                    </Button>
-                  </div>
-                  
-                  {webexStats.messageCount > 0 && (
-                    <div className="pt-3 border-t border-white/5">
-                      <p className="text-xs text-green-400 flex items-center gap-2">
-                        <Check className="w-3 h-3" />
-                        Knowledge base ready - your agent can access these messages
-                      </p>
-                    </div>
-                  )}
+            <div className="bg-card/30 rounded-2xl border border-white/5">
+              <div className="flex border-b border-white/5">
+                <button
+                  onClick={() => setActiveKbTab('tools')}
+                  className={`flex-1 px-6 py-4 text-sm font-medium transition-colors flex items-center justify-center gap-2 ${
+                    activeKbTab === 'tools' 
+                      ? 'text-primary border-b-2 border-primary bg-primary/5' 
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                  data-testid="tab-tools"
+                >
+                  <Wrench className="w-4 h-4" />
+                  Tools
+                </button>
+                <button
+                  onClick={() => setActiveKbTab('integrations')}
+                  className={`flex-1 px-6 py-4 text-sm font-medium transition-colors flex items-center justify-center gap-2 ${
+                    activeKbTab === 'integrations' 
+                      ? 'text-primary border-b-2 border-primary bg-primary/5' 
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                  data-testid="tab-integrations"
+                >
+                  <Link2 className="w-4 h-4" />
+                  Integrations
+                </button>
+              </div>
 
-                  {webexRooms.length > 0 && (
-                    <div className="pt-4 border-t border-white/5 space-y-4">
+              <div className="p-6">
+                {activeKbTab === 'tools' && (
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between">
                       <div>
-                        <Label className="text-sm font-medium mb-2 block">Send Message to Webex Space</Label>
-                        <Select value={selectedRoomId} onValueChange={setSelectedRoomId}>
-                          <SelectTrigger className="w-full bg-background border-white/10" data-testid="select-webex-room">
-                            <SelectValue placeholder="Select a space..." />
-                          </SelectTrigger>
-                          <SelectContent className="max-h-60 overflow-y-auto">
-                            {webexRooms.map((room) => (
-                              <SelectItem key={room.id} value={room.id} className="truncate">
-                                {room.title}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                        <p className="font-medium">Agent Tools</p>
+                        <p className="text-sm text-muted-foreground">
+                          Functions your agent can call to perform actions.
+                        </p>
                       </div>
-                      
-                      {selectedRoomId && (
-                        <div className="space-y-3">
-                          <Textarea
-                            value={messageText}
-                            onChange={(e) => setMessageText(e.target.value)}
-                            placeholder="Type your message..."
-                            className="min-h-[80px] bg-background border-white/10 resize-none"
-                            data-testid="input-webex-message"
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setShowAddTool(!showAddTool)}
+                        data-testid="button-add-tool"
+                      >
+                        <Plus className="w-4 h-4 mr-2" />
+                        Add Tool
+                      </Button>
+                    </div>
+
+                    {showAddTool && (
+                      <div className="p-4 bg-background/50 rounded-lg border border-white/10 space-y-3">
+                        <div className="space-y-2">
+                          <Label className="text-sm">Tool Name</Label>
+                          <Input
+                            value={newToolName}
+                            onChange={(e) => setNewToolName(e.target.value)}
+                            placeholder="e.g., get_weather"
+                            className="bg-background border-white/10"
+                            data-testid="input-tool-name"
                           />
-                          <div className="flex justify-end">
-                            <Button
-                              size="sm"
-                              onClick={handleSendMessage}
-                              disabled={sendMessageMutation.isPending || !messageText.trim()}
-                              data-testid="button-send-webex-message"
-                            >
-                              {sendMessageMutation.isPending ? (
-                                <>
-                                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                                  Sending...
-                                </>
-                              ) : (
-                                <>
-                                  <Send className="w-4 h-4 mr-2" />
-                                  Send Message
-                                </>
-                              )}
-                            </Button>
+                        </div>
+                        <div className="space-y-2">
+                          <Label className="text-sm">Description</Label>
+                          <Textarea
+                            value={newToolDescription}
+                            onChange={(e) => setNewToolDescription(e.target.value)}
+                            placeholder="What does this tool do?"
+                            className="bg-background border-white/10 min-h-[60px]"
+                            data-testid="input-tool-description"
+                          />
+                        </div>
+                        <div className="flex justify-end gap-2">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => {
+                              setShowAddTool(false);
+                              setNewToolName("");
+                              setNewToolDescription("");
+                            }}
+                          >
+                            Cancel
+                          </Button>
+                          <Button
+                            size="sm"
+                            onClick={() => {
+                              if (newToolName && newToolDescription) {
+                                setTools([...tools, { name: newToolName, description: newToolDescription }]);
+                                setNewToolName("");
+                                setNewToolDescription("");
+                                setShowAddTool(false);
+                              }
+                            }}
+                            disabled={!newToolName || !newToolDescription}
+                            data-testid="button-save-tool"
+                          >
+                            Save Tool
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="space-y-2">
+                      {tools.map((tool, index) => (
+                        <div 
+                          key={index}
+                          className="flex items-center justify-between p-3 bg-background/30 rounded-lg border border-white/5"
+                          data-testid={`tool-item-${index}`}
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className="w-8 h-8 rounded-full bg-green-500/10 flex items-center justify-center">
+                              <Wrench className="w-4 h-4 text-green-400" />
+                            </div>
+                            <div>
+                              <p className="font-medium text-sm">{tool.name}</p>
+                              <p className="text-xs text-muted-foreground">{tool.description}</p>
+                            </div>
                           </div>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 text-muted-foreground hover:text-red-400"
+                            onClick={() => setTools(tools.filter((_, i) => i !== index))}
+                            data-testid={`button-delete-tool-${index}`}
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </div>
+                      ))}
+                      {tools.length === 0 && (
+                        <div className="text-center py-6 text-muted-foreground">
+                          <Wrench className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                          <p className="text-sm">No tools configured yet</p>
                         </div>
                       )}
                     </div>
-                  )}
-                </div>
-              )}
+                  </div>
+                )}
+
+                {activeKbTab === 'integrations' && (
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="font-medium">Connected Services</p>
+                        <p className="text-sm text-muted-foreground">
+                          External services your agent can access.
+                        </p>
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setShowAddIntegration(!showAddIntegration)}
+                        data-testid="button-add-integration"
+                      >
+                        <Plus className="w-4 h-4 mr-2" />
+                        Add Integration
+                      </Button>
+                    </div>
+
+                    {showAddIntegration && (
+                      <div className="p-4 bg-background/50 rounded-lg border border-white/10 space-y-3">
+                        <div className="space-y-2">
+                          <Label className="text-sm">Integration Name</Label>
+                          <Input
+                            value={newIntegrationName}
+                            onChange={(e) => setNewIntegrationName(e.target.value)}
+                            placeholder="e.g., Slack, Google Calendar"
+                            className="bg-background border-white/10"
+                            data-testid="input-integration-name"
+                          />
+                        </div>
+                        <div className="flex justify-end gap-2">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => {
+                              setShowAddIntegration(false);
+                              setNewIntegrationName("");
+                            }}
+                          >
+                            Cancel
+                          </Button>
+                          <Button
+                            size="sm"
+                            onClick={() => {
+                              if (newIntegrationName) {
+                                setCustomIntegrations([...customIntegrations, { name: newIntegrationName, status: "pending" }]);
+                                toast({
+                                  title: "Integration Added",
+                                  description: `${newIntegrationName} has been added. Configure credentials in settings.`,
+                                });
+                                setNewIntegrationName("");
+                                setShowAddIntegration(false);
+                              }
+                            }}
+                            disabled={!newIntegrationName}
+                            data-testid="button-save-integration"
+                          >
+                            Add Integration
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="space-y-2">
+                      <div 
+                        className="flex items-center justify-between p-3 bg-background/30 rounded-lg border border-white/5"
+                        data-testid="integration-webex"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 rounded-full bg-blue-500/10 flex items-center justify-center">
+                            <MessageSquare className="w-4 h-4 text-blue-400" />
+                          </div>
+                          <div>
+                            <p className="font-medium text-sm">Webex</p>
+                            <p className="text-xs text-muted-foreground">
+                              {webexStats?.hasToken 
+                                ? `${webexStats.messageCount} messages from ${webexStats.roomCount} rooms`
+                                : "Not configured"}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {webexStats?.hasToken ? (
+                            <>
+                              <span className="text-xs text-green-400 flex items-center gap-1">
+                                <Check className="w-3 h-3" />
+                                Connected
+                              </span>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => syncWebexMutation.mutate(15)}
+                                disabled={syncWebexMutation.isPending}
+                                data-testid="button-sync-webex"
+                              >
+                                {syncWebexMutation.isPending ? (
+                                  <Loader2 className="w-4 h-4 animate-spin" />
+                                ) : (
+                                  <RefreshCw className="w-4 h-4" />
+                                )}
+                              </Button>
+                            </>
+                          ) : (
+                            <span className="text-xs text-yellow-400">Configure token</span>
+                          )}
+                        </div>
+                      </div>
+
+                      {customIntegrations.map((integration, index) => (
+                        <div 
+                          key={index}
+                          className="flex items-center justify-between p-3 bg-background/30 rounded-lg border border-white/5"
+                          data-testid={`integration-custom-${index}`}
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className="w-8 h-8 rounded-full bg-purple-500/10 flex items-center justify-center">
+                              <Link2 className="w-4 h-4 text-purple-400" />
+                            </div>
+                            <div>
+                              <p className="font-medium text-sm">{integration.name}</p>
+                              <p className="text-xs text-muted-foreground">Configure credentials</p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-yellow-400">Pending setup</span>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 text-muted-foreground hover:text-red-400"
+                              onClick={() => setCustomIntegrations(customIntegrations.filter((_, i) => i !== index))}
+                              data-testid={`button-delete-integration-${index}`}
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+
+                      {webexStats?.hasToken && webexRooms.length > 0 && (
+                        <div className="p-4 bg-background/30 rounded-lg border border-white/5 space-y-3">
+                          <Label className="text-sm font-medium">Quick Send to Webex</Label>
+                          <Select value={selectedRoomId} onValueChange={setSelectedRoomId}>
+                            <SelectTrigger className="w-full bg-background border-white/10" data-testid="select-webex-room">
+                              <SelectValue placeholder="Select a space..." />
+                            </SelectTrigger>
+                            <SelectContent className="max-h-60 overflow-y-auto">
+                              {webexRooms.map((room) => (
+                                <SelectItem key={room.id} value={room.id} className="truncate">
+                                  {room.title}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          
+                          {selectedRoomId && (
+                            <div className="space-y-2">
+                              <Textarea
+                                value={messageText}
+                                onChange={(e) => setMessageText(e.target.value)}
+                                placeholder="Type your message..."
+                                className="min-h-[60px] bg-background border-white/10 resize-none"
+                                data-testid="input-webex-message"
+                              />
+                              <div className="flex justify-end">
+                                <Button
+                                  size="sm"
+                                  onClick={handleSendMessage}
+                                  disabled={sendMessageMutation.isPending || !messageText.trim()}
+                                  data-testid="button-send-webex-message"
+                                >
+                                  {sendMessageMutation.isPending ? (
+                                    <Loader2 className="w-4 h-4 animate-spin" />
+                                  ) : (
+                                    <>
+                                      <Send className="w-4 h-4 mr-2" />
+                                      Send
+                                    </>
+                                  )}
+                                </Button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           </motion.section>
 
