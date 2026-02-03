@@ -1,7 +1,7 @@
 import { useState, useRef } from "react";
 import { Link, useLocation } from "wouter";
 import { motion } from "framer-motion";
-import { ArrowLeft, Check, Play, Mic, Cpu, Globe, User, Sparkles, Loader2, Square, MessageSquare, RefreshCw, Send, Code, Copy, ChevronDown, ChevronUp, Wrench, Link2, Plus, Trash2, Search, Mail, Calendar, FileText, Users, CreditCard, Phone, Workflow, Database, Cloud, Shield, Zap, Github, ExternalLink, X } from "lucide-react";
+import { ArrowLeft, Check, Play, Mic, Cpu, Globe, User, Sparkles, Loader2, Square, MessageSquare, RefreshCw, Send, Code, Copy, ChevronDown, ChevronUp, Wrench, Link2, Plus, Trash2, Search, Mail, Calendar, FileText, Users, CreditCard, Phone, Workflow, Database, Cloud, Shield, Zap, Github, ExternalLink, X, Server } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
@@ -338,6 +338,11 @@ export default function Build() {
     { name: "send_webex_message", description: "Send a message to a Webex space/room" }
   ]);
   const [customIntegrations, setCustomIntegrations] = useState<Array<{name: string; status: string}>>([]);
+  const [showMcpForm, setShowMcpForm] = useState(false);
+  const [mcpServers, setMcpServers] = useState<Array<{name: string; endpoint: string; description: string; status: string}>>([]);
+  const [newMcpName, setNewMcpName] = useState("");
+  const [newMcpEndpoint, setNewMcpEndpoint] = useState("");
+  const [newMcpDescription, setNewMcpDescription] = useState("");
 
   const { data: webexStats } = useQuery({
     queryKey: ["webex-stats"],
@@ -1205,22 +1210,172 @@ export default function Build() {
                       </div>
                     )}
 
+                    {mcpServers.length > 0 && (
+                      <div className="space-y-3">
+                        <h3 className="text-sm font-medium text-muted-foreground">MCP Servers ({mcpServers.length})</h3>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                          {mcpServers.map((server, index) => (
+                            <motion.div
+                              key={`mcp-${index}`}
+                              initial={{ opacity: 0, scale: 0.95 }}
+                              animate={{ opacity: 1, scale: 1 }}
+                              className="p-4 rounded-xl border border-cyan-500/30 bg-gradient-to-br from-cyan-500/5 to-blue-500/5"
+                              data-testid={`mcp-server-${index}`}
+                            >
+                              <div className="flex items-start justify-between">
+                                <div className="flex items-center gap-3">
+                                  <div className="w-10 h-10 rounded-lg bg-cyan-500/10 flex items-center justify-center">
+                                    <Server className="w-5 h-5 text-cyan-400" />
+                                  </div>
+                                  <div>
+                                    <div className="flex items-center gap-2">
+                                      <p className="font-medium">{server.name}</p>
+                                      <span className="text-xs text-cyan-400 flex items-center gap-1">
+                                        <Check className="w-3 h-3" />
+                                        Active
+                                      </span>
+                                    </div>
+                                    <p className="text-xs text-muted-foreground mt-0.5">{server.description || server.endpoint}</p>
+                                  </div>
+                                </div>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-8 w-8 text-muted-foreground hover:text-red-400"
+                                  onClick={() => setMcpServers(mcpServers.filter((_, i) => i !== index))}
+                                  data-testid={`button-delete-mcp-${index}`}
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </Button>
+                              </div>
+                              <div className="mt-2 pt-2 border-t border-white/5">
+                                <p className="text-xs text-muted-foreground font-mono truncate">{server.endpoint}</p>
+                              </div>
+                            </motion.div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
                     <div className="space-y-3">
                       <div className="flex items-center justify-between">
                         <h3 className="text-sm font-medium text-muted-foreground">
                           Available Integrations
                         </h3>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => setShowAddIntegration(!showAddIntegration)}
-                          className="border-white/10"
-                          data-testid="button-add-custom-integration"
-                        >
-                          <Plus className="w-4 h-4 mr-2" />
-                          Custom Integration
-                        </Button>
+                        <div className="flex gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              setShowMcpForm(!showMcpForm);
+                              setShowAddIntegration(false);
+                            }}
+                            className="border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/10"
+                            data-testid="button-add-mcp-server"
+                          >
+                            <Server className="w-4 h-4 mr-2" />
+                            MCP Server
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              setShowAddIntegration(!showAddIntegration);
+                              setShowMcpForm(false);
+                            }}
+                            className="border-white/10"
+                            data-testid="button-add-custom-integration"
+                          >
+                            <Plus className="w-4 h-4 mr-2" />
+                            Custom Integration
+                          </Button>
+                        </div>
                       </div>
+                      
+                      {showMcpForm && (
+                        <div className="p-4 bg-gradient-to-br from-cyan-500/5 to-blue-500/5 rounded-lg border border-cyan-500/20 space-y-4">
+                          <div className="flex items-center gap-2">
+                            <Server className="w-5 h-5 text-cyan-400" />
+                            <h4 className="font-medium">Create MCP Server</h4>
+                          </div>
+                          <p className="text-xs text-muted-foreground">
+                            Model Context Protocol (MCP) servers allow your agent to interact with custom tools and data sources.
+                          </p>
+                          <div className="space-y-3">
+                            <div className="space-y-2">
+                              <Label className="text-sm">Server Name</Label>
+                              <Input
+                                value={newMcpName}
+                                onChange={(e) => setNewMcpName(e.target.value)}
+                                placeholder="e.g., My Custom Tools"
+                                className="bg-background border-white/10"
+                                data-testid="input-mcp-name"
+                              />
+                            </div>
+                            <div className="space-y-2">
+                              <Label className="text-sm">Endpoint URL</Label>
+                              <Input
+                                value={newMcpEndpoint}
+                                onChange={(e) => setNewMcpEndpoint(e.target.value)}
+                                placeholder="e.g., https://my-mcp-server.com/api"
+                                className="bg-background border-white/10 font-mono text-sm"
+                                data-testid="input-mcp-endpoint"
+                              />
+                            </div>
+                            <div className="space-y-2">
+                              <Label className="text-sm">Description (optional)</Label>
+                              <Input
+                                value={newMcpDescription}
+                                onChange={(e) => setNewMcpDescription(e.target.value)}
+                                placeholder="What does this MCP server do?"
+                                className="bg-background border-white/10"
+                                data-testid="input-mcp-description"
+                              />
+                            </div>
+                          </div>
+                          <div className="flex justify-end gap-2 pt-2">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => {
+                                setShowMcpForm(false);
+                                setNewMcpName("");
+                                setNewMcpEndpoint("");
+                                setNewMcpDescription("");
+                              }}
+                            >
+                              Cancel
+                            </Button>
+                            <Button
+                              size="sm"
+                              className="bg-cyan-500 hover:bg-cyan-600"
+                              onClick={() => {
+                                if (newMcpName && newMcpEndpoint) {
+                                  setMcpServers([...mcpServers, { 
+                                    name: newMcpName, 
+                                    endpoint: newMcpEndpoint, 
+                                    description: newMcpDescription,
+                                    status: "active" 
+                                  }]);
+                                  toast({
+                                    title: "MCP Server Added",
+                                    description: `${newMcpName} has been configured and is ready to use.`,
+                                  });
+                                  setNewMcpName("");
+                                  setNewMcpEndpoint("");
+                                  setNewMcpDescription("");
+                                  setShowMcpForm(false);
+                                }
+                              }}
+                              disabled={!newMcpName || !newMcpEndpoint}
+                              data-testid="button-save-mcp-server"
+                            >
+                              <Server className="w-4 h-4 mr-2" />
+                              Create Server
+                            </Button>
+                          </div>
+                        </div>
+                      )}
                       
                       {showAddIntegration && (
                         <div className="p-4 bg-background/50 rounded-lg border border-white/10 space-y-3">
