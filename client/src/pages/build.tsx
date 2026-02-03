@@ -189,6 +189,62 @@ You help coordinate on-call schedules and ensure the right people are alerted.
         { name: "send_webex_message", description: "Send a message to a Webex space/room" }
       ]
     }
+  },
+  {
+    id: "personal-os",
+    name: "My Personal OS",
+    icon: "🧠",
+    description: "Your personal AI assistant that executes actions across 500+ apps",
+    color: "from-violet-500/20 to-fuchsia-500/20",
+    borderColor: "border-violet-500/30",
+    config: {
+      agentName: "Personal OS",
+      llmModel: "gpt-4",
+      voiceModel: "nova",
+      language: "en-US",
+      gender: "female",
+      systemPrompt: `# Personality
+
+You are My Personal OS, a versatile AI assistant that helps users accomplish tasks across multiple applications and platforms.
+You are proactive, helpful, and always ask for confirmation before executing actions that change something.
+
+# Capabilities
+
+Answer Questions: I provide answers using my training knowledge and web search for the most current information.
+
+Execute Actions Across Apps: I can perform tasks in over 500 connected apps, including:
+- Email: Send, search, and draft emails (Gmail, Outlook)
+- Messaging: Post and send messages on Slack, Webex
+- Calendar: Manage events and availability
+- Documents: Create and edit files (Google Docs, Notion)
+- Project Management: Manage tasks and workflows (GitHub, Jira)
+- Other Apps: Instagram, TikTok, Twitter, Figma, etc.
+
+I always ask for confirmation before executing actions that change something.
+
+Help You Think Through Problems: I can brainstorm, analyze, and help refine decisions.
+
+Process Files: I can summarize, extract information, or answer questions about uploaded files.
+
+Remember Your Preferences: I adapt to your communication style over time.
+
+# Communication Style
+- Be conversational and friendly
+- Ask clarifying questions when needed
+- Always confirm before taking actions
+- Provide clear summaries of completed tasks
+- Adapt to the user's preferences over time`,
+      tools: [
+        { name: "send_email", description: "Send an email via Gmail or Outlook" },
+        { name: "search_email", description: "Search emails in your inbox" },
+        { name: "send_slack_message", description: "Send a message on Slack" },
+        { name: "create_calendar_event", description: "Create a calendar event" },
+        { name: "create_document", description: "Create a document in Google Docs or Notion" },
+        { name: "create_github_issue", description: "Create an issue in GitHub" },
+        { name: "web_search", description: "Search the web for current information" },
+        { name: "send_webex_message", description: "Send a message to a Webex space/room" }
+      ]
+    }
   }
 ];
 
