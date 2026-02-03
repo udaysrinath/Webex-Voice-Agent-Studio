@@ -1,7 +1,7 @@
 import { useState, useRef } from "react";
 import { Link, useLocation } from "wouter";
 import { motion } from "framer-motion";
-import { ArrowLeft, Check, Play, Mic, Cpu, Globe, User, Sparkles, Loader2, Square, MessageSquare, RefreshCw, Send, Code, Copy, ChevronDown, ChevronUp, Wrench, Link2, Plus, Trash2 } from "lucide-react";
+import { ArrowLeft, Check, Play, Mic, Cpu, Globe, User, Sparkles, Loader2, Square, MessageSquare, RefreshCw, Send, Code, Copy, ChevronDown, ChevronUp, Wrench, Link2, Plus, Trash2, Search, Mail, Calendar, FileText, Users, CreditCard, Phone, Workflow, Database, Cloud, Shield, Zap, Github, ExternalLink, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
@@ -248,6 +248,60 @@ Remember Your Preferences: I adapt to your communication style over time.
   }
 ];
 
+const INTEGRATION_CATEGORIES = [
+  { id: 'all', name: 'All', icon: Zap },
+  { id: 'communication', name: 'Communication', icon: MessageSquare },
+  { id: 'crm', name: 'CRM & Sales', icon: Users },
+  { id: 'support', name: 'Customer Support', icon: Shield },
+  { id: 'productivity', name: 'Productivity', icon: FileText },
+  { id: 'payments', name: 'Payments', icon: CreditCard },
+  { id: 'telephony', name: 'Telephony', icon: Phone },
+  { id: 'automation', name: 'Automation', icon: Workflow },
+  { id: 'developer', name: 'Developer', icon: Code },
+];
+
+const AVAILABLE_INTEGRATIONS = [
+  { id: 'webex', name: 'Webex', category: 'communication', icon: '💬', color: 'bg-blue-500/10', iconColor: 'text-blue-400', description: 'Send messages, join meetings, and access Webex spaces', popular: true },
+  { id: 'slack', name: 'Slack', category: 'communication', icon: '💬', color: 'bg-purple-500/10', iconColor: 'text-purple-400', description: 'Post messages and manage Slack channels', popular: true },
+  { id: 'teams', name: 'Microsoft Teams', category: 'communication', icon: '👥', color: 'bg-indigo-500/10', iconColor: 'text-indigo-400', description: 'Collaborate and communicate via Teams' },
+  { id: 'gmail', name: 'Gmail', category: 'communication', icon: '📧', color: 'bg-red-500/10', iconColor: 'text-red-400', description: 'Send, search, and draft emails', popular: true },
+  { id: 'outlook', name: 'Outlook', category: 'communication', icon: '📨', color: 'bg-blue-600/10', iconColor: 'text-blue-500', description: 'Manage emails and calendar via Outlook' },
+  
+  { id: 'salesforce', name: 'Salesforce', category: 'crm', icon: '☁️', color: 'bg-cyan-500/10', iconColor: 'text-cyan-400', description: 'Access CRM data and automate workflows', popular: true },
+  { id: 'hubspot', name: 'HubSpot', category: 'crm', icon: '🧡', color: 'bg-orange-500/10', iconColor: 'text-orange-400', description: 'Manage contacts, deals, and marketing' },
+  { id: 'zoho', name: 'Zoho CRM', category: 'crm', icon: '🔶', color: 'bg-yellow-500/10', iconColor: 'text-yellow-400', description: 'Voice-enable customer data for personalized interactions' },
+  { id: 'monday', name: 'Monday.com', category: 'crm', icon: '📊', color: 'bg-pink-500/10', iconColor: 'text-pink-400', description: 'Project management with real-time AI agents' },
+  
+  { id: 'zendesk', name: 'Zendesk', category: 'support', icon: '🎫', color: 'bg-green-500/10', iconColor: 'text-green-400', description: 'Voice-first ticket resolution and support', popular: true },
+  { id: 'servicenow', name: 'ServiceNow', category: 'support', icon: '🔧', color: 'bg-emerald-500/10', iconColor: 'text-emerald-400', description: 'Enterprise service automation and ITSM' },
+  { id: 'intercom', name: 'Intercom', category: 'support', icon: '💭', color: 'bg-blue-400/10', iconColor: 'text-blue-300', description: 'Build voice-first customer service that scales' },
+  { id: 'freshdesk', name: 'Freshdesk', category: 'support', icon: '🎯', color: 'bg-teal-500/10', iconColor: 'text-teal-400', description: 'Multi-channel customer support platform' },
+  
+  { id: 'gcalendar', name: 'Google Calendar', category: 'productivity', icon: '📅', color: 'bg-blue-500/10', iconColor: 'text-blue-400', description: 'Manage events and availability', popular: true },
+  { id: 'notion', name: 'Notion', category: 'productivity', icon: '📝', color: 'bg-stone-500/10', iconColor: 'text-stone-400', description: 'Create and manage documents and wikis' },
+  { id: 'gdocs', name: 'Google Docs', category: 'productivity', icon: '📄', color: 'bg-blue-400/10', iconColor: 'text-blue-300', description: 'Create and edit documents' },
+  { id: 'airtable', name: 'Airtable', category: 'productivity', icon: '📋', color: 'bg-yellow-400/10', iconColor: 'text-yellow-300', description: 'Voice-driven task management through natural conversations' },
+  { id: 'confluence', name: 'Confluence', category: 'productivity', icon: '📚', color: 'bg-blue-500/10', iconColor: 'text-blue-400', description: 'Access and search team documentation' },
+  
+  { id: 'stripe', name: 'Stripe', category: 'payments', icon: '💳', color: 'bg-purple-500/10', iconColor: 'text-purple-400', description: 'Process payments and manage subscriptions', popular: true },
+  { id: 'square', name: 'Square', category: 'payments', icon: '⬜', color: 'bg-stone-600/10', iconColor: 'text-stone-300', description: 'Voice commerce with transaction handling' },
+  { id: 'shopify', name: 'Shopify', category: 'payments', icon: '🛒', color: 'bg-green-500/10', iconColor: 'text-green-400', description: 'Voice-powered shopping assistant' },
+  
+  { id: 'twilio', name: 'Twilio', category: 'telephony', icon: '📞', color: 'bg-red-500/10', iconColor: 'text-red-400', description: 'Automated inbound/outbound calls', popular: true },
+  { id: 'whatsapp', name: 'WhatsApp', category: 'telephony', icon: '💚', color: 'bg-green-500/10', iconColor: 'text-green-400', description: 'Voice conversations on messaging platforms' },
+  { id: 'sip', name: 'SIP Trunking', category: 'telephony', icon: '📱', color: 'bg-gray-500/10', iconColor: 'text-gray-400', description: 'Enterprise-grade telephony integration' },
+  
+  { id: 'zapier', name: 'Zapier', category: 'automation', icon: '⚡', color: 'bg-orange-500/10', iconColor: 'text-orange-400', description: 'Connect to 5,000+ apps without code', popular: true },
+  { id: 'make', name: 'Make', category: 'automation', icon: '🔄', color: 'bg-violet-500/10', iconColor: 'text-violet-400', description: 'Build real-time AI voice agents across your tech stack' },
+  { id: 'n8n', name: 'n8n', category: 'automation', icon: '🔗', color: 'bg-pink-500/10', iconColor: 'text-pink-400', description: 'Orchestrate complex workflows across any system' },
+  
+  { id: 'github', name: 'GitHub', category: 'developer', icon: '🐙', color: 'bg-gray-500/10', iconColor: 'text-gray-300', description: 'Create issues, PRs, and manage repositories', popular: true },
+  { id: 'jira', name: 'Jira', category: 'developer', icon: '🔷', color: 'bg-blue-500/10', iconColor: 'text-blue-400', description: 'Manage tasks and workflows' },
+  { id: 'pagerduty', name: 'PagerDuty', category: 'developer', icon: '🚨', color: 'bg-green-600/10', iconColor: 'text-green-500', description: 'Incident management and on-call automation' },
+  { id: 'datadog', name: 'Datadog', category: 'developer', icon: '🐕', color: 'bg-purple-500/10', iconColor: 'text-purple-400', description: 'Monitor and analyze application performance' },
+  { id: 'supabase', name: 'Supabase', category: 'developer', icon: '⚡', color: 'bg-emerald-500/10', iconColor: 'text-emerald-400', description: 'Transform databases into voice-driven knowledge bases' },
+];
+
 export default function Build() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
@@ -277,6 +331,9 @@ export default function Build() {
   const [newToolName, setNewToolName] = useState("");
   const [newToolDescription, setNewToolDescription] = useState("");
   const [newIntegrationName, setNewIntegrationName] = useState("");
+  const [integrationSearch, setIntegrationSearch] = useState("");
+  const [integrationCategory, setIntegrationCategory] = useState("all");
+  const [connectedIntegrations, setConnectedIntegrations] = useState<Set<string>>(new Set());
   const [tools, setTools] = useState<Array<{name: string; description: string}>>([
     { name: "send_webex_message", description: "Send a message to a Webex space/room" }
   ]);
@@ -935,189 +992,353 @@ export default function Build() {
                 )}
 
                 {activeKbTab === 'integrations' && (
-                  <div className="space-y-4">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="font-medium">Connected Services</p>
-                        <p className="text-sm text-muted-foreground">
-                          External services your agent can access.
-                        </p>
-                      </div>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setShowAddIntegration(!showAddIntegration)}
-                        data-testid="button-add-integration"
-                      >
-                        <Plus className="w-4 h-4 mr-2" />
-                        Add Integration
-                      </Button>
+                  <div className="space-y-6">
+                    <div className="relative">
+                      <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                      <Input
+                        value={integrationSearch}
+                        onChange={(e) => setIntegrationSearch(e.target.value)}
+                        placeholder="Search integrations..."
+                        className="pl-10 bg-background border-white/10"
+                        data-testid="input-integration-search"
+                      />
                     </div>
 
-                    {showAddIntegration && (
-                      <div className="p-4 bg-background/50 rounded-lg border border-white/10 space-y-3">
-                        <div className="space-y-2">
-                          <Label className="text-sm">Integration Name</Label>
-                          <Input
-                            value={newIntegrationName}
-                            onChange={(e) => setNewIntegrationName(e.target.value)}
-                            placeholder="e.g., Slack, Google Calendar"
-                            className="bg-background border-white/10"
-                            data-testid="input-integration-name"
-                          />
+                    <div className="flex flex-wrap gap-2">
+                      {INTEGRATION_CATEGORIES.map((cat) => {
+                        const Icon = cat.icon;
+                        return (
+                          <Button
+                            key={cat.id}
+                            variant={integrationCategory === cat.id ? "default" : "outline"}
+                            size="sm"
+                            onClick={() => setIntegrationCategory(cat.id)}
+                            className={`gap-2 ${integrationCategory === cat.id ? '' : 'border-white/10 hover:bg-white/5'}`}
+                            data-testid={`filter-category-${cat.id}`}
+                          >
+                            <Icon className="w-3.5 h-3.5" />
+                            {cat.name}
+                          </Button>
+                        );
+                      })}
+                    </div>
+
+                    {(webexStats?.hasToken || connectedIntegrations.size > 0 || customIntegrations.length > 0) && (
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between">
+                          <h3 className="text-sm font-medium text-muted-foreground">
+                            Connected ({(webexStats?.hasToken ? 1 : 0) + connectedIntegrations.size + customIntegrations.length})
+                          </h3>
                         </div>
-                        <div className="flex justify-end gap-2">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => {
-                              setShowAddIntegration(false);
-                              setNewIntegrationName("");
-                            }}
-                          >
-                            Cancel
-                          </Button>
-                          <Button
-                            size="sm"
-                            onClick={() => {
-                              if (newIntegrationName) {
-                                setCustomIntegrations([...customIntegrations, { name: newIntegrationName, status: "pending" }]);
-                                toast({
-                                  title: "Integration Added",
-                                  description: `${newIntegrationName} has been added. Configure credentials in settings.`,
-                                });
-                                setNewIntegrationName("");
-                                setShowAddIntegration(false);
-                              }
-                            }}
-                            disabled={!newIntegrationName}
-                            data-testid="button-save-integration"
-                          >
-                            Add Integration
-                          </Button>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                          {webexStats?.hasToken && (() => {
+                            const webexIntegration = AVAILABLE_INTEGRATIONS.find(i => i.id === 'webex')!;
+                            return (
+                              <motion.div
+                                key="webex"
+                                initial={{ opacity: 0, scale: 0.95 }}
+                                animate={{ opacity: 1, scale: 1 }}
+                                className="p-4 rounded-xl border border-green-500/30 bg-gradient-to-br from-green-500/5 to-emerald-500/5 hover:from-green-500/10 hover:to-emerald-500/10 transition-all"
+                                data-testid="integration-connected-webex"
+                              >
+                                <div className="flex items-start justify-between">
+                                  <div className="flex items-center gap-3">
+                                    <div className={`w-10 h-10 rounded-lg ${webexIntegration.color} flex items-center justify-center text-xl`}>
+                                      {webexIntegration.icon}
+                                    </div>
+                                    <div>
+                                      <div className="flex items-center gap-2">
+                                        <p className="font-medium">{webexIntegration.name}</p>
+                                        <span className="text-xs text-green-400 flex items-center gap-1">
+                                          <Check className="w-3 h-3" />
+                                          Connected
+                                        </span>
+                                      </div>
+                                      <p className="text-xs text-muted-foreground mt-0.5">{webexStats.messageCount} messages from {webexStats.roomCount} rooms</p>
+                                    </div>
+                                  </div>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-8 w-8"
+                                    onClick={() => syncWebexMutation.mutate(15)}
+                                    disabled={syncWebexMutation.isPending}
+                                    data-testid="button-sync-webex"
+                                  >
+                                    {syncWebexMutation.isPending ? (
+                                      <Loader2 className="w-4 h-4 animate-spin" />
+                                    ) : (
+                                      <RefreshCw className="w-4 h-4" />
+                                    )}
+                                  </Button>
+                                </div>
+                              </motion.div>
+                            );
+                          })()}
+                          
+                          {AVAILABLE_INTEGRATIONS.filter(i => i.id !== 'webex' && connectedIntegrations.has(i.id)).map((integration) => (
+                            <motion.div
+                              key={integration.id}
+                              initial={{ opacity: 0, scale: 0.95 }}
+                              animate={{ opacity: 1, scale: 1 }}
+                              className="p-4 rounded-xl border border-green-500/30 bg-gradient-to-br from-green-500/5 to-emerald-500/5 hover:from-green-500/10 hover:to-emerald-500/10 transition-all"
+                              data-testid={`integration-connected-${integration.id}`}
+                            >
+                              <div className="flex items-start justify-between">
+                                <div className="flex items-center gap-3">
+                                  <div className={`w-10 h-10 rounded-lg ${integration.color} flex items-center justify-center text-xl`}>
+                                    {integration.icon}
+                                  </div>
+                                  <div>
+                                    <div className="flex items-center gap-2">
+                                      <p className="font-medium">{integration.name}</p>
+                                      <span className="text-xs text-green-400 flex items-center gap-1">
+                                        <Check className="w-3 h-3" />
+                                        Connected
+                                      </span>
+                                    </div>
+                                    <p className="text-xs text-muted-foreground mt-0.5">{integration.description}</p>
+                                  </div>
+                                </div>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-8 w-8 text-muted-foreground hover:text-red-400"
+                                  onClick={() => {
+                                    const newSet = new Set(connectedIntegrations);
+                                    newSet.delete(integration.id);
+                                    setConnectedIntegrations(newSet);
+                                    toast({
+                                      title: "Integration Disconnected",
+                                      description: `${integration.name} has been disconnected.`,
+                                    });
+                                  }}
+                                  data-testid={`button-disconnect-${integration.id}`}
+                                >
+                                  <X className="w-4 h-4" />
+                                </Button>
+                              </div>
+                            </motion.div>
+                          ))}
+                          
+                          {customIntegrations.map((integration, index) => (
+                            <motion.div
+                              key={`custom-${index}`}
+                              initial={{ opacity: 0, scale: 0.95 }}
+                              animate={{ opacity: 1, scale: 1 }}
+                              className="p-4 rounded-xl border border-yellow-500/30 bg-gradient-to-br from-yellow-500/5 to-orange-500/5"
+                              data-testid={`integration-custom-${index}`}
+                            >
+                              <div className="flex items-start justify-between">
+                                <div className="flex items-center gap-3">
+                                  <div className="w-10 h-10 rounded-lg bg-purple-500/10 flex items-center justify-center">
+                                    <Link2 className="w-5 h-5 text-purple-400" />
+                                  </div>
+                                  <div>
+                                    <div className="flex items-center gap-2">
+                                      <p className="font-medium">{integration.name}</p>
+                                      <span className="text-xs text-yellow-400">Pending setup</span>
+                                    </div>
+                                    <p className="text-xs text-muted-foreground mt-0.5">Configure credentials to complete setup</p>
+                                  </div>
+                                </div>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-8 w-8 text-muted-foreground hover:text-red-400"
+                                  onClick={() => setCustomIntegrations(customIntegrations.filter((_, i) => i !== index))}
+                                  data-testid={`button-delete-integration-${index}`}
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </Button>
+                              </div>
+                            </motion.div>
+                          ))}
                         </div>
                       </div>
                     )}
 
-                    <div className="space-y-2">
-                      <div 
-                        className="flex items-center justify-between p-3 bg-background/30 rounded-lg border border-white/5"
-                        data-testid="integration-webex"
-                      >
-                        <div className="flex items-center gap-3">
-                          <div className="w-8 h-8 rounded-full bg-blue-500/10 flex items-center justify-center">
-                            <MessageSquare className="w-4 h-4 text-blue-400" />
-                          </div>
-                          <div>
-                            <p className="font-medium text-sm">Webex</p>
-                            <p className="text-xs text-muted-foreground">
-                              {webexStats?.hasToken 
-                                ? `${webexStats.messageCount} messages from ${webexStats.roomCount} rooms`
-                                : "Not configured"}
-                            </p>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          {webexStats?.hasToken ? (
-                            <>
-                              <span className="text-xs text-green-400 flex items-center gap-1">
-                                <Check className="w-3 h-3" />
-                                Connected
-                              </span>
+                    {webexStats?.hasToken && webexRooms.length > 0 && (
+                      <div className="p-4 bg-background/30 rounded-lg border border-white/5 space-y-3">
+                        <Label className="text-sm font-medium">Quick Send to Webex</Label>
+                        <Select value={selectedRoomId} onValueChange={setSelectedRoomId}>
+                          <SelectTrigger className="w-full bg-background border-white/10" data-testid="select-webex-room">
+                            <SelectValue placeholder="Select a space..." />
+                          </SelectTrigger>
+                          <SelectContent className="max-h-60 overflow-y-auto">
+                            {webexRooms.map((room) => (
+                              <SelectItem key={room.id} value={room.id} className="truncate">
+                                {room.title}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        
+                        {selectedRoomId && (
+                          <div className="space-y-2">
+                            <Textarea
+                              value={messageText}
+                              onChange={(e) => setMessageText(e.target.value)}
+                              placeholder="Type your message..."
+                              className="min-h-[60px] bg-background border-white/10 resize-none"
+                              data-testid="input-webex-message"
+                            />
+                            <div className="flex justify-end">
                               <Button
-                                variant="outline"
                                 size="sm"
-                                onClick={() => syncWebexMutation.mutate(15)}
-                                disabled={syncWebexMutation.isPending}
-                                data-testid="button-sync-webex"
+                                onClick={handleSendMessage}
+                                disabled={sendMessageMutation.isPending || !messageText.trim()}
+                                data-testid="button-send-webex-message"
                               >
-                                {syncWebexMutation.isPending ? (
+                                {sendMessageMutation.isPending ? (
                                   <Loader2 className="w-4 h-4 animate-spin" />
                                 ) : (
-                                  <RefreshCw className="w-4 h-4" />
+                                  <>
+                                    <Send className="w-4 h-4 mr-2" />
+                                    Send
+                                  </>
                                 )}
                               </Button>
-                            </>
-                          ) : (
-                            <span className="text-xs text-yellow-400">Configure token</span>
-                          )}
-                        </div>
-                      </div>
-
-                      {customIntegrations.map((integration, index) => (
-                        <div 
-                          key={index}
-                          className="flex items-center justify-between p-3 bg-background/30 rounded-lg border border-white/5"
-                          data-testid={`integration-custom-${index}`}
-                        >
-                          <div className="flex items-center gap-3">
-                            <div className="w-8 h-8 rounded-full bg-purple-500/10 flex items-center justify-center">
-                              <Link2 className="w-4 h-4 text-purple-400" />
-                            </div>
-                            <div>
-                              <p className="font-medium text-sm">{integration.name}</p>
-                              <p className="text-xs text-muted-foreground">Configure credentials</p>
                             </div>
                           </div>
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs text-yellow-400">Pending setup</span>
+                        )}
+                      </div>
+                    )}
+
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <h3 className="text-sm font-medium text-muted-foreground">
+                          Available Integrations
+                        </h3>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setShowAddIntegration(!showAddIntegration)}
+                          className="border-white/10"
+                          data-testid="button-add-custom-integration"
+                        >
+                          <Plus className="w-4 h-4 mr-2" />
+                          Custom Integration
+                        </Button>
+                      </div>
+                      
+                      {showAddIntegration && (
+                        <div className="p-4 bg-background/50 rounded-lg border border-white/10 space-y-3">
+                          <div className="space-y-2">
+                            <Label className="text-sm">Integration Name</Label>
+                            <Input
+                              value={newIntegrationName}
+                              onChange={(e) => setNewIntegrationName(e.target.value)}
+                              placeholder="e.g., Custom CRM, Internal API"
+                              className="bg-background border-white/10"
+                              data-testid="input-custom-integration-name"
+                            />
+                          </div>
+                          <div className="flex justify-end gap-2">
                             <Button
                               variant="ghost"
-                              size="icon"
-                              className="h-8 w-8 text-muted-foreground hover:text-red-400"
-                              onClick={() => setCustomIntegrations(customIntegrations.filter((_, i) => i !== index))}
-                              data-testid={`button-delete-integration-${index}`}
+                              size="sm"
+                              onClick={() => {
+                                setShowAddIntegration(false);
+                                setNewIntegrationName("");
+                              }}
                             >
-                              <Trash2 className="w-4 h-4" />
+                              Cancel
+                            </Button>
+                            <Button
+                              size="sm"
+                              onClick={() => {
+                                if (newIntegrationName) {
+                                  setCustomIntegrations([...customIntegrations, { name: newIntegrationName, status: "pending" }]);
+                                  toast({
+                                    title: "Custom Integration Added",
+                                    description: `${newIntegrationName} has been added. Configure credentials to complete setup.`,
+                                  });
+                                  setNewIntegrationName("");
+                                  setShowAddIntegration(false);
+                                }
+                              }}
+                              disabled={!newIntegrationName}
+                              data-testid="button-save-custom-integration"
+                            >
+                              Add Integration
                             </Button>
                           </div>
                         </div>
-                      ))}
-
-                      {webexStats?.hasToken && webexRooms.length > 0 && (
-                        <div className="p-4 bg-background/30 rounded-lg border border-white/5 space-y-3">
-                          <Label className="text-sm font-medium">Quick Send to Webex</Label>
-                          <Select value={selectedRoomId} onValueChange={setSelectedRoomId}>
-                            <SelectTrigger className="w-full bg-background border-white/10" data-testid="select-webex-room">
-                              <SelectValue placeholder="Select a space..." />
-                            </SelectTrigger>
-                            <SelectContent className="max-h-60 overflow-y-auto">
-                              {webexRooms.map((room) => (
-                                <SelectItem key={room.id} value={room.id} className="truncate">
-                                  {room.title}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                          
-                          {selectedRoomId && (
-                            <div className="space-y-2">
-                              <Textarea
-                                value={messageText}
-                                onChange={(e) => setMessageText(e.target.value)}
-                                placeholder="Type your message..."
-                                className="min-h-[60px] bg-background border-white/10 resize-none"
-                                data-testid="input-webex-message"
-                              />
-                              <div className="flex justify-end">
+                      )}
+                      
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        {AVAILABLE_INTEGRATIONS
+                          .filter(i => i.id !== 'webex' || !webexStats?.hasToken)
+                          .filter(i => !connectedIntegrations.has(i.id))
+                          .filter(i => integrationCategory === 'all' || i.category === integrationCategory)
+                          .filter(i => 
+                            !integrationSearch || 
+                            i.name.toLowerCase().includes(integrationSearch.toLowerCase()) ||
+                            i.description.toLowerCase().includes(integrationSearch.toLowerCase())
+                          )
+                          .map((integration) => (
+                            <motion.div
+                              key={integration.id}
+                              initial={{ opacity: 0, scale: 0.95 }}
+                              animate={{ opacity: 1, scale: 1 }}
+                              className="p-4 rounded-xl border border-white/10 bg-background/30 hover:bg-background/50 hover:border-white/20 transition-all group cursor-pointer"
+                              data-testid={`integration-available-${integration.id}`}
+                            >
+                              <div className="flex items-start justify-between">
+                                <div className="flex items-center gap-3">
+                                  <div className={`w-10 h-10 rounded-lg ${integration.color} flex items-center justify-center text-xl`}>
+                                    {integration.icon}
+                                  </div>
+                                  <div className="flex-1">
+                                    <div className="flex items-center gap-2">
+                                      <p className="font-medium">{integration.name}</p>
+                                      {integration.popular && (
+                                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-orange-500/20 text-orange-400 font-medium">
+                                          Popular
+                                        </span>
+                                      )}
+                                    </div>
+                                    <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{integration.description}</p>
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="mt-3 pt-3 border-t border-white/5 flex justify-end">
                                 <Button
                                   size="sm"
-                                  onClick={handleSendMessage}
-                                  disabled={sendMessageMutation.isPending || !messageText.trim()}
-                                  data-testid="button-send-webex-message"
+                                  variant="outline"
+                                  className="border-white/10 hover:bg-primary hover:text-primary-foreground hover:border-primary"
+                                  onClick={() => {
+                                    const newSet = new Set(connectedIntegrations);
+                                    newSet.add(integration.id);
+                                    setConnectedIntegrations(newSet);
+                                    toast({
+                                      title: "Integration Connected",
+                                      description: `${integration.name} has been added. Configure credentials in settings.`,
+                                    });
+                                  }}
+                                  data-testid={`button-connect-${integration.id}`}
                                 >
-                                  {sendMessageMutation.isPending ? (
-                                    <Loader2 className="w-4 h-4 animate-spin" />
-                                  ) : (
-                                    <>
-                                      <Send className="w-4 h-4 mr-2" />
-                                      Send
-                                    </>
-                                  )}
+                                  <Plus className="w-3.5 h-3.5 mr-1.5" />
+                                  Connect
                                 </Button>
                               </div>
-                            </div>
-                          )}
+                            </motion.div>
+                          ))}
+                      </div>
+                      
+                      {AVAILABLE_INTEGRATIONS
+                        .filter(i => i.id !== 'webex' || !webexStats?.hasToken)
+                        .filter(i => !connectedIntegrations.has(i.id))
+                        .filter(i => integrationCategory === 'all' || i.category === integrationCategory)
+                        .filter(i => 
+                          !integrationSearch || 
+                          i.name.toLowerCase().includes(integrationSearch.toLowerCase()) ||
+                          i.description.toLowerCase().includes(integrationSearch.toLowerCase())
+                        ).length === 0 && (
+                        <div className="text-center py-8 text-muted-foreground">
+                          <Search className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                          <p>No integrations found matching your search.</p>
                         </div>
                       )}
                     </div>
