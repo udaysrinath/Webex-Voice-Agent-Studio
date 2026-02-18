@@ -742,8 +742,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   const anamSessionSchema = z.object({
     personaConfig: z.object({
       name: z.string().optional(),
+      personaId: z.string().optional(),
       avatarId: z.string().optional(),
       voiceId: z.string().optional(),
+      llmId: z.string().optional(),
       systemPrompt: z.string().optional(),
     }).optional(),
   });
@@ -766,12 +768,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
           Authorization: `Bearer ${apiKey}`,
         },
         body: JSON.stringify({
-          personaConfig: {
-            name: data.personaConfig?.name || "Assistant",
-            avatarId: data.personaConfig?.avatarId || "30fa96d0-26c4-4e55-94a0-517025942e18",
-            voiceId: data.personaConfig?.voiceId || "6bfbe25a-979d-40f3-a92b-5394170af54b",
-            systemPrompt: data.personaConfig?.systemPrompt || "You are a helpful AI assistant. Reply in natural speech without formatting.",
-          },
+          personaConfig: data.personaConfig?.personaId
+            ? { personaId: data.personaConfig.personaId }
+            : {
+                name: data.personaConfig?.name || "Assistant",
+                avatarId: data.personaConfig?.avatarId || "30fa96d0-26c4-4e55-94a0-517025942e18",
+                voiceId: data.personaConfig?.voiceId || "6bfbe25a-979d-40f3-a92b-5394170af54b",
+                llmId: data.personaConfig?.llmId || "0934d97d-0c3a-4f33-91b0-5e136a0ef466",
+                systemPrompt: data.personaConfig?.systemPrompt || "You are a helpful AI assistant. Reply in natural speech without formatting.",
+              },
         }),
       });
 
