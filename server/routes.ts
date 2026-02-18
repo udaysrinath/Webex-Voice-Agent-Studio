@@ -761,6 +761,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const data = anamSessionSchema.parse(req.body || {});
 
+      let enrichedSystemPrompt = data.personaConfig?.systemPrompt || "You are a helpful AI assistant. Reply in natural speech without formatting.";
+
+      const webexMessages = await storage.getAllWebexMessages(100);
+      const webexRooms = await storage.getAllWebexRooms();
+
+      if (webexMessages.length > 0) {
+        const contextMessages = webexMessages
+          .reverse()
+          .slice(0, 50)
+          .map(msg => {
+            const date = new Date(msg.createdAt).toLocaleDateString();
+            return `[${date}] ${msg.personName || 'Unknown'}: ${msg.text}`;
+          })
+          .join("\n");
+
+        enrichedSystemPrompt += `\n\n## Recent Webex Messages (Knowledge Base):\nUse these messages as context to provide relevant and personalized responses:\n\n${contextMessages}`;
+      }
+
+      if (webexRooms.length > 0) {
+        const roomsList = webexRooms.map((r: { title: string }) => `- ${r.title}`).join("\n");
+        enrichedSystemPrompt += `\n\n## Available Webex Rooms:\n${roomsList}`;
+      }
+
       const response = await fetch("https://api.anam.ai/v1/auth/session-token", {
         method: "POST",
         headers: {
@@ -775,7 +798,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 avatarId: data.personaConfig?.avatarId || "30fa96d0-26c4-4e55-94a0-517025942e18",
                 voiceId: data.personaConfig?.voiceId || "6bfbe25a-979d-40f3-a92b-5394170af54b",
                 llmId: data.personaConfig?.llmId || "0934d97d-0c3a-4f33-91b0-5e136a0ef466",
-                systemPrompt: data.personaConfig?.systemPrompt || "You are a helpful AI assistant. Reply in natural speech without formatting.",
+                systemPrompt: enrichedSystemPrompt,
               },
         }),
       });
