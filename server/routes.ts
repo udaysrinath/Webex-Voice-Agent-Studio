@@ -325,6 +325,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const schema = z.object({ agentId: z.number(), url: z.string().url() });
       const { agentId, url } = schema.parse(req.body);
 
+      const parsed = new URL(url);
+      const privatePatterns = [
+        /^localhost$/i,
+        /^127\./,
+        /^10\./,
+        /^172\.(1[6-9]|2[0-9]|3[01])\./,
+        /^192\.168\./,
+        /^0\./,
+        /^::1$/,
+        /^fc00:/i,
+        /^fe80:/i,
+      ];
+      if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+        return res.status(400).json({ error: "Only http and https URLs are allowed." });
+      }
+      if (privatePatterns.some((p) => p.test(parsed.hostname))) {
+        return res.status(400).json({ error: "Private or local URLs are not allowed." });
+      }
+
       const response = await fetch(url, {
         headers: { "User-Agent": "Mozilla/5.0 (compatible; VoiceAgentStudio/1.0)" },
         signal: AbortSignal.timeout(10000),
