@@ -84,7 +84,7 @@ export default function Evaluate() {
       const { sessionToken } = await anamApi.getSessionToken({
         name: agent.name,
         systemPrompt: agent.systemPrompt || `You are ${agent.name}, a helpful AI assistant. Reply in natural speech without formatting. Add pauses using '...'`,
-      });
+      }, agent.id);
 
       const { createClient } = await import("@anam-ai/js-sdk");
       const client = createClient(sessionToken);

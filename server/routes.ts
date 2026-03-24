@@ -1,7 +1,7 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
-import { insertAgentSchema, insertEvaluationSchema, insertKnowledgeBaseItemSchema } from "@shared/schema";
+import { insertAgentSchema, insertEvaluationSchema } from "@shared/schema";
 import { fromError } from "zod-validation-error";
 import OpenAI from "openai";
 import { z } from "zod";
