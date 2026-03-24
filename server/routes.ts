@@ -1,7 +1,7 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
-import { insertAgentSchema, insertEvaluationSchema } from "@shared/schema";
+import { insertAgentSchema, insertEvaluationSchema, insertKnowledgeBaseItemSchema } from "@shared/schema";
 import { fromError } from "zod-validation-error";
 import OpenAI from "openai";
 import { z } from "zod";
@@ -304,6 +304,115 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(evaluations);
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch evaluations" });
+    }
+  });
+
+  app.get("/api/knowledge-base/agent/:agentId", async (req, res) => {
+    try {
+      const agentId = parseInt(req.params.agentId);
+      if (isNaN(agentId)) return res.status(400).json({ error: "Invalid agent ID" });
+      const items = await storage.getKnowledgeBaseItemsByAgent(agentId);
+      res.json(items);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch knowledge base items" });
+    }
+  });
+
+  const kbUpload = multer({ dest: os.tmpdir(), limits: { fileSize: 10 * 1024 * 1024 } });
+
+  app.post("/api/knowledge-base/url", async (req, res) => {
+    try {
+      const schema = z.object({ agentId: z.number(), url: z.string().url() });
+      const { agentId, url } = schema.parse(req.body);
+
+      const response = await fetch(url, {
+        headers: { "User-Agent": "Mozilla/5.0 (compatible; VoiceAgentStudio/1.0)" },
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!response.ok) {
+        return res.status(400).json({ error: `Could not fetch URL: ${response.status} ${response.statusText}` });
+      }
+
+      const html = await response.text();
+      const text = html
+        .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+        .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+        .replace(/<[^>]+>/g, " ")
+        .replace(/\s{2,}/g, " ")
+        .trim()
+        .slice(0, 50000);
+
+      const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i);
+      const title = titleMatch ? titleMatch[1].trim() : new URL(url).hostname;
+
+      const item = await storage.createKnowledgeBaseItem({ agentId, type: "url", title, content: text, sourceUrl: url });
+      res.json(item);
+    } catch (error: any) {
+      if (error.name === "ZodError") return res.status(400).json({ error: fromError(error).toString() });
+      res.status(500).json({ error: error.message || "Failed to fetch URL" });
+    }
+  });
+
+  app.post("/api/knowledge-base/file", kbUpload.single("file"), async (req, res) => {
+    let tempFilePath: string | null = null;
+    try {
+      const agentId = parseInt(req.body.agentId);
+      if (isNaN(agentId)) return res.status(400).json({ error: "Invalid agent ID" });
+
+      const file = req.file;
+      if (!file) return res.status(400).json({ error: "No file provided" });
+
+      tempFilePath = file.path;
+      const originalName = file.originalname || "uploaded_file";
+      const ext = path.extname(originalName).toLowerCase();
+
+      let content = "";
+      if (ext === ".pdf") {
+        const { default: pdfParse } = await import("pdf-parse");
+        const dataBuffer = fs.readFileSync(tempFilePath);
+        const pdfData = await pdfParse(dataBuffer);
+        content = pdfData.text.trim().slice(0, 50000);
+      } else {
+        content = fs.readFileSync(tempFilePath, "utf-8").trim().slice(0, 50000);
+      }
+
+      const title = path.basename(originalName, ext) || "Uploaded File";
+      const item = await storage.createKnowledgeBaseItem({ agentId, type: "file", title, content, sourceUrl: null });
+      res.json(item);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to process file" });
+    } finally {
+      if (tempFilePath && fs.existsSync(tempFilePath)) {
+        try { fs.unlinkSync(tempFilePath); } catch {}
+      }
+    }
+  });
+
+  app.post("/api/knowledge-base/text", async (req, res) => {
+    try {
+      const schema = z.object({
+        agentId: z.number(),
+        title: z.string().min(1).max(200),
+        content: z.string().min(1).max(50000),
+      });
+      const { agentId, title, content } = schema.parse(req.body);
+      const item = await storage.createKnowledgeBaseItem({ agentId, type: "text", title, content, sourceUrl: null });
+      res.json(item);
+    } catch (error: any) {
+      if (error.name === "ZodError") return res.status(400).json({ error: fromError(error).toString() });
+      res.status(500).json({ error: "Failed to save text" });
+    }
+  });
+
+  app.delete("/api/knowledge-base/:id", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
+      const deleted = await storage.deleteKnowledgeBaseItem(id);
+      if (!deleted) return res.status(404).json({ error: "Item not found" });
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to delete knowledge base item" });
     }
   });
 
@@ -655,6 +764,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (webexRooms.length > 0) {
         roomsList = webexRooms.map((r: { title: string }) => `- ${r.title}`).join("\n");
       }
+
+      let kbSection = "";
+      if (data.agentId) {
+        const kbItems = await storage.getKnowledgeBaseItemsByAgent(data.agentId);
+        if (kbItems.length > 0) {
+          const kbContent = kbItems.map(item => `### ${item.title}\n${item.content}`).join("\n\n");
+          kbSection = `\n\n## Knowledge Base:\nUse this information to answer questions accurately:\n\n${kbContent}`;
+        }
+      }
       
       const systemContent = data.systemPrompt || "You are a helpful AI assistant.";
       const contextSection = contextMessages 
@@ -667,7 +785,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const messages: Array<OpenAI.Chat.Completions.ChatCompletionMessageParam> = [
         {
           role: "system",
-          content: systemContent + contextSection + roomsSection,
+          content: systemContent + kbSection + contextSection + roomsSection,
         },
       ];
       
@@ -740,6 +858,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   const anamSessionSchema = z.object({
+    agentId: z.number().optional(),
     personaConfig: z.object({
       name: z.string().optional(),
       personaId: z.string().optional(),
@@ -762,6 +881,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const data = anamSessionSchema.parse(req.body || {});
 
       let enrichedSystemPrompt = data.personaConfig?.systemPrompt || "You are a helpful AI assistant. Reply in natural speech without formatting.";
+
+      if (data.agentId) {
+        const kbItems = await storage.getKnowledgeBaseItemsByAgent(data.agentId);
+        if (kbItems.length > 0) {
+          const kbContent = kbItems.map(item => `### ${item.title}\n${item.content}`).join("\n\n");
+          enrichedSystemPrompt += `\n\n## Knowledge Base:\nUse this information to answer questions accurately:\n\n${kbContent}`;
+        }
+      }
 
       const webexMessages = await storage.getAllWebexMessages(100);
       const webexRooms = await storage.getAllWebexRooms();

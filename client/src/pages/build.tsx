@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { agentsApi, ttsApi, webexApi, type TTSRequest } from "@/lib/api";
+import { agentsApi, ttsApi, webexApi, knowledgeBaseApi, type TTSRequest, type KnowledgeBaseItem } from "@/lib/api";
 import type { InsertAgent } from "@shared/schema";
 
 const LLMS = [
@@ -377,7 +377,7 @@ export default function Build() {
   const [messageText, setMessageText] = useState("");
   const [showFunctionCode, setShowFunctionCode] = useState(false);
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
-  const [activeKbTab, setActiveKbTab] = useState<'tools' | 'integrations'>('tools');
+  const [activeKbTab, setActiveKbTab] = useState<'sources' | 'tools' | 'integrations'>('sources');
   const [showAddTool, setShowAddTool] = useState(false);
   const [showAddIntegration, setShowAddIntegration] = useState(false);
   const [newToolName, setNewToolName] = useState("");
@@ -396,6 +396,14 @@ export default function Build() {
   const [newMcpEndpoint, setNewMcpEndpoint] = useState("");
   const [newMcpDescription, setNewMcpDescription] = useState("");
 
+  const [showAddUrl, setShowAddUrl] = useState(false);
+  const [showAddText, setShowAddText] = useState(false);
+  const [newKbUrl, setNewKbUrl] = useState("");
+  const [newKbTitle, setNewKbTitle] = useState("");
+  const [newKbContent, setNewKbContent] = useState("");
+  const [kbLoading, setKbLoading] = useState(false);
+  const [savedAgentId, setSavedAgentId] = useState<number | null>(null);
+
   const { data: webexStats } = useQuery({
     queryKey: ["webex-stats"],
     queryFn: () => webexApi.getStats(),
@@ -405,6 +413,12 @@ export default function Build() {
     queryKey: ["webex-rooms"],
     queryFn: () => webexApi.getRooms(),
     enabled: !!webexStats?.hasToken,
+  });
+
+  const { data: kbItems = [], refetch: refetchKbItems } = useQuery<KnowledgeBaseItem[]>({
+    queryKey: ["knowledge-base", savedAgentId],
+    queryFn: () => knowledgeBaseApi.getByAgent(savedAgentId!),
+    enabled: !!savedAgentId,
   });
 
   const syncWebexMutation = useMutation({
@@ -452,11 +466,12 @@ export default function Build() {
   const createAgentMutation = useMutation({
     mutationFn: (data: InsertAgent) => agentsApi.create(data),
     onSuccess: (agent) => {
+      setSavedAgentId(agent.id);
+      setActiveKbTab('sources');
       toast({
         title: "Agent Created Successfully",
-        description: "Your voice agent is ready for evaluation.",
+        description: "Add knowledge sources below, then start evaluating.",
       });
-      setLocation(`/evaluate?agentId=${agent.id}`);
     },
     onError: (error) => {
       toast({
@@ -912,8 +927,20 @@ export default function Build() {
             <div className="bg-card/30 rounded-2xl border border-white/5">
               <div className="flex border-b border-white/5">
                 <button
+                  onClick={() => setActiveKbTab('sources')}
+                  className={`flex-1 px-4 py-4 text-sm font-medium transition-colors flex items-center justify-center gap-2 ${
+                    activeKbTab === 'sources'
+                      ? 'text-primary border-b-2 border-primary bg-primary/5'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                  data-testid="tab-sources"
+                >
+                  <FileText className="w-4 h-4" />
+                  Sources
+                </button>
+                <button
                   onClick={() => setActiveKbTab('tools')}
-                  className={`flex-1 px-6 py-4 text-sm font-medium transition-colors flex items-center justify-center gap-2 ${
+                  className={`flex-1 px-4 py-4 text-sm font-medium transition-colors flex items-center justify-center gap-2 ${
                     activeKbTab === 'tools' 
                       ? 'text-primary border-b-2 border-primary bg-primary/5' 
                       : 'text-muted-foreground hover:text-foreground'
@@ -925,7 +952,7 @@ export default function Build() {
                 </button>
                 <button
                   onClick={() => setActiveKbTab('integrations')}
-                  className={`flex-1 px-6 py-4 text-sm font-medium transition-colors flex items-center justify-center gap-2 ${
+                  className={`flex-1 px-4 py-4 text-sm font-medium transition-colors flex items-center justify-center gap-2 ${
                     activeKbTab === 'integrations' 
                       ? 'text-primary border-b-2 border-primary bg-primary/5' 
                       : 'text-muted-foreground hover:text-foreground'
@@ -938,6 +965,213 @@ export default function Build() {
               </div>
 
               <div className="p-6">
+                {activeKbTab === 'sources' && (
+                  <div className="space-y-4">
+                    {!savedAgentId ? (
+                      <div className="text-center py-8 px-4">
+                        <FileText className="w-10 h-10 mx-auto mb-3 text-muted-foreground opacity-50" />
+                        <p className="font-medium mb-1">Save your agent first</p>
+                        <p className="text-sm text-muted-foreground">Create your agent below to start adding knowledge sources.</p>
+                      </div>
+                    ) : (
+                      <>
+                        <div>
+                          <p className="font-medium mb-1">Knowledge Sources</p>
+                          <p className="text-sm text-muted-foreground mb-4">Add URLs, files, or text that your agent will use when answering questions.</p>
+                          <div className="flex gap-2 flex-wrap">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => { setShowAddUrl(true); setShowAddText(false); }}
+                              className="gap-2 border-white/10"
+                              data-testid="button-add-url"
+                            >
+                              <Link2 className="w-4 h-4" />
+                              Add URL
+                            </Button>
+                            <label className="cursor-pointer inline-flex items-center gap-2 text-sm font-medium h-8 px-3 rounded-md border border-white/10 bg-transparent hover:bg-white/5 transition-colors">
+                              <input
+                                type="file"
+                                accept=".txt,.md,.pdf,.csv"
+                                className="hidden"
+                                data-testid="input-add-file"
+                                onChange={async (e) => {
+                                  const file = e.target.files?.[0];
+                                  if (!file || !savedAgentId) return;
+                                  setKbLoading(true);
+                                  try {
+                                    await knowledgeBaseApi.addFile(savedAgentId, file);
+                                    refetchKbItems();
+                                    toast({ title: "File added", description: `"${file.name}" was added to your knowledge base.` });
+                                  } catch (err: any) {
+                                    toast({ title: "Upload failed", description: err.message, variant: "destructive" });
+                                  } finally {
+                                    setKbLoading(false);
+                                    e.target.value = "";
+                                  }
+                                }}
+                              />
+                              {kbLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Database className="w-4 h-4" />}
+                              Add File
+                            </label>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => { setShowAddText(true); setShowAddUrl(false); }}
+                              className="gap-2 border-white/10"
+                              data-testid="button-create-text"
+                            >
+                              <FileText className="w-4 h-4" />
+                              Create Text
+                            </Button>
+                          </div>
+                        </div>
+
+                        {showAddUrl && (
+                          <div className="p-4 bg-background/50 rounded-lg border border-white/10 space-y-3">
+                            <p className="text-sm font-medium">Add URL</p>
+                            <Input
+                              value={newKbUrl}
+                              onChange={(e) => setNewKbUrl(e.target.value)}
+                              placeholder="https://example.com/page"
+                              className="bg-background border-white/10"
+                              data-testid="input-kb-url"
+                            />
+                            <div className="flex justify-end gap-2">
+                              <Button variant="ghost" size="sm" onClick={() => { setShowAddUrl(false); setNewKbUrl(""); }}>Cancel</Button>
+                              <Button
+                                size="sm"
+                                disabled={!newKbUrl || kbLoading}
+                                data-testid="button-save-url"
+                                onClick={async () => {
+                                  if (!savedAgentId || !newKbUrl) return;
+                                  setKbLoading(true);
+                                  try {
+                                    await knowledgeBaseApi.addUrl(savedAgentId, newKbUrl);
+                                    refetchKbItems();
+                                    setShowAddUrl(false);
+                                    setNewKbUrl("");
+                                    toast({ title: "URL added", description: "Page content was fetched and saved." });
+                                  } catch (err: any) {
+                                    toast({ title: "Failed to add URL", description: err.message, variant: "destructive" });
+                                  } finally {
+                                    setKbLoading(false);
+                                  }
+                                }}
+                              >
+                                {kbLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Fetch & Save"}
+                              </Button>
+                            </div>
+                          </div>
+                        )}
+
+                        {showAddText && (
+                          <div className="p-4 bg-background/50 rounded-lg border border-white/10 space-y-3">
+                            <p className="text-sm font-medium">Create Text</p>
+                            <Input
+                              value={newKbTitle}
+                              onChange={(e) => setNewKbTitle(e.target.value)}
+                              placeholder="Title"
+                              className="bg-background border-white/10"
+                              data-testid="input-kb-text-title"
+                            />
+                            <Textarea
+                              value={newKbContent}
+                              onChange={(e) => setNewKbContent(e.target.value)}
+                              placeholder="Paste or write your content here..."
+                              className="bg-background border-white/10 min-h-[120px]"
+                              data-testid="input-kb-text-content"
+                            />
+                            <div className="flex justify-end gap-2">
+                              <Button variant="ghost" size="sm" onClick={() => { setShowAddText(false); setNewKbTitle(""); setNewKbContent(""); }}>Cancel</Button>
+                              <Button
+                                size="sm"
+                                disabled={!newKbTitle || !newKbContent || kbLoading}
+                                data-testid="button-save-text"
+                                onClick={async () => {
+                                  if (!savedAgentId || !newKbTitle || !newKbContent) return;
+                                  setKbLoading(true);
+                                  try {
+                                    await knowledgeBaseApi.addText(savedAgentId, newKbTitle, newKbContent);
+                                    refetchKbItems();
+                                    setShowAddText(false);
+                                    setNewKbTitle("");
+                                    setNewKbContent("");
+                                    toast({ title: "Text saved", description: "Your text was added to the knowledge base." });
+                                  } catch (err: any) {
+                                    toast({ title: "Failed to save text", description: err.message, variant: "destructive" });
+                                  } finally {
+                                    setKbLoading(false);
+                                  }
+                                }}
+                              >
+                                {kbLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Save"}
+                              </Button>
+                            </div>
+                          </div>
+                        )}
+
+                        <div className="space-y-2">
+                          {kbItems.map((item) => (
+                            <div
+                              key={item.id}
+                              className="flex items-center justify-between p-3 bg-background/30 rounded-lg border border-white/5"
+                              data-testid={`kb-item-${item.id}`}
+                            >
+                              <div className="flex items-center gap-3 min-w-0">
+                                <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${
+                                  item.type === 'url' ? 'bg-blue-500/10' : item.type === 'file' ? 'bg-purple-500/10' : 'bg-green-500/10'
+                                }`}>
+                                  {item.type === 'url' && <Link2 className="w-4 h-4 text-blue-400" />}
+                                  {item.type === 'file' && <Database className="w-4 h-4 text-purple-400" />}
+                                  {item.type === 'text' && <FileText className="w-4 h-4 text-green-400" />}
+                                </div>
+                                <div className="min-w-0">
+                                  <p className="font-medium text-sm truncate">{item.title}</p>
+                                  <p className="text-xs text-muted-foreground">{item.type === 'url' ? 'URL' : item.type === 'file' ? 'File' : 'Text'} · {item.content.length.toLocaleString()} chars</p>
+                                </div>
+                              </div>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8 text-muted-foreground hover:text-red-400 shrink-0"
+                                data-testid={`button-delete-kb-${item.id}`}
+                                onClick={async () => {
+                                  try {
+                                    await knowledgeBaseApi.delete(item.id);
+                                    refetchKbItems();
+                                    toast({ title: "Source removed" });
+                                  } catch (err: any) {
+                                    toast({ title: "Failed to remove", description: err.message, variant: "destructive" });
+                                  }
+                                }}
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </Button>
+                            </div>
+                          ))}
+                          {kbItems.length === 0 && !showAddUrl && !showAddText && (
+                            <div className="text-center py-6 text-muted-foreground">
+                              <FileText className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                              <p className="text-sm">No sources added yet</p>
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="pt-2">
+                          <Button
+                            className="w-full"
+                            onClick={() => setLocation(`/evaluate?agentId=${savedAgentId}`)}
+                            data-testid="button-start-evaluating"
+                          >
+                            Start Evaluating
+                          </Button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
+
                 {activeKbTab === 'tools' && (
                   <div className="space-y-4">
                     <div className="flex items-center justify-between">

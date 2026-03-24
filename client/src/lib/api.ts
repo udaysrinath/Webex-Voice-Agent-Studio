@@ -1,4 +1,4 @@
-import type { Agent, InsertAgent, Evaluation, InsertEvaluation, WebexRoom, WebexMessage } from "@shared/schema";
+import type { Agent, InsertAgent, Evaluation, InsertEvaluation, WebexRoom, WebexMessage, KnowledgeBaseItem } from "@shared/schema";
 
 const API_BASE = "/api";
 
@@ -210,6 +210,62 @@ export const webexApi = {
   },
 };
 
+export { type KnowledgeBaseItem };
+
+export const knowledgeBaseApi = {
+  getByAgent: async (agentId: number): Promise<KnowledgeBaseItem[]> => {
+    const res = await fetch(`${API_BASE}/knowledge-base/agent/${agentId}`);
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  },
+
+  addUrl: async (agentId: number, url: string): Promise<KnowledgeBaseItem> => {
+    const res = await fetch(`${API_BASE}/knowledge-base/url`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ agentId, url }),
+    });
+    if (!res.ok) {
+      const error = await res.json();
+      throw new Error(error.error || "Failed to add URL");
+    }
+    return res.json();
+  },
+
+  addFile: async (agentId: number, file: File): Promise<KnowledgeBaseItem> => {
+    const formData = new FormData();
+    formData.append("agentId", String(agentId));
+    formData.append("file", file);
+    const res = await fetch(`${API_BASE}/knowledge-base/file`, {
+      method: "POST",
+      body: formData,
+    });
+    if (!res.ok) {
+      const error = await res.json();
+      throw new Error(error.error || "Failed to upload file");
+    }
+    return res.json();
+  },
+
+  addText: async (agentId: number, title: string, content: string): Promise<KnowledgeBaseItem> => {
+    const res = await fetch(`${API_BASE}/knowledge-base/text`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ agentId, title, content }),
+    });
+    if (!res.ok) {
+      const error = await res.json();
+      throw new Error(error.error || "Failed to save text");
+    }
+    return res.json();
+  },
+
+  delete: async (id: number): Promise<void> => {
+    const res = await fetch(`${API_BASE}/knowledge-base/${id}`, { method: "DELETE" });
+    if (!res.ok) throw new Error(await res.text());
+  },
+};
+
 export interface AnamSessionResponse {
   sessionToken: string;
 }
@@ -222,11 +278,11 @@ export interface AnamPersonaConfig {
 }
 
 export const anamApi = {
-  getSessionToken: async (personaConfig?: AnamPersonaConfig): Promise<AnamSessionResponse> => {
+  getSessionToken: async (personaConfig?: AnamPersonaConfig, agentId?: number): Promise<AnamSessionResponse> => {
     const res = await fetch(`${API_BASE}/anam/session-token`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ personaConfig }),
+      body: JSON.stringify({ personaConfig, agentId }),
     });
     if (!res.ok) {
       const error = await res.json();

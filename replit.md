@@ -65,7 +65,7 @@ Preferred communication style: Simple, everyday language.
 - Drizzle Kit for migrations and schema synchronization
 
 **Database Schema**
-The application has three core tables:
+The application has five core tables:
 
 1. **users** - User authentication (currently defined but not fully implemented)
    - Stores username and password for future authentication features
@@ -78,6 +78,13 @@ The application has three core tables:
    - Links to agents via foreign key
    - Stores input text and four rating dimensions (naturalness, clarity, intonation, speed)
    - Timestamps for evaluation tracking
+
+4. **webex_rooms** / **webex_messages** - Synced Webex conversation history used as knowledge context
+
+5. **knowledge_base_items** - Custom knowledge sources per agent
+   - Supports three types: `url` (fetched web pages), `file` (uploaded text/PDF), `text` (manually written)
+   - Content is injected into the agent system prompt at chat and avatar session start
+   - Links to agent via foreign key
 
 **Schema Sharing Strategy**
 - Drizzle schemas exported from `shared/schema.ts`

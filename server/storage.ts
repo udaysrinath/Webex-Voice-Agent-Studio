@@ -13,11 +13,14 @@ import {
   type InsertWebexRoom,
   type WebexMessage,
   type InsertWebexMessage,
+  type KnowledgeBaseItem,
+  type InsertKnowledgeBaseItem,
   users,
   agents,
   evaluations,
   webexRooms,
   webexMessages,
+  knowledgeBaseItems,
 } from "@shared/schema";
 
 neonConfig.webSocketConstructor = ws;
@@ -46,6 +49,10 @@ export interface IStorage {
   getWebexMessagesByRoom(roomId: string): Promise<WebexMessage[]>;
   getAllWebexMessages(limit?: number): Promise<WebexMessage[]>;
   getWebexMessageCount(): Promise<number>;
+
+  createKnowledgeBaseItem(item: InsertKnowledgeBaseItem): Promise<KnowledgeBaseItem>;
+  getKnowledgeBaseItemsByAgent(agentId: number): Promise<KnowledgeBaseItem[]>;
+  deleteKnowledgeBaseItem(id: number): Promise<boolean>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -159,6 +166,24 @@ export class DatabaseStorage implements IStorage {
   async getWebexMessageCount(): Promise<number> {
     const result = await db.select().from(webexMessages);
     return result.length;
+  }
+
+  async createKnowledgeBaseItem(item: InsertKnowledgeBaseItem): Promise<KnowledgeBaseItem> {
+    const [result] = await db.insert(knowledgeBaseItems).values(item).returning();
+    return result;
+  }
+
+  async getKnowledgeBaseItemsByAgent(agentId: number): Promise<KnowledgeBaseItem[]> {
+    return await db
+      .select()
+      .from(knowledgeBaseItems)
+      .where(eq(knowledgeBaseItems.agentId, agentId))
+      .orderBy(desc(knowledgeBaseItems.createdAt));
+  }
+
+  async deleteKnowledgeBaseItem(id: number): Promise<boolean> {
+    const result = await db.delete(knowledgeBaseItems).where(eq(knowledgeBaseItems.id, id)).returning();
+    return result.length > 0;
   }
 }
 

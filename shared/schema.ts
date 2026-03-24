@@ -86,3 +86,21 @@ export const insertWebexMessageSchema = createInsertSchema(webexMessages).omit({
 
 export type InsertWebexMessage = z.infer<typeof insertWebexMessageSchema>;
 export type WebexMessage = typeof webexMessages.$inferSelect;
+
+export const knowledgeBaseItems = pgTable("knowledge_base_items", {
+  id: serial("id").primaryKey(),
+  agentId: integer("agent_id").notNull().references(() => agents.id),
+  type: text("type").notNull(), // 'url' | 'file' | 'text'
+  title: text("title").notNull(),
+  content: text("content").notNull(),
+  sourceUrl: text("source_url"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const insertKnowledgeBaseItemSchema = createInsertSchema(knowledgeBaseItems).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type InsertKnowledgeBaseItem = z.infer<typeof insertKnowledgeBaseItemSchema>;
+export type KnowledgeBaseItem = typeof knowledgeBaseItems.$inferSelect;
