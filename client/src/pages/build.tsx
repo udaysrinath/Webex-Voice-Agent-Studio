@@ -503,6 +503,21 @@ export default function Build() {
     },
   });
 
+  const ensureAgentSaved = async (): Promise<number> => {
+    if (savedAgentId) return savedAgentId;
+    const agent = await agentsApi.create({
+      name: agentName,
+      systemPrompt,
+      llmModel: selectedLLM,
+      voiceModel: selectedVoice,
+      language,
+      gender,
+    });
+    setSavedAgentId(agent.id);
+    queryClient.invalidateQueries({ queryKey: ["agents"] });
+    return agent.id;
+  };
+
   const handleVoicePreview = async (voiceId: string) => {
     if (audioRef.current) {
       audioRef.current.pause();
@@ -987,161 +1002,181 @@ export default function Build() {
 
               <div className="p-6">
                 {activeKbTab === 'sources' && (
-                  <div className="space-y-4">
-                    {!savedAgentId ? (
-                      <div className="text-center py-8 px-4">
-                        <FileText className="w-10 h-10 mx-auto mb-3 text-muted-foreground opacity-50" />
-                        <p className="font-medium mb-1">Save your agent first</p>
-                        <p className="text-sm text-muted-foreground">Create your agent below to start adding knowledge sources.</p>
+                  <div className="space-y-5">
+                    <div>
+                      <p className="text-sm text-muted-foreground mb-4">Add content your agent will reference when answering questions. Sources are injected into the agent's context automatically.</p>
+
+                      <div className="grid grid-cols-3 gap-3 mb-5">
+                        <button
+                          className="flex flex-col items-center gap-2.5 p-4 rounded-xl border border-white/10 bg-white/3 hover:bg-white/8 hover:border-blue-500/40 transition-all group text-center"
+                          onClick={() => { setShowAddUrl(!showAddUrl); setShowAddText(false); }}
+                          data-testid="button-add-url"
+                        >
+                          <div className="w-10 h-10 rounded-full bg-blue-500/10 flex items-center justify-center group-hover:bg-blue-500/20 transition-colors">
+                            <Link2 className="w-5 h-5 text-blue-400" />
+                          </div>
+                          <div>
+                            <p className="text-sm font-medium">Add URL</p>
+                            <p className="text-xs text-muted-foreground mt-0.5">Fetch a web page</p>
+                          </div>
+                        </button>
+
+                        <label className="flex flex-col items-center gap-2.5 p-4 rounded-xl border border-white/10 bg-white/3 hover:bg-white/8 hover:border-purple-500/40 transition-all group text-center cursor-pointer" data-testid="label-add-file">
+                          <input
+                            type="file"
+                            accept=".txt,.md,.pdf,.csv"
+                            className="hidden"
+                            data-testid="input-add-file"
+                            onChange={async (e) => {
+                              const file = e.target.files?.[0];
+                              if (!file) return;
+                              setKbLoading(true);
+                              try {
+                                const agentId = await ensureAgentSaved();
+                                await knowledgeBaseApi.addFile(agentId, file);
+                                refetchKbItems();
+                                toast({ title: "File added", description: `"${file.name}" was added to your knowledge base.` });
+                              } catch (err: any) {
+                                toast({ title: "Upload failed", description: err.message, variant: "destructive" });
+                              } finally {
+                                setKbLoading(false);
+                                e.target.value = "";
+                              }
+                            }}
+                          />
+                          <div className="w-10 h-10 rounded-full bg-purple-500/10 flex items-center justify-center group-hover:bg-purple-500/20 transition-colors">
+                            {kbLoading ? <Loader2 className="w-5 h-5 text-purple-400 animate-spin" /> : <Database className="w-5 h-5 text-purple-400" />}
+                          </div>
+                          <div>
+                            <p className="text-sm font-medium">Upload File</p>
+                            <p className="text-xs text-muted-foreground mt-0.5">PDF, TXT, MD, CSV</p>
+                          </div>
+                        </label>
+
+                        <button
+                          className="flex flex-col items-center gap-2.5 p-4 rounded-xl border border-white/10 bg-white/3 hover:bg-white/8 hover:border-green-500/40 transition-all group text-center"
+                          onClick={() => { setShowAddText(!showAddText); setShowAddUrl(false); }}
+                          data-testid="button-create-text"
+                        >
+                          <div className="w-10 h-10 rounded-full bg-green-500/10 flex items-center justify-center group-hover:bg-green-500/20 transition-colors">
+                            <FileText className="w-5 h-5 text-green-400" />
+                          </div>
+                          <div>
+                            <p className="text-sm font-medium">Write Text</p>
+                            <p className="text-xs text-muted-foreground mt-0.5">Paste or type content</p>
+                          </div>
+                        </button>
                       </div>
-                    ) : (
-                      <>
-                        <div>
-                          <p className="font-medium mb-1">Knowledge Sources</p>
-                          <p className="text-sm text-muted-foreground mb-4">Add URLs, files, or text that your agent will use when answering questions.</p>
-                          <div className="flex gap-2 flex-wrap">
+
+                      {showAddUrl && (
+                        <div className="p-4 bg-blue-500/5 rounded-xl border border-blue-500/20 space-y-3 mb-4">
+                          <div className="flex items-center gap-2 mb-1">
+                            <Link2 className="w-4 h-4 text-blue-400" />
+                            <p className="text-sm font-medium">Add URL</p>
+                          </div>
+                          <Input
+                            value={newKbUrl}
+                            onChange={(e) => setNewKbUrl(e.target.value)}
+                            placeholder="https://example.com/docs/page"
+                            className="bg-background border-white/10"
+                            data-testid="input-kb-url"
+                            onKeyDown={(e) => { if (e.key === 'Enter' && newKbUrl) e.currentTarget.blur(); }}
+                          />
+                          <p className="text-xs text-muted-foreground">The page will be fetched and its text content saved as a source.</p>
+                          <div className="flex justify-end gap-2">
+                            <Button variant="ghost" size="sm" onClick={() => { setShowAddUrl(false); setNewKbUrl(""); }}>Cancel</Button>
                             <Button
-                              variant="outline"
                               size="sm"
-                              onClick={() => { setShowAddUrl(true); setShowAddText(false); }}
-                              className="gap-2 border-white/10"
-                              data-testid="button-add-url"
+                              disabled={!newKbUrl || kbLoading}
+                              data-testid="button-save-url"
+                              onClick={async () => {
+                                if (!newKbUrl) return;
+                                setKbLoading(true);
+                                try {
+                                  const agentId = await ensureAgentSaved();
+                                  await knowledgeBaseApi.addUrl(agentId, newKbUrl);
+                                  refetchKbItems();
+                                  setShowAddUrl(false);
+                                  setNewKbUrl("");
+                                  toast({ title: "URL added", description: "Page content was fetched and saved." });
+                                } catch (err: any) {
+                                  toast({ title: "Failed to add URL", description: err.message, variant: "destructive" });
+                                } finally {
+                                  setKbLoading(false);
+                                }
+                              }}
                             >
-                              <Link2 className="w-4 h-4" />
-                              Add URL
-                            </Button>
-                            <label className="cursor-pointer inline-flex items-center gap-2 text-sm font-medium h-8 px-3 rounded-md border border-white/10 bg-transparent hover:bg-white/5 transition-colors">
-                              <input
-                                type="file"
-                                accept=".txt,.md,.pdf,.csv"
-                                className="hidden"
-                                data-testid="input-add-file"
-                                onChange={async (e) => {
-                                  const file = e.target.files?.[0];
-                                  if (!file || !savedAgentId) return;
-                                  setKbLoading(true);
-                                  try {
-                                    await knowledgeBaseApi.addFile(savedAgentId, file);
-                                    refetchKbItems();
-                                    toast({ title: "File added", description: `"${file.name}" was added to your knowledge base.` });
-                                  } catch (err: any) {
-                                    toast({ title: "Upload failed", description: err.message, variant: "destructive" });
-                                  } finally {
-                                    setKbLoading(false);
-                                    e.target.value = "";
-                                  }
-                                }}
-                              />
-                              {kbLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Database className="w-4 h-4" />}
-                              Add File
-                            </label>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => { setShowAddText(true); setShowAddUrl(false); }}
-                              className="gap-2 border-white/10"
-                              data-testid="button-create-text"
-                            >
-                              <FileText className="w-4 h-4" />
-                              Create Text
+                              {kbLoading ? <><Loader2 className="w-4 h-4 animate-spin mr-1" />Fetching...</> : "Fetch & Save"}
                             </Button>
                           </div>
                         </div>
+                      )}
 
-                        {showAddUrl && (
-                          <div className="p-4 bg-background/50 rounded-lg border border-white/10 space-y-3">
-                            <p className="text-sm font-medium">Add URL</p>
-                            <Input
-                              value={newKbUrl}
-                              onChange={(e) => setNewKbUrl(e.target.value)}
-                              placeholder="https://example.com/page"
-                              className="bg-background border-white/10"
-                              data-testid="input-kb-url"
-                            />
-                            <div className="flex justify-end gap-2">
-                              <Button variant="ghost" size="sm" onClick={() => { setShowAddUrl(false); setNewKbUrl(""); }}>Cancel</Button>
-                              <Button
-                                size="sm"
-                                disabled={!newKbUrl || kbLoading}
-                                data-testid="button-save-url"
-                                onClick={async () => {
-                                  if (!savedAgentId || !newKbUrl) return;
-                                  setKbLoading(true);
-                                  try {
-                                    await knowledgeBaseApi.addUrl(savedAgentId, newKbUrl);
-                                    refetchKbItems();
-                                    setShowAddUrl(false);
-                                    setNewKbUrl("");
-                                    toast({ title: "URL added", description: "Page content was fetched and saved." });
-                                  } catch (err: any) {
-                                    toast({ title: "Failed to add URL", description: err.message, variant: "destructive" });
-                                  } finally {
-                                    setKbLoading(false);
-                                  }
-                                }}
-                              >
-                                {kbLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Fetch & Save"}
-                              </Button>
-                            </div>
+                      {showAddText && (
+                        <div className="p-4 bg-green-500/5 rounded-xl border border-green-500/20 space-y-3 mb-4">
+                          <div className="flex items-center gap-2 mb-1">
+                            <FileText className="w-4 h-4 text-green-400" />
+                            <p className="text-sm font-medium">Write Text</p>
                           </div>
-                        )}
-
-                        {showAddText && (
-                          <div className="p-4 bg-background/50 rounded-lg border border-white/10 space-y-3">
-                            <p className="text-sm font-medium">Create Text</p>
-                            <Input
-                              value={newKbTitle}
-                              onChange={(e) => setNewKbTitle(e.target.value)}
-                              placeholder="Title"
-                              className="bg-background border-white/10"
-                              data-testid="input-kb-text-title"
-                            />
-                            <Textarea
-                              value={newKbContent}
-                              onChange={(e) => setNewKbContent(e.target.value)}
-                              placeholder="Paste or write your content here..."
-                              className="bg-background border-white/10 min-h-[120px]"
-                              data-testid="input-kb-text-content"
-                            />
-                            <div className="flex justify-end gap-2">
-                              <Button variant="ghost" size="sm" onClick={() => { setShowAddText(false); setNewKbTitle(""); setNewKbContent(""); }}>Cancel</Button>
-                              <Button
-                                size="sm"
-                                disabled={!newKbTitle || !newKbContent || kbLoading}
-                                data-testid="button-save-text"
-                                onClick={async () => {
-                                  if (!savedAgentId || !newKbTitle || !newKbContent) return;
-                                  setKbLoading(true);
-                                  try {
-                                    await knowledgeBaseApi.addText(savedAgentId, newKbTitle, newKbContent);
-                                    refetchKbItems();
-                                    setShowAddText(false);
-                                    setNewKbTitle("");
-                                    setNewKbContent("");
-                                    toast({ title: "Text saved", description: "Your text was added to the knowledge base." });
-                                  } catch (err: any) {
-                                    toast({ title: "Failed to save text", description: err.message, variant: "destructive" });
-                                  } finally {
-                                    setKbLoading(false);
-                                  }
-                                }}
-                              >
-                                {kbLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Save"}
-                              </Button>
-                            </div>
+                          <Input
+                            value={newKbTitle}
+                            onChange={(e) => setNewKbTitle(e.target.value)}
+                            placeholder="Source title (e.g. Product FAQ)"
+                            className="bg-background border-white/10"
+                            data-testid="input-kb-text-title"
+                          />
+                          <Textarea
+                            value={newKbContent}
+                            onChange={(e) => setNewKbContent(e.target.value)}
+                            placeholder="Paste or write the content this agent should know about..."
+                            className="bg-background border-white/10 min-h-[140px]"
+                            data-testid="input-kb-text-content"
+                          />
+                          <p className="text-xs text-muted-foreground">{newKbContent.length.toLocaleString()} characters · max 50,000</p>
+                          <div className="flex justify-end gap-2">
+                            <Button variant="ghost" size="sm" onClick={() => { setShowAddText(false); setNewKbTitle(""); setNewKbContent(""); }}>Cancel</Button>
+                            <Button
+                              size="sm"
+                              disabled={!newKbTitle || !newKbContent || kbLoading}
+                              data-testid="button-save-text"
+                              onClick={async () => {
+                                if (!newKbTitle || !newKbContent) return;
+                                setKbLoading(true);
+                                try {
+                                  const agentId = await ensureAgentSaved();
+                                  await knowledgeBaseApi.addText(agentId, newKbTitle, newKbContent);
+                                  refetchKbItems();
+                                  setShowAddText(false);
+                                  setNewKbTitle("");
+                                  setNewKbContent("");
+                                  toast({ title: "Text saved", description: "Your text was added to the knowledge base." });
+                                } catch (err: any) {
+                                  toast({ title: "Failed to save text", description: err.message, variant: "destructive" });
+                                } finally {
+                                  setKbLoading(false);
+                                }
+                              }}
+                            >
+                              {kbLoading ? <><Loader2 className="w-4 h-4 animate-spin mr-1" />Saving...</> : "Save Source"}
+                            </Button>
                           </div>
-                        )}
+                        </div>
+                      )}
+                    </div>
 
+                    {kbItems.length > 0 && (
+                      <div>
+                        <p className="text-xs text-muted-foreground uppercase tracking-wider font-medium mb-2">Added Sources ({kbItems.length})</p>
                         <div className="space-y-2">
                           {kbItems.map((item) => (
                             <div
                               key={item.id}
-                              className="flex items-center justify-between p-3 bg-background/30 rounded-lg border border-white/5"
+                              className="flex items-center justify-between p-3 bg-background/40 rounded-xl border border-white/8 hover:border-white/15 transition-colors"
                               data-testid={`kb-item-${item.id}`}
                             >
                               <div className="flex items-center gap-3 min-w-0">
-                                <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${
-                                  item.type === 'url' ? 'bg-blue-500/10' : item.type === 'file' ? 'bg-purple-500/10' : 'bg-green-500/10'
+                                <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
+                                  item.type === 'url' ? 'bg-blue-500/15' : item.type === 'file' ? 'bg-purple-500/15' : 'bg-green-500/15'
                                 }`}>
                                   {item.type === 'url' && <Link2 className="w-4 h-4 text-blue-400" />}
                                   {item.type === 'file' && <Database className="w-4 h-4 text-purple-400" />}
@@ -1149,7 +1184,14 @@ export default function Build() {
                                 </div>
                                 <div className="min-w-0">
                                   <p className="font-medium text-sm truncate">{item.title}</p>
-                                  <p className="text-xs text-muted-foreground">{item.type === 'url' ? 'URL' : item.type === 'file' ? 'File' : 'Text'} · {item.content.length.toLocaleString()} chars</p>
+                                  <p className="text-xs text-muted-foreground">
+                                    <span className={`inline-block rounded px-1 py-0.5 text-[10px] font-medium mr-1.5 ${
+                                      item.type === 'url' ? 'bg-blue-500/10 text-blue-400' : item.type === 'file' ? 'bg-purple-500/10 text-purple-400' : 'bg-green-500/10 text-green-400'
+                                    }`}>
+                                      {item.type === 'url' ? 'URL' : item.type === 'file' ? 'File' : 'Text'}
+                                    </span>
+                                    {item.content.length.toLocaleString()} chars
+                                  </p>
                                 </div>
                               </div>
                               <Button
@@ -1171,24 +1213,28 @@ export default function Build() {
                               </Button>
                             </div>
                           ))}
-                          {kbItems.length === 0 && !showAddUrl && !showAddText && (
-                            <div className="text-center py-6 text-muted-foreground">
-                              <FileText className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                              <p className="text-sm">No sources added yet</p>
-                            </div>
-                          )}
                         </div>
+                      </div>
+                    )}
 
-                        <div className="pt-2">
-                          <Button
-                            className="w-full"
-                            onClick={() => setLocation(`/evaluate?agentId=${savedAgentId}`)}
-                            data-testid="button-start-evaluating"
-                          >
-                            Start Evaluating
-                          </Button>
-                        </div>
-                      </>
+                    {kbItems.length === 0 && !showAddUrl && !showAddText && (
+                      <div className="text-center py-8 text-muted-foreground border border-dashed border-white/10 rounded-xl">
+                        <Database className="w-8 h-8 mx-auto mb-2 opacity-30" />
+                        <p className="text-sm font-medium">No sources yet</p>
+                        <p className="text-xs mt-1 opacity-70">Add a URL, upload a file, or write text above</p>
+                      </div>
+                    )}
+
+                    {savedAgentId && (
+                      <div className="pt-1">
+                        <Button
+                          className="w-full"
+                          onClick={() => setLocation(`/evaluate?agentId=${savedAgentId}`)}
+                          data-testid="button-start-evaluating"
+                        >
+                          Start Evaluating
+                        </Button>
+                      </div>
                     )}
                   </div>
                 )}
