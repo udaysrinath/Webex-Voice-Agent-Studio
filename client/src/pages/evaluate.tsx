@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { Link, useLocation, useSearch } from "wouter";
 import { motion } from "framer-motion";
-import { ArrowLeft, Mic, MicOff, Play, Pause, Send, Download, Settings2, Star, Loader2, Volume2, MessageCircle, Square, Video, VideoOff, User } from "lucide-react";
+import { ArrowLeft, Mic, MicOff, Play, Pause, Send, Download, Settings2, Star, Loader2, Volume2, MessageCircle, Square, Video, VideoOff, User, Link2, FileText, Database, Trash2, Plus, ChevronDown, ChevronUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { Separator } from "@/components/ui/separator";
@@ -11,9 +11,11 @@ import { Label } from "@/components/ui/label";
 import { Card } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { agentsApi, evaluationsApi, ttsApi, chatApi, anamApi, type TTSRequest } from "@/lib/api";
+import { agentsApi, evaluationsApi, ttsApi, chatApi, anamApi, knowledgeBaseApi, type TTSRequest, type KnowledgeBaseItem } from "@/lib/api";
 import type { InsertEvaluation } from "@shared/schema";
 import type { ChatMessage } from "@/lib/api";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 
 export default function Evaluate() {
   const search = useSearch();
@@ -75,6 +77,20 @@ export default function Evaluate() {
     queryKey: ["anam-status"],
     queryFn: () => anamApi.getStatus(),
   });
+
+  const { data: kbItems = [], refetch: refetchKbItems } = useQuery<KnowledgeBaseItem[]>({
+    queryKey: ["knowledge-base", agentId],
+    queryFn: () => knowledgeBaseApi.getByAgent(agentId!),
+    enabled: !!agentId,
+  });
+
+  const [kbExpanded, setKbExpanded] = useState(false);
+  const [showKbAddUrl, setShowKbAddUrl] = useState(false);
+  const [showKbAddText, setShowKbAddText] = useState(false);
+  const [kbUrl, setKbUrl] = useState("");
+  const [kbTitle, setKbTitle] = useState("");
+  const [kbContent, setKbContent] = useState("");
+  const [kbLoading, setKbLoading] = useState(false);
 
   const startAvatar = useCallback(async () => {
     if (!agent) return;
@@ -881,6 +897,210 @@ export default function Evaluate() {
               )}
 
               <div className="pt-6">
+                <div className="border border-white/10 rounded-xl overflow-hidden">
+                  <button
+                    className="w-full flex items-center justify-between px-4 py-3 bg-white/5 hover:bg-white/10 transition-colors text-sm font-medium"
+                    onClick={() => setKbExpanded(!kbExpanded)}
+                    data-testid="button-toggle-kb"
+                  >
+                    <span className="flex items-center gap-2">
+                      <FileText className="w-4 h-4 text-primary" />
+                      Knowledge Base
+                      {kbItems.length > 0 && (
+                        <span className="text-xs text-muted-foreground">({kbItems.length} source{kbItems.length !== 1 ? 's' : ''})</span>
+                      )}
+                    </span>
+                    {kbExpanded ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
+                  </button>
+
+                  {kbExpanded && (
+                    <div className="p-4 space-y-4 bg-background/30">
+                      <p className="text-xs text-muted-foreground">Add URLs, files, or text that this agent will use when answering questions.</p>
+
+                      <div className="flex gap-2 flex-wrap">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => { setShowKbAddUrl(!showKbAddUrl); setShowKbAddText(false); }}
+                          className="gap-2 border-white/10 text-xs h-8"
+                          data-testid="button-kb-add-url"
+                        >
+                          <Link2 className="w-3.5 h-3.5" />
+                          Add URL
+                        </Button>
+                        <label className="cursor-pointer inline-flex items-center gap-2 text-xs font-medium h-8 px-3 rounded-md border border-white/10 bg-transparent hover:bg-white/5 transition-colors" data-testid="label-kb-add-file">
+                          <input
+                            type="file"
+                            accept=".txt,.md,.pdf,.csv"
+                            className="hidden"
+                            onChange={async (e) => {
+                              const file = e.target.files?.[0];
+                              if (!file || !agentId) return;
+                              setKbLoading(true);
+                              try {
+                                await knowledgeBaseApi.addFile(agentId, file);
+                                refetchKbItems();
+                                toast({ title: "File added", description: `"${file.name}" added to knowledge base.` });
+                              } catch (err: any) {
+                                toast({ title: "Upload failed", description: err.message, variant: "destructive" });
+                              } finally {
+                                setKbLoading(false);
+                                e.target.value = "";
+                              }
+                            }}
+                          />
+                          {kbLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Database className="w-3.5 h-3.5" />}
+                          Add File
+                        </label>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => { setShowKbAddText(!showKbAddText); setShowKbAddUrl(false); }}
+                          className="gap-2 border-white/10 text-xs h-8"
+                          data-testid="button-kb-create-text"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          Create Text
+                        </Button>
+                      </div>
+
+                      {showKbAddUrl && (
+                        <div className="space-y-2 p-3 bg-white/5 rounded-lg border border-white/10">
+                          <p className="text-xs font-medium">Add URL</p>
+                          <Input
+                            value={kbUrl}
+                            onChange={(e) => setKbUrl(e.target.value)}
+                            placeholder="https://example.com/page"
+                            className="bg-background border-white/10 h-8 text-xs"
+                            data-testid="input-kb-url"
+                          />
+                          <div className="flex gap-2 justify-end">
+                            <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => { setShowKbAddUrl(false); setKbUrl(""); }}>Cancel</Button>
+                            <Button
+                              size="sm"
+                              className="h-7 text-xs"
+                              disabled={!kbUrl || kbLoading}
+                              data-testid="button-kb-save-url"
+                              onClick={async () => {
+                                if (!agentId || !kbUrl) return;
+                                setKbLoading(true);
+                                try {
+                                  await knowledgeBaseApi.addUrl(agentId, kbUrl);
+                                  refetchKbItems();
+                                  setShowKbAddUrl(false);
+                                  setKbUrl("");
+                                  toast({ title: "URL added", description: "Page content fetched and saved." });
+                                } catch (err: any) {
+                                  toast({ title: "Failed to add URL", description: err.message, variant: "destructive" });
+                                } finally {
+                                  setKbLoading(false);
+                                }
+                              }}
+                            >
+                              {kbLoading ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : null}
+                              Fetch & Save
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+
+                      {showKbAddText && (
+                        <div className="space-y-2 p-3 bg-white/5 rounded-lg border border-white/10">
+                          <p className="text-xs font-medium">Create Text</p>
+                          <Input
+                            value={kbTitle}
+                            onChange={(e) => setKbTitle(e.target.value)}
+                            placeholder="Title"
+                            className="bg-background border-white/10 h-8 text-xs"
+                            data-testid="input-kb-text-title"
+                          />
+                          <Textarea
+                            value={kbContent}
+                            onChange={(e) => setKbContent(e.target.value)}
+                            placeholder="Paste or write your content here..."
+                            className="bg-background border-white/10 min-h-[80px] text-xs"
+                            data-testid="input-kb-text-content"
+                          />
+                          <div className="flex gap-2 justify-end">
+                            <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => { setShowKbAddText(false); setKbTitle(""); setKbContent(""); }}>Cancel</Button>
+                            <Button
+                              size="sm"
+                              className="h-7 text-xs"
+                              disabled={!kbTitle || !kbContent || kbLoading}
+                              data-testid="button-kb-save-text"
+                              onClick={async () => {
+                                if (!agentId || !kbTitle || !kbContent) return;
+                                setKbLoading(true);
+                                try {
+                                  await knowledgeBaseApi.addText(agentId, kbTitle, kbContent);
+                                  refetchKbItems();
+                                  setShowKbAddText(false);
+                                  setKbTitle("");
+                                  setKbContent("");
+                                  toast({ title: "Text saved", description: "Added to knowledge base." });
+                                } catch (err: any) {
+                                  toast({ title: "Failed to save", description: err.message, variant: "destructive" });
+                                } finally {
+                                  setKbLoading(false);
+                                }
+                              }}
+                            >
+                              {kbLoading ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : null}
+                              Save
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="space-y-2">
+                        {kbItems.map((item) => (
+                          <div
+                            key={item.id}
+                            className="flex items-center justify-between p-2.5 bg-white/5 rounded-lg border border-white/5"
+                            data-testid={`kb-item-${item.id}`}
+                          >
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <div className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 ${
+                                item.type === 'url' ? 'bg-blue-500/10' : item.type === 'file' ? 'bg-purple-500/10' : 'bg-green-500/10'
+                              }`}>
+                                {item.type === 'url' && <Link2 className="w-3.5 h-3.5 text-blue-400" />}
+                                {item.type === 'file' && <Database className="w-3.5 h-3.5 text-purple-400" />}
+                                {item.type === 'text' && <FileText className="w-3.5 h-3.5 text-green-400" />}
+                              </div>
+                              <div className="min-w-0">
+                                <p className="text-xs font-medium truncate">{item.title}</p>
+                                <p className="text-xs text-muted-foreground">{item.content.length.toLocaleString()} chars</p>
+                              </div>
+                            </div>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7 text-muted-foreground hover:text-red-400 shrink-0"
+                              data-testid={`button-kb-delete-${item.id}`}
+                              onClick={async () => {
+                                try {
+                                  await knowledgeBaseApi.delete(item.id);
+                                  refetchKbItems();
+                                  toast({ title: "Source removed" });
+                                } catch (err: any) {
+                                  toast({ title: "Failed to remove", description: err.message, variant: "destructive" });
+                                }
+                              }}
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </Button>
+                          </div>
+                        ))}
+                        {kbItems.length === 0 && !showKbAddUrl && !showKbAddText && (
+                          <p className="text-xs text-muted-foreground text-center py-3">No sources added yet</p>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="pt-4">
                  <Card className="bg-white/5 border-white/10 p-4">
                     <h3 className="font-medium mb-2 text-sm">AI Analysis</h3>
                     <p className="text-xs text-muted-foreground leading-relaxed">
