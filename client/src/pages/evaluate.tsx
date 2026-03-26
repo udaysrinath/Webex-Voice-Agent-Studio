@@ -125,46 +125,6 @@ export default function Evaluate() {
     return match ? `$${match[1]}` : null;
   };
 
-  const sendOcrToAgent = useCallback((extractedText: string) => {
-    const amount = extractDollarAmount(extractedText);
-    const message = amount
-      ? `I'm holding up my check to the camera. The amount I can see is ${amount}. Full check details:\n${extractedText}`
-      : `I'm holding up my check to the camera. Here's what it says:\n${extractedText}`;
-    const newUserMessage: ChatMessage = { role: "user", content: message };
-    const currentHistory = chatMessagesRef.current;
-    chatMessagesRef.current = [...currentHistory, newUserMessage];
-    setChatMessages(chatMessagesRef.current);
-    chatMutation.mutate({ message, history: currentHistory });
-  }, [chatMutation]);
-
-  const captureOcrFrame = useCallback(() => {
-    const video = ocrVideoRef.current;
-    const canvas = ocrCanvasRef.current;
-    if (!video || !canvas) return;
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    canvas.getContext("2d")?.drawImage(video, 0, 0);
-    const dataUrl = canvas.toDataURL("image/jpeg", 0.92);
-    setOcrCapture(dataUrl);
-    if (ocrStream) {
-      ocrStream.getTracks().forEach(t => t.stop());
-      setOcrStream(null);
-    }
-    setOcrLoading(true);
-    setOcrText(null);
-    setOcrError(null);
-    const isAutoMode = ocrAutoModeRef.current;
-    ocrApi.extractText(dataUrl)
-      .then(({ text }) => {
-        setOcrText(text);
-        if (isAutoMode) {
-          sendOcrToAgent(text);
-          setTimeout(() => closeOcrCamera(), 800);
-        }
-      })
-      .catch(e => setOcrError(e.message || "Failed to extract text"))
-      .finally(() => setOcrLoading(false));
-  }, [ocrStream, sendOcrToAgent, closeOcrCamera]);
 
   const retakeOcr = useCallback(async () => {
     setOcrCapture(null);
@@ -409,6 +369,47 @@ export default function Evaluate() {
     chatMutation.mutate({ message: chatInput, history: chatMessages });
     setChatInput("");
   };
+
+  const sendOcrToAgent = useCallback((extractedText: string) => {
+    const amount = extractDollarAmount(extractedText);
+    const message = amount
+      ? `I'm holding up my check to the camera. The amount I can see is ${amount}. Full check details:\n${extractedText}`
+      : `I'm holding up my check to the camera. Here's what it says:\n${extractedText}`;
+    const newUserMessage: ChatMessage = { role: "user", content: message };
+    const currentHistory = chatMessagesRef.current;
+    chatMessagesRef.current = [...currentHistory, newUserMessage];
+    setChatMessages(chatMessagesRef.current);
+    chatMutation.mutate({ message, history: currentHistory });
+  }, [chatMutation]);
+
+  const captureOcrFrame = useCallback(() => {
+    const video = ocrVideoRef.current;
+    const canvas = ocrCanvasRef.current;
+    if (!video || !canvas) return;
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext("2d")?.drawImage(video, 0, 0);
+    const dataUrl = canvas.toDataURL("image/jpeg", 0.92);
+    setOcrCapture(dataUrl);
+    if (ocrStream) {
+      ocrStream.getTracks().forEach(t => t.stop());
+      setOcrStream(null);
+    }
+    setOcrLoading(true);
+    setOcrText(null);
+    setOcrError(null);
+    const isAutoMode = ocrAutoModeRef.current;
+    ocrApi.extractText(dataUrl)
+      .then(({ text }) => {
+        setOcrText(text);
+        if (isAutoMode) {
+          sendOcrToAgent(text);
+          setTimeout(() => closeOcrCamera(), 800);
+        }
+      })
+      .catch(e => setOcrError(e.message || "Failed to extract text"))
+      .finally(() => setOcrLoading(false));
+  }, [ocrStream, sendOcrToAgent, closeOcrCamera]);
 
   const floatTo16BitPCM = useCallback((float32Array: Float32Array): ArrayBuffer => {
     const buffer = new ArrayBuffer(float32Array.length * 2);
