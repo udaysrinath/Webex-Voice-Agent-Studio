@@ -60,6 +60,7 @@ export default function Evaluate() {
   const avatarVideoRef = useRef<HTMLVideoElement | null>(null);
   const avatarContainerRef = useRef<HTMLDivElement | null>(null);
   const anamClientRef = useRef<any>(null);
+  const avatarStreamingRef = useRef(false);
 
   useEffect(() => {
     const onFsChange = () => setAvatarFullscreen(!!document.fullscreenElement);
@@ -177,13 +178,69 @@ export default function Evaluate() {
         systemPrompt: agent.systemPrompt || `You are ${agent.name}, a helpful AI assistant. Reply in natural speech without formatting. Add pauses using '...'`,
       }, agent.id);
 
-      const { createClient } = await import("@anam-ai/js-sdk");
+      const { createClient, AnamEvent } = await import("@anam-ai/js-sdk");
       const client = createClient(sessionToken);
-
       anamClientRef.current = client;
+
+      const CHECK_TRIGGERS = [
+        "show me your check", "show your check", "show the check",
+        "show me the check", "hold up your check", "hold up the check",
+        "your check to the camera", "check to the camera",
+        "scan your check", "photograph your check",
+        "show it to the camera", "hold the check",
+        "present your check", "place the check",
+      ];
+
+      const DEPOSIT_PATTERNS = [
+        /deposited\s+\$?([\d,]+\.?\d{0,2})/i,
+        /deposit\s+of\s+\$?([\d,]+\.?\d{0,2})/i,
+        /\$?([\d,]+\.?\d{0,2})\s+(?:has been|have been)\s+deposited/i,
+        /successfully\s+(?:deposited|processed)[^$]*\$?([\d,]+\.?\d{0,2})/i,
+        /processed\s+(?:your\s+)?deposit\s+of\s+\$?([\d,]+\.?\d{0,2})/i,
+        /added\s+\$?([\d,]+\.?\d{0,2})\s+to\s+your\s+(?:account|balance)/i,
+      ];
+
+      const lastSeenPersonaMsgId = { current: null as string | null };
+
+      client.addListener(AnamEvent.MESSAGE_HISTORY_UPDATED, (messages: any[]) => {
+        const personaMsgs = messages.filter((m: any) => m.role === "persona" && !m.interrupted);
+        const latestPersona = personaMsgs[personaMsgs.length - 1];
+        if (!latestPersona || latestPersona.id === lastSeenPersonaMsgId.current) return;
+        lastSeenPersonaMsgId.current = latestPersona.id;
+
+        const content: string = latestPersona.content;
+        const lower = content.toLowerCase();
+
+        setChatMessages(prev => {
+          const updated = [...prev, { role: "assistant" as const, content }];
+          chatMessagesRef.current = updated;
+          return updated;
+        });
+
+        if (CHECK_TRIGGERS.some(t => lower.includes(t))) {
+          ocrAutoModeRef.current = true;
+          openOcrCamera();
+        }
+
+        for (const pattern of DEPOSIT_PATTERNS) {
+          const match = content.match(pattern);
+          if (match) {
+            const amount = parseFloat(match[1].replace(/,/g, ""));
+            if (!isNaN(amount) && amount > 0) {
+              setBankBalance(prev => {
+                const newBalance = Math.round((prev + amount) * 100) / 100;
+                setLastDeposit({ amount, newBalance });
+                return newBalance;
+              });
+              break;
+            }
+          }
+        }
+      });
 
       if (avatarVideoRef.current) {
         await client.streamToVideoElement(avatarVideoRef.current.id);
+        avatarStreamingRef.current = true;
         setAvatarStreaming(true);
         setAvatarEnabled(true);
       } else {
@@ -206,6 +263,7 @@ export default function Evaluate() {
     } catch (error) {
       console.error("Avatar stop error:", error);
     }
+    avatarStreamingRef.current = false;
     setAvatarStreaming(false);
     setAvatarEnabled(false);
   }, []);
@@ -376,10 +434,24 @@ export default function Evaluate() {
       ? `I'm holding up my check to the camera. The amount I can see is ${amount}. Full check details:\n${extractedText}`
       : `I'm holding up my check to the camera. Here's what it says:\n${extractedText}`;
     const newUserMessage: ChatMessage = { role: "user", content: message };
-    const currentHistory = chatMessagesRef.current;
-    chatMessagesRef.current = [...currentHistory, newUserMessage];
-    setChatMessages(chatMessagesRef.current);
-    chatMutation.mutate({ message, history: currentHistory });
+
+    if (avatarStreamingRef.current && anamClientRef.current) {
+      setChatMessages(prev => {
+        const updated = [...prev, newUserMessage];
+        chatMessagesRef.current = updated;
+        return updated;
+      });
+      try {
+        anamClientRef.current.sendUserMessage(message);
+      } catch (e) {
+        console.error("Failed to send OCR message to avatar:", e);
+      }
+    } else {
+      const currentHistory = chatMessagesRef.current;
+      chatMessagesRef.current = [...currentHistory, newUserMessage];
+      setChatMessages(chatMessagesRef.current);
+      chatMutation.mutate({ message, history: currentHistory });
+    }
   }, [chatMutation]);
 
   const captureOcrFrame = useCallback(() => {
