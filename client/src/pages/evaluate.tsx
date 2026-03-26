@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { Link, useLocation, useSearch } from "wouter";
 import { motion } from "framer-motion";
-import { ArrowLeft, Mic, MicOff, Play, Pause, Send, Download, Settings2, Star, Loader2, Volume2, MessageCircle, Square, Video, VideoOff, User, Maximize2, Minimize2, Camera, ScanLine, X, RotateCcw, CheckCircle2 } from "lucide-react";
+import { ArrowLeft, Mic, MicOff, Play, Pause, Send, Download, Settings2, Star, Loader2, Volume2, MessageCircle, Square, Video, VideoOff, User, Maximize2, Minimize2, Camera, ScanLine, X, RotateCcw, CheckCircle2, Wallet, TrendingUp, ArrowUpRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { Separator } from "@/components/ui/separator";
@@ -84,6 +84,10 @@ export default function Evaluate() {
   const [ocrError, setOcrError] = useState<string | null>(null);
   const ocrVideoRef = useRef<HTMLVideoElement | null>(null);
   const ocrCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const ocrAutoModeRef = useRef(false);
+
+  const [bankBalance, setBankBalance] = useState(2450.00);
+  const [lastDeposit, setLastDeposit] = useState<{ amount: number; newBalance: number } | null>(null);
 
   const openOcrCamera = useCallback(async () => {
     setOcrOpen(true);
@@ -113,7 +117,25 @@ export default function Evaluate() {
     setOcrCapture(null);
     setOcrText(null);
     setOcrError(null);
+    ocrAutoModeRef.current = false;
   }, [ocrStream]);
+
+  const extractDollarAmount = (text: string): string | null => {
+    const match = text.match(/\$\s*([\d,]+\.?\d{0,2})/);
+    return match ? `$${match[1]}` : null;
+  };
+
+  const sendOcrToAgent = useCallback((extractedText: string) => {
+    const amount = extractDollarAmount(extractedText);
+    const message = amount
+      ? `I'm holding up my check to the camera. The amount I can see is ${amount}. Full check details:\n${extractedText}`
+      : `I'm holding up my check to the camera. Here's what it says:\n${extractedText}`;
+    const newUserMessage: ChatMessage = { role: "user", content: message };
+    const currentHistory = chatMessagesRef.current;
+    chatMessagesRef.current = [...currentHistory, newUserMessage];
+    setChatMessages(chatMessagesRef.current);
+    chatMutation.mutate({ message, history: currentHistory });
+  }, [chatMutation]);
 
   const captureOcrFrame = useCallback(() => {
     const video = ocrVideoRef.current;
@@ -131,11 +153,18 @@ export default function Evaluate() {
     setOcrLoading(true);
     setOcrText(null);
     setOcrError(null);
+    const isAutoMode = ocrAutoModeRef.current;
     ocrApi.extractText(dataUrl)
-      .then(({ text }) => setOcrText(text))
+      .then(({ text }) => {
+        setOcrText(text);
+        if (isAutoMode) {
+          sendOcrToAgent(text);
+          setTimeout(() => closeOcrCamera(), 800);
+        }
+      })
       .catch(e => setOcrError(e.message || "Failed to extract text"))
       .finally(() => setOcrLoading(false));
-  }, [ocrStream]);
+  }, [ocrStream, sendOcrToAgent, closeOcrCamera]);
 
   const retakeOcr = useCallback(async () => {
     setOcrCapture(null);
@@ -311,12 +340,55 @@ export default function Evaluate() {
       history,
     }),
     onSuccess: (response) => {
-      setChatMessages(prev => [...prev, { role: "assistant", content: response.response }]);
-      setInputText(response.response);
+      const assistantMsg = response.response;
+      setChatMessages(prev => {
+        const updated = [...prev, { role: "assistant" as const, content: assistantMsg }];
+        chatMessagesRef.current = updated;
+        return updated;
+      });
+      setInputText(assistantMsg);
       setAudioUrl(null);
-      
+
       if (autoPlayVoice) {
-        generateAndPlayAudio(response.response);
+        generateAndPlayAudio(assistantMsg);
+      }
+
+      const lower = assistantMsg.toLowerCase();
+
+      const checkTriggers = [
+        "show me your check", "show your check", "show the check",
+        "show me the check", "hold up your check", "hold up the check",
+        "your check to the camera", "check to the camera",
+        "scan your check", "photograph your check",
+        "show it to the camera", "hold the check",
+        "present your check", "place the check",
+      ];
+      if (checkTriggers.some(t => lower.includes(t))) {
+        ocrAutoModeRef.current = true;
+        openOcrCamera();
+      }
+
+      const depositPatterns = [
+        /deposited\s+\$?([\d,]+\.?\d{0,2})/i,
+        /deposit\s+of\s+\$?([\d,]+\.?\d{0,2})/i,
+        /\$?([\d,]+\.?\d{0,2})\s+(?:has been|have been)\s+deposited/i,
+        /successfully\s+(?:deposited|processed)[^$]*\$?([\d,]+\.?\d{0,2})/i,
+        /processed\s+(?:your\s+)?deposit\s+of\s+\$?([\d,]+\.?\d{0,2})/i,
+        /added\s+\$?([\d,]+\.?\d{0,2})\s+to\s+your\s+(?:account|balance)/i,
+      ];
+      for (const pattern of depositPatterns) {
+        const match = assistantMsg.match(pattern);
+        if (match) {
+          const amount = parseFloat(match[1].replace(/,/g, ""));
+          if (!isNaN(amount) && amount > 0) {
+            setBankBalance(prev => {
+              const newBalance = Math.round((prev + amount) * 100) / 100;
+              setLastDeposit({ amount, newBalance });
+              return newBalance;
+            });
+            break;
+          }
+        }
       }
     },
     onError: (error) => {
@@ -901,6 +973,65 @@ export default function Evaluate() {
         </div>
 
         <div className="lg:col-span-5 bg-background p-8 overflow-y-auto border-l border-white/5">
+
+           <div className="mb-8">
+              <div
+                className="rounded-2xl overflow-hidden border border-white/10 relative"
+                style={{ background: "linear-gradient(135deg, #0f2027 0%, #1a3a4a 50%, #0d2137 100%)" }}
+                data-testid="card-bank-account"
+              >
+                <div className="absolute inset-0 opacity-10"
+                  style={{ backgroundImage: "repeating-linear-gradient(45deg, transparent, transparent 30px, rgba(255,255,255,0.03) 30px, rgba(255,255,255,0.03) 60px)" }}
+                />
+                <div className="relative p-5">
+                  <div className="flex items-start justify-between mb-4">
+                    <div className="flex items-center gap-2">
+                      <div className="h-8 w-8 rounded-lg bg-cyan-500/20 border border-cyan-500/30 flex items-center justify-center">
+                        <Wallet className="w-4 h-4 text-cyan-400" />
+                      </div>
+                      <div>
+                        <p className="text-xs text-cyan-300/70 font-medium tracking-wide uppercase">Checking Account</p>
+                        <p className="text-xs text-white/40">•••• •••• •••• 4291</p>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-xs text-white/40 mb-1">Available Balance</p>
+                      <p
+                        className="text-2xl font-mono font-bold text-white tracking-tight"
+                        data-testid="text-bank-balance"
+                      >
+                        ${bankBalance.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </p>
+                    </div>
+                  </div>
+
+                  {lastDeposit && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 4 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="flex items-center justify-between bg-green-500/10 border border-green-500/20 rounded-lg px-3 py-2 mt-2"
+                      data-testid="card-last-deposit"
+                    >
+                      <div className="flex items-center gap-2 text-green-400 text-xs">
+                        <ArrowUpRight className="w-3.5 h-3.5" />
+                        <span className="font-medium">Deposit processed</span>
+                      </div>
+                      <span className="text-green-300 text-xs font-mono font-semibold">
+                        +${lastDeposit.amount.toLocaleString("en-US", { minimumFractionDigits: 2 })}
+                      </span>
+                    </motion.div>
+                  )}
+
+                  {!lastDeposit && (
+                    <div className="flex items-center gap-2 text-white/30 text-xs mt-2">
+                      <TrendingUp className="w-3.5 h-3.5" />
+                      <span>No recent transactions</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+           </div>
+
            <div className="mb-8">
               <h2 className="text-xl font-display font-semibold mb-2 flex items-center gap-2">
                 <Star className="w-5 h-5 text-yellow-500 fill-yellow-500" /> 
@@ -1024,15 +1155,21 @@ export default function Evaluate() {
 
       {ocrOpen && (
         <div className="fixed inset-0 z-50 bg-black/90 backdrop-blur-sm flex flex-col" data-testid="ocr-modal">
+          {ocrAutoModeRef.current && (
+            <div className="bg-cyan-500/10 border-b border-cyan-500/20 px-6 py-2 flex items-center gap-2 text-cyan-300 text-xs">
+              <Wallet className="w-3.5 h-3.5" />
+              <span>Your banking agent is requesting the check — capture it below to continue the deposit.</span>
+            </div>
+          )}
           <div className="flex items-center justify-between px-6 py-4 border-b border-white/10">
             <div className="flex items-center gap-3">
               <div className="h-8 w-8 rounded-lg bg-cyan-500/20 flex items-center justify-center">
                 <ScanLine className="w-4 h-4 text-cyan-400" />
               </div>
               <div>
-                <h2 className="font-semibold text-sm">Scan Text</h2>
+                <h2 className="font-semibold text-sm">Scan Check</h2>
                 <p className="text-xs text-muted-foreground">
-                  {!ocrCapture ? "Point camera at text and capture" : ocrLoading ? "Extracting text..." : "Text extracted"}
+                  {!ocrCapture ? "Point camera at the check and capture" : ocrLoading ? "Reading check with AI..." : ocrAutoModeRef.current ? "Sending to agent..." : "Text extracted"}
                 </p>
               </div>
             </div>
