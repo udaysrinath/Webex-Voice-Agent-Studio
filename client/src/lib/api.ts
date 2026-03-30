@@ -113,6 +113,8 @@ export interface ChatRequest {
 
 export interface ChatResponse {
   response: string;
+  verified?: boolean;
+  toolUsed?: string;
 }
 
 export const chatApi = {

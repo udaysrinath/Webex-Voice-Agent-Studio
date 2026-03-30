@@ -351,6 +351,8 @@ export default function Evaluate() {
     }
   }, [agent, autoPlayVoice]);
 
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+
   const chatMutation = useMutation({
     mutationFn: ({ message, history }: { message: string; history: ChatMessage[] }) => chatApi.send({
       message,
@@ -359,6 +361,7 @@ export default function Evaluate() {
       history,
     }),
     onSuccess: (response) => {
+      if (response.verified === true) setIsAuthenticated(true);
       const assistantMsg = response.response;
       setChatMessages(prev => {
         const updated = [...prev, { role: "assistant" as const, content: assistantMsg }];
@@ -770,6 +773,11 @@ export default function Evaluate() {
         </div>
         
         <div className="flex items-center gap-3">
+           {isAuthenticated && (
+             <Badge className="bg-green-500/10 text-green-400 border-green-500/20 gap-1.5" data-testid="badge-authenticated">
+               <CheckCircle2 className="w-3 h-3" /> Authenticated
+             </Badge>
+           )}
            {avgScore !== null && (
              <Badge className="bg-primary/10 text-primary border-primary/20">
                Avg Score: {avgScore}%

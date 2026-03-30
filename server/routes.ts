@@ -683,6 +683,139 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ─── Customer Database (mock) ─────────────────────────────────────────────
+  const CUSTOMER_DB = [
+    { name: "John Smith",    dob: "1985-03-15", phone: "+15551234567", accountBalance: 2450.00 },
+    { name: "Jane Doe",      dob: "1990-07-22", phone: "+15559876543", accountBalance: 5820.50 },
+    { name: "Carlos Rivera", dob: "1978-11-08", phone: "+15552223333", accountBalance: 1100.75 },
+    { name: "Emily Chen",    dob: "1995-01-30", phone: "+15554445555", accountBalance: 8300.00 },
+    { name: "Demo User",     dob: "2000-01-01", phone: "+15550001111", accountBalance: 1000.00 },
+  ];
+
+  // In-memory OTP store: token → { code, expiresAt, phone }
+  const otpStore = new Map<string, { code: string; expiresAt: number; phone: string }>();
+
+  function lookupCustomer(name: string, dob: string): typeof CUSTOMER_DB[0] | null {
+    const n = name.trim().toLowerCase();
+    const d = dob.trim();
+    return CUSTOMER_DB.find(c =>
+      c.name.toLowerCase() === n && c.dob === d
+    ) ?? null;
+  }
+
+  function maskPhone(phone: string): string {
+    return phone.replace(/(\+\d{1,3})(\d+)(\d{4})$/, (_, cc, mid, last) =>
+      `${cc}${"*".repeat(mid.length)}${last}`
+    );
+  }
+
+  app.post("/api/auth/lookup", (req, res) => {
+    const { name, dob } = req.body;
+    if (!name || !dob) return res.status(400).json({ error: "name and dob required" });
+    const customer = lookupCustomer(name, dob);
+    if (!customer) return res.status(404).json({ found: false });
+    res.json({ found: true, maskedPhone: maskPhone(customer.phone) });
+  });
+
+  app.post("/api/auth/send-code", async (req, res) => {
+    const { name, dob } = req.body;
+    if (!name || !dob) return res.status(400).json({ error: "name and dob required" });
+    const customer = lookupCustomer(name, dob);
+    if (!customer) return res.status(404).json({ error: "Customer not found" });
+
+    const code = String(Math.floor(100000 + Math.random() * 900000));
+    const token = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    otpStore.set(token, { code, expiresAt: Date.now() + 10 * 60 * 1000, phone: customer.phone });
+
+    const sid   = process.env.TWILIO_ACCOUNT_SID;
+    const auth  = process.env.TWILIO_AUTH_TOKEN;
+    const from  = process.env.TWILIO_PHONE_NUMBER;
+
+    if (!sid || !auth || !from) {
+      console.warn("Twilio not configured — OTP code (dev only):", code);
+      return res.json({ token, maskedPhone: maskPhone(customer.phone), devCode: code });
+    }
+
+    try {
+      const twilio = (await import("twilio")).default;
+      const client = twilio(sid, auth);
+      await client.messages.create({
+        body: `Your Cisco Bank verification code is: ${code}. Valid for 10 minutes.`,
+        from,
+        to: customer.phone,
+      });
+      res.json({ token, maskedPhone: maskPhone(customer.phone) });
+    } catch (err: any) {
+      console.error("Twilio error:", err);
+      res.status(500).json({ error: "Failed to send SMS: " + err.message });
+    }
+  });
+
+  app.post("/api/auth/verify-code", (req, res) => {
+    const { token, code } = req.body;
+    if (!token || !code) return res.status(400).json({ error: "token and code required" });
+    const entry = otpStore.get(token);
+    if (!entry) return res.json({ verified: false, reason: "Invalid or expired session" });
+    if (Date.now() > entry.expiresAt) {
+      otpStore.delete(token);
+      return res.json({ verified: false, reason: "Code expired" });
+    }
+    if (entry.code !== String(code).trim()) {
+      return res.json({ verified: false, reason: "Incorrect code" });
+    }
+    otpStore.delete(token);
+    res.json({ verified: true });
+  });
+  // ──────────────────────────────────────────────────────────────────────────
+
+  const bankingAuthTools: OpenAI.Chat.Completions.ChatCompletionTool[] = [
+    {
+      type: "function",
+      function: {
+        name: "lookup_customer",
+        description: "Look up a customer by their full name and date of birth. Returns whether they were found and their masked phone number. Call this after the user provides their name and DOB.",
+        parameters: {
+          type: "object",
+          properties: {
+            name: { type: "string", description: "Customer full name" },
+            dob:  { type: "string", description: "Date of birth in YYYY-MM-DD format" },
+          },
+          required: ["name", "dob"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "send_verification_code",
+        description: "Send a 6-digit SMS verification code to the phone number on file for the customer. Call this after successfully looking up the customer and they agree to receive a code.",
+        parameters: {
+          type: "object",
+          properties: {
+            name: { type: "string", description: "Customer full name" },
+            dob:  { type: "string", description: "Date of birth in YYYY-MM-DD format" },
+          },
+          required: ["name", "dob"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "verify_code",
+        description: "Verify the 6-digit code the user received by SMS. Returns verified: true if correct. Call this after the user reads you their code.",
+        parameters: {
+          type: "object",
+          properties: {
+            token: { type: "string", description: "The session token returned by send_verification_code" },
+            code:  { type: "string", description: "The 6-digit code the user provided" },
+          },
+          required: ["token", "code"],
+        },
+      },
+    },
+  ];
+
   const webexTools: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     {
       type: "function",
@@ -790,6 +923,66 @@ export async function registerRoutes(app: Express): Promise<Server> {
     return { success: false, error: `Unknown function: ${functionName}` };
   }
 
+  // In-memory OTP token store for the tool flow (shared reference)
+  const pendingOtpTokens = new Map<string, string>(); // sessionKey → otpToken
+
+  async function executeBankingFunction(
+    functionName: string,
+    args: Record<string, any>
+  ): Promise<{ success: boolean; result?: string; error?: string; token?: string; verified?: boolean }> {
+    if (functionName === "lookup_customer") {
+      const customer = lookupCustomer(args.name, args.dob);
+      if (!customer) return { success: false, error: "No customer found matching that name and date of birth." };
+      return { success: true, result: `Customer found. Phone on file: ${maskPhone(customer.phone)}` };
+    }
+
+    if (functionName === "send_verification_code") {
+      const customer = lookupCustomer(args.name, args.dob);
+      if (!customer) return { success: false, error: "Customer not found." };
+
+      const code = String(Math.floor(100000 + Math.random() * 900000));
+      const token = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      otpStore.set(token, { code, expiresAt: Date.now() + 10 * 60 * 1000, phone: customer.phone });
+
+      const sid  = process.env.TWILIO_ACCOUNT_SID;
+      const auth = process.env.TWILIO_AUTH_TOKEN;
+      const from = process.env.TWILIO_PHONE_NUMBER;
+
+      if (sid && auth && from) {
+        try {
+          const twilio = (await import("twilio")).default;
+          const client = twilio(sid, auth);
+          await client.messages.create({
+            body: `Your Cisco Bank verification code is: ${code}. Valid for 10 minutes.`,
+            from,
+            to: customer.phone,
+          });
+        } catch (err: any) {
+          return { success: false, error: "Failed to send SMS: " + err.message };
+        }
+      } else {
+        console.warn("Twilio not configured — OTP code (dev only):", code);
+      }
+      return { success: true, result: `Verification code sent to ${maskPhone(customer.phone)}.`, token };
+    }
+
+    if (functionName === "verify_code") {
+      const entry = otpStore.get(args.token);
+      if (!entry) return { success: true, verified: false, result: "Invalid or expired session token." };
+      if (Date.now() > entry.expiresAt) {
+        otpStore.delete(args.token);
+        return { success: true, verified: false, result: "Code expired. Please request a new one." };
+      }
+      if (entry.code !== String(args.code).trim()) {
+        return { success: true, verified: false, result: "Incorrect code. Please try again." };
+      }
+      otpStore.delete(args.token);
+      return { success: true, verified: true, result: "Identity verified successfully. The customer is authenticated." };
+    }
+
+    return { success: false, error: `Unknown banking function: ${functionName}` };
+  }
+
   app.post("/api/chat", async (req, res) => {
     try {
       const openai = getOpenAIClient();
@@ -860,43 +1053,54 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
       
       const hasWebex = !!process.env.WEBEX_ACCESS_TOKEN && webexRooms.length > 0;
-      
+      const bankingFunctionNames = ["lookup_customer", "send_verification_code", "verify_code"];
+      const allTools = [
+        ...bankingAuthTools,
+        ...(hasWebex ? webexTools : []),
+      ];
+
       const completion = await openai.chat.completions.create({
         model: "gpt-4o",
         messages,
         max_tokens: 500,
-        tools: hasWebex ? webexTools : undefined,
-        tool_choice: hasWebex ? "auto" : undefined,
+        tools: allTools,
+        tool_choice: "auto",
       });
 
       const assistantMessage = completion.choices[0]?.message;
-      
+
       if (assistantMessage?.tool_calls && assistantMessage.tool_calls.length > 0) {
         const toolCall = assistantMessage.tool_calls[0] as { id: string; type: string; function: { name: string; arguments: string } };
         const functionName = toolCall.function.name;
         const functionArgs = JSON.parse(toolCall.function.arguments);
-        
-        const functionResult = await executeWebexFunction(functionName, functionArgs);
-        
+
+        let functionResult: Record<string, any>;
+        if (bankingFunctionNames.includes(functionName)) {
+          functionResult = await executeBankingFunction(functionName, functionArgs);
+        } else {
+          functionResult = await executeWebexFunction(functionName, functionArgs);
+        }
+
         messages.push(assistantMessage);
         messages.push({
           role: "tool",
           tool_call_id: toolCall.id,
           content: JSON.stringify(functionResult),
         });
-        
+
         const followUpCompletion = await openai.chat.completions.create({
           model: "gpt-4o",
           messages,
           max_tokens: 500,
         });
-        
-        const response = followUpCompletion.choices[0]?.message?.content || 
-          (functionResult.success 
-            ? `Done! ${functionResult.result}` 
+
+        const response = followUpCompletion.choices[0]?.message?.content ||
+          (functionResult.success
+            ? `Done! ${functionResult.result}`
             : `Sorry, there was an issue: ${functionResult.error}`);
-        
-        res.json({ response });
+
+        const verified = functionResult.verified === true;
+        res.json({ response, verified, toolUsed: functionName });
       } else {
         const response = assistantMessage?.content || "I'm sorry, I couldn't generate a response.";
         res.json({ response });
