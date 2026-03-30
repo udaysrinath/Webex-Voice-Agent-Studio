@@ -371,7 +371,15 @@ export default function Evaluate() {
       setInputText(assistantMsg);
       setAudioUrl(null);
 
-      if (autoPlayVoice) {
+      // If avatar is active, speak the response through it; otherwise use TTS
+      if (avatarStreamingRef.current && anamClientRef.current) {
+        try {
+          anamClientRef.current.talk(assistantMsg);
+        } catch (e) {
+          console.error("Avatar talk error:", e);
+          if (autoPlayVoice) generateAndPlayAudio(assistantMsg);
+        }
+      } else if (autoPlayVoice) {
         generateAndPlayAudio(assistantMsg);
       }
 
