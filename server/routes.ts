@@ -689,7 +689,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     { name: "Jane Doe",      dob: "1990-07-22", phone: "+15559876543", accountBalance: 5820.50 },
     { name: "Carlos Rivera", dob: "1978-11-08", phone: "+15552223333", accountBalance: 1100.75 },
     { name: "Emily Chen",    dob: "1995-01-30", phone: "+15554445555", accountBalance: 8300.00 },
-    { name: "Demo User",     dob: "2000-01-01", phone: "+15550001111", accountBalance: 1000.00 },
+    { name: "Demo User",     dob: "2000-01-01", phone: process.env.DEMO_CUSTOMER_PHONE || "+15550001111", accountBalance: 1000.00 },
   ];
 
   // In-memory OTP store: token → { code, expiresAt, phone }
