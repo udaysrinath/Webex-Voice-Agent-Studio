@@ -16,6 +16,19 @@ app.use(express.json({
 }));
 app.use(express.urlencoded({ extended: false }));
 
+// Redirect old replit.app domain to the canonical custom domain (production only)
+const CANONICAL_DOMAIN = "webex-voice-agent-studio.org";
+const OLD_DOMAIN = "webex-podcaster--mayadazakaria.replit.app";
+if (process.env.NODE_ENV === "production") {
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    const host = (req.headers.host || "").toLowerCase().split(":")[0];
+    if (host === OLD_DOMAIN || host.endsWith("." + OLD_DOMAIN)) {
+      return res.redirect(301, `https://${CANONICAL_DOMAIN}${req.originalUrl}`);
+    }
+    next();
+  });
+}
+
 app.use((req, res, next) => {
   const start = Date.now();
   const path = req.path;
