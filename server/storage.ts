@@ -52,6 +52,7 @@ export interface IStorage {
 
   createKnowledgeBaseItem(item: InsertKnowledgeBaseItem): Promise<KnowledgeBaseItem>;
   getKnowledgeBaseItemsByAgent(agentId: number): Promise<KnowledgeBaseItem[]>;
+  updateKnowledgeBaseItem(id: number, title: string, content: string): Promise<KnowledgeBaseItem | null>;
   deleteKnowledgeBaseItem(id: number): Promise<boolean>;
 }
 
@@ -179,6 +180,15 @@ export class DatabaseStorage implements IStorage {
       .from(knowledgeBaseItems)
       .where(eq(knowledgeBaseItems.agentId, agentId))
       .orderBy(desc(knowledgeBaseItems.createdAt));
+  }
+
+  async updateKnowledgeBaseItem(id: number, title: string, content: string): Promise<KnowledgeBaseItem | null> {
+    const [result] = await db
+      .update(knowledgeBaseItems)
+      .set({ title, content })
+      .where(eq(knowledgeBaseItems.id, id))
+      .returning();
+    return result ?? null;
   }
 
   async deleteKnowledgeBaseItem(id: number): Promise<boolean> {

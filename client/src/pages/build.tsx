@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { Link, useLocation, useSearch } from "wouter";
 import { motion } from "framer-motion";
-import { ArrowLeft, Check, Play, Mic, Cpu, Globe, User, Sparkles, Loader2, Square, MessageSquare, RefreshCw, Send, Code, Copy, ChevronDown, ChevronUp, Wrench, Link2, Plus, Trash2, Search, Mail, Calendar, FileText, Users, CreditCard, Phone, Workflow, Database, Cloud, Shield, Zap, Github, ExternalLink, X, Server } from "lucide-react";
+import { ArrowLeft, Check, Play, Mic, Cpu, Globe, User, Sparkles, Loader2, Square, MessageSquare, RefreshCw, Send, Code, Copy, ChevronDown, ChevronUp, Wrench, Link2, Plus, Trash2, Search, Mail, Calendar, FileText, Users, CreditCard, Phone, Workflow, Database, Cloud, Shield, Zap, Github, ExternalLink, X, Server, Pencil, Save } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
@@ -416,6 +416,131 @@ const AVAILABLE_INTEGRATIONS = [
   { id: 'datadog', name: 'Datadog', category: 'developer', icon: '🐕', color: 'bg-purple-500/10', iconColor: 'text-purple-400', description: 'Monitor and analyze application performance' },
   { id: 'supabase', name: 'Supabase', category: 'developer', icon: '⚡', color: 'bg-emerald-500/10', iconColor: 'text-emerald-400', description: 'Transform databases into voice-driven knowledge bases' },
 ];
+
+function KbItemRow({ item, onUpdated, onDeleted }: { item: KnowledgeBaseItem; onUpdated: () => void; onDeleted: () => void }) {
+  const { toast } = useToast();
+  const [editing, setEditing] = useState(false);
+  const [editTitle, setEditTitle] = useState(item.title);
+  const [editContent, setEditContent] = useState(item.content);
+  const [saving, setSaving] = useState(false);
+
+  const handleSave = async () => {
+    if (!editTitle.trim() || !editContent.trim()) return;
+    setSaving(true);
+    try {
+      await knowledgeBaseApi.update(item.id, editTitle.trim(), editContent.trim());
+      onUpdated();
+      setEditing(false);
+      toast({ title: "Source updated" });
+    } catch (err: any) {
+      toast({ title: "Failed to update", description: err.message, variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleCancel = () => {
+    setEditTitle(item.title);
+    setEditContent(item.content);
+    setEditing(false);
+  };
+
+  const typeColor = item.type === 'url' ? 'bg-blue-500/15' : item.type === 'file' ? 'bg-purple-500/15' : 'bg-green-500/15';
+  const badgeColor = item.type === 'url' ? 'bg-blue-500/10 text-blue-400' : item.type === 'file' ? 'bg-purple-500/10 text-purple-400' : 'bg-green-500/10 text-green-400';
+  const typeLabel = item.type === 'url' ? 'URL' : item.type === 'file' ? 'File' : 'Text';
+
+  if (editing) {
+    return (
+      <div className="p-3 bg-background/60 rounded-xl border border-white/15 space-y-3" data-testid={`kb-item-edit-${item.id}`}>
+        <div className="flex items-center gap-2 mb-1">
+          <span className={`inline-block rounded px-1.5 py-0.5 text-[10px] font-medium ${badgeColor}`}>{typeLabel}</span>
+          <span className="text-xs text-muted-foreground">Editing source</span>
+        </div>
+        <div>
+          <Label className="text-xs text-muted-foreground mb-1 block">Title</Label>
+          <Input
+            value={editTitle}
+            onChange={e => setEditTitle(e.target.value)}
+            className="h-8 text-sm"
+            data-testid={`input-kb-edit-title-${item.id}`}
+          />
+        </div>
+        <div>
+          <Label className="text-xs text-muted-foreground mb-1 block">Content</Label>
+          <Textarea
+            value={editContent}
+            onChange={e => setEditContent(e.target.value)}
+            rows={10}
+            className="text-sm font-mono resize-y"
+            data-testid={`input-kb-edit-content-${item.id}`}
+          />
+          <p className="text-[10px] text-muted-foreground mt-1">{editContent.length.toLocaleString()} / 50,000 chars</p>
+        </div>
+        <div className="flex gap-2">
+          <Button size="sm" onClick={handleSave} disabled={saving || !editTitle.trim() || !editContent.trim()} data-testid={`button-kb-save-${item.id}`}>
+            {saving ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Save className="w-3 h-3 mr-1" />}
+            Save
+          </Button>
+          <Button size="sm" variant="ghost" onClick={handleCancel} disabled={saving} data-testid={`button-kb-cancel-${item.id}`}>
+            <X className="w-3 h-3 mr-1" />Cancel
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="flex items-center justify-between p-3 bg-background/40 rounded-xl border border-white/8 hover:border-white/15 transition-colors"
+      data-testid={`kb-item-${item.id}`}
+    >
+      <div className="flex items-center gap-3 min-w-0">
+        <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${typeColor}`}>
+          {item.type === 'url' && <Link2 className="w-4 h-4 text-blue-400" />}
+          {item.type === 'file' && <Database className="w-4 h-4 text-purple-400" />}
+          {item.type === 'text' && <FileText className="w-4 h-4 text-green-400" />}
+        </div>
+        <div className="min-w-0">
+          <p className="font-medium text-sm truncate">{item.title}</p>
+          <p className="text-xs text-muted-foreground">
+            <span className={`inline-block rounded px-1 py-0.5 text-[10px] font-medium mr-1.5 ${badgeColor}`}>{typeLabel}</span>
+            {item.content.length.toLocaleString()} chars
+          </p>
+        </div>
+      </div>
+      <div className="flex items-center gap-1 shrink-0">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8 text-muted-foreground hover:text-blue-400"
+          data-testid={`button-edit-kb-${item.id}`}
+          onClick={() => setEditing(true)}
+          title="Edit source"
+        >
+          <Pencil className="w-4 h-4" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8 text-muted-foreground hover:text-red-400"
+          data-testid={`button-delete-kb-${item.id}`}
+          onClick={async () => {
+            try {
+              await knowledgeBaseApi.delete(item.id);
+              onDeleted();
+              toast({ title: "Source removed" });
+            } catch (err: any) {
+              toast({ title: "Failed to remove", description: err.message, variant: "destructive" });
+            }
+          }}
+          title="Delete source"
+        >
+          <Trash2 className="w-4 h-4" />
+        </Button>
+      </div>
+    </div>
+  );
+}
 
 export default function Build() {
   const [, setLocation] = useLocation();
@@ -1232,49 +1357,12 @@ export default function Build() {
                         <p className="text-xs text-muted-foreground uppercase tracking-wider font-medium mb-2">Added Sources ({kbItems.length})</p>
                         <div className="space-y-2">
                           {kbItems.map((item) => (
-                            <div
+                            <KbItemRow
                               key={item.id}
-                              className="flex items-center justify-between p-3 bg-background/40 rounded-xl border border-white/8 hover:border-white/15 transition-colors"
-                              data-testid={`kb-item-${item.id}`}
-                            >
-                              <div className="flex items-center gap-3 min-w-0">
-                                <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
-                                  item.type === 'url' ? 'bg-blue-500/15' : item.type === 'file' ? 'bg-purple-500/15' : 'bg-green-500/15'
-                                }`}>
-                                  {item.type === 'url' && <Link2 className="w-4 h-4 text-blue-400" />}
-                                  {item.type === 'file' && <Database className="w-4 h-4 text-purple-400" />}
-                                  {item.type === 'text' && <FileText className="w-4 h-4 text-green-400" />}
-                                </div>
-                                <div className="min-w-0">
-                                  <p className="font-medium text-sm truncate">{item.title}</p>
-                                  <p className="text-xs text-muted-foreground">
-                                    <span className={`inline-block rounded px-1 py-0.5 text-[10px] font-medium mr-1.5 ${
-                                      item.type === 'url' ? 'bg-blue-500/10 text-blue-400' : item.type === 'file' ? 'bg-purple-500/10 text-purple-400' : 'bg-green-500/10 text-green-400'
-                                    }`}>
-                                      {item.type === 'url' ? 'URL' : item.type === 'file' ? 'File' : 'Text'}
-                                    </span>
-                                    {item.content.length.toLocaleString()} chars
-                                  </p>
-                                </div>
-                              </div>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-8 w-8 text-muted-foreground hover:text-red-400 shrink-0"
-                                data-testid={`button-delete-kb-${item.id}`}
-                                onClick={async () => {
-                                  try {
-                                    await knowledgeBaseApi.delete(item.id);
-                                    refetchKbItems();
-                                    toast({ title: "Source removed" });
-                                  } catch (err: any) {
-                                    toast({ title: "Failed to remove", description: err.message, variant: "destructive" });
-                                  }
-                                }}
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </Button>
-                            </div>
+                              item={item}
+                              onUpdated={refetchKbItems}
+                              onDeleted={refetchKbItems}
+                            />
                           ))}
                         </div>
                       </div>

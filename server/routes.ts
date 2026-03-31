@@ -423,6 +423,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.put("/api/knowledge-base/:id", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
+      const schema = z.object({
+        title: z.string().min(1).max(200),
+        content: z.string().min(1).max(50000),
+      });
+      const { title, content } = schema.parse(req.body);
+      const item = await storage.updateKnowledgeBaseItem(id, title, content);
+      if (!item) return res.status(404).json({ error: "Item not found" });
+      res.json(item);
+    } catch (error: any) {
+      if (error.name === "ZodError") return res.status(400).json({ error: fromError(error).toString() });
+      res.status(500).json({ error: "Failed to update item" });
+    }
+  });
+
   app.delete("/api/knowledge-base/:id", async (req, res) => {
     try {
       const id = parseInt(req.params.id);

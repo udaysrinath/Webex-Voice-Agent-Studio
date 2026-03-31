@@ -262,6 +262,19 @@ export const knowledgeBaseApi = {
     return res.json();
   },
 
+  update: async (id: number, title: string, content: string): Promise<KnowledgeBaseItem> => {
+    const res = await fetch(`${API_BASE}/knowledge-base/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title, content }),
+    });
+    if (!res.ok) {
+      const error = await res.json();
+      throw new Error(error.error || "Failed to update item");
+    }
+    return res.json();
+  },
+
   delete: async (id: number): Promise<void> => {
     const res = await fetch(`${API_BASE}/knowledge-base/${id}`, { method: "DELETE" });
     if (!res.ok) throw new Error(await res.text());
