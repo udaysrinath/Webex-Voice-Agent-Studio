@@ -825,6 +825,18 @@ export default function Build() {
         language: "en-US",
         gender: "neutral",
       });
+
+      // Copy the Retail DB KB item to the new agent
+      try {
+        const sourceItems = await knowledgeBaseApi.getByAgent(30);
+        const retailItem = sourceItems.find(i => /retail/i.test(i.title));
+        if (retailItem) {
+          await knowledgeBaseApi.addText(agent.id, retailItem.title, retailItem.content);
+        }
+      } catch {
+        // Non-fatal — agent still created without retail KB
+      }
+
       queryClient.invalidateQueries({ queryKey: ["agents"] });
       toast({ title: "Agent created!", description: `${agent.name} is ready to chat.` });
       setLocation(`/evaluate?agentId=${agent.id}`);
