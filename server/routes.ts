@@ -471,7 +471,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
 1. "agentName" — short, memorable (2-3 words, title case, no "AI"/"Bot" suffix)
 2. "agentCategory" — one of: retail, banking, healthcare, support, sales, scheduling, personal, education, travel, other
-3. "systemPrompt" — production-ready system prompt with # Personality, # Capabilities, # Communication Style sections (under 400 words)
+3. "systemPrompt" — production-ready system prompt with FOUR sections IN THIS ORDER: # Personality, # Capabilities, # Communication Style, # Rules. The # Rules section MUST exist (even if initially empty with a placeholder like "- Follow user instructions carefully.") because user refinements will be appended to it as mandatory behaviors. Under 400 words total.
 4. "suggestions" — exactly 5 specific, actionable refinements phrased as user requests, tailored to the agent's category. Examples for a retail agent: "Add rules for handling damaged items", "Create a policy for expedited shipping requests". Make them category-specific, not generic.
 5. "suggestedIntegrations" — exactly 3 relevant integration objects, each with "name" and "reason". Pick from this catalog matching the agent's category:
    - Retail: Stripe (payments/refunds), Shopify (product catalog), FedEx/UPS (shipping tracking)
@@ -525,22 +525,50 @@ Return valid JSON only: {"agentName":"...","agentCategory":"...","systemPrompt":
         messages: [
           {
             role: "system",
-            content: `You are an expert AI voice agent designer. You have an existing agent system prompt and the user wants to refine or extend it.
-Apply the refinement thoughtfully. Then return:
-1. "systemPrompt" — updated prompt (keep the # Personality, # Capabilities, # Communication Style structure)
-2. "summary" — short one-sentence summary of what you changed (e.g. "Added a friendly greeting for first-time callers")
-3. "suggestions" — 4 new specific, category-appropriate refinement suggestions, different from what was just done
-4. "suggestedIntegrations" — up to 2 integration objects with "name" and "reason", only if the refinement suggests new integrations would help. Use integrations like Stripe, Shopify, Plaid, Twilio, Google Calendar, HubSpot, Zendesk, Slack, Gmail, Notion, Zapier, Calendly, Salesforce, Jira. Omit or return empty array if none apply.
+            content: `You are an expert AI voice agent designer. The user is refining an existing agent. Your PRIMARY JOB is to make sure the refinement becomes a STRICT, ENFORCED behavior of the agent — not a loose suggestion.
+
+CRITICAL RULES FOR APPLYING THE REFINEMENT:
+1. The refinement MUST be encoded as one or more imperative numbered rules in a "# Rules" section at the bottom of the system prompt. If a # Rules section does not exist, CREATE IT.
+2. Use forceful directive language: "MUST", "ALWAYS", "NEVER", "BEFORE you do X, you MUST first do Y". Do NOT use soft language like "consider", "may", "should" — use "MUST"/"ALWAYS".
+3. If the refinement implies a workflow gate (e.g. "verify identity before sharing balances"), write it as: "Before performing <action>, you MUST first <gate>. If <gate> is not satisfied, refuse to proceed and ask for it."
+4. If the refinement is about something the user must collect (email, OTP, ID, etc.), explicitly list the steps: "1. Ask the user for <thing>. 2. Wait for them to provide <thing>. 3. Confirm <thing> back to them. 4. Only then proceed."
+5. ALSO weave a brief mention into # Capabilities so the model is aware of the new capability/constraint at the top, but the AUTHORITATIVE rule lives in # Rules.
+6. PRESERVE all existing rules — never delete prior refinements. Append new ones with the next number.
+
+Then return:
+1. "systemPrompt" — full updated prompt with sections: # Personality, # Capabilities, # Communication Style, # Rules
+2. "summary" — short one-sentence summary of what you changed
+3. "suggestions" — 4 new specific refinement suggestions, different from what was just done
+4. "suggestedIntegrations" — up to 2 integration objects with "name" and "reason", only if the refinement strongly implies a new integration would help (e.g. an email-verification refinement → suggest "SendGrid" or "Gmail"). Use Stripe, Shopify, Plaid, Twilio, SendGrid, Google Calendar, HubSpot, Zendesk, Slack, Gmail, Notion, Zapier, Calendly, Salesforce, Jira. Empty array if none apply.
 
 Return valid JSON: {"systemPrompt":"...","summary":"...","suggestions":[...],"suggestedIntegrations":[...]}`
           },
           {
             role: "user",
-            content: `Agent name: ${agentName || "the agent"}\n\nCurrent system prompt:\n${systemPrompt}\n\nAlready connected integrations: ${(req.body.activeIntegrations || ["Webex", "Retail Database"]).join(", ")}\n\nRefinement requested: ${refinement}`
+            content: `Agent name: ${agentName || "the agent"}
+
+Current system prompt:
+"""
+${systemPrompt}
+"""
+
+Already connected integrations: ${(req.body.activeIntegrations || ["Webex", "Retail Database"]).join(", ")}
+
+REFINEMENT REQUESTED BY USER: "${refinement}"
+
+Now produce the updated systemPrompt. REMINDER:
+- The output MUST contain a "# Rules" section (create it if missing).
+- The refinement above MUST be encoded as one or more numbered, imperative MUST-rules in the # Rules section, using "MUST"/"ALWAYS"/"NEVER".
+- If the refinement is a verification or gate (e.g. verify identity by email), spell out the exact step-by-step procedure: ask, wait, confirm, then proceed; refuse to proceed otherwise.
+- Preserve any existing rules — append, do not replace.
+- Also briefly mention the new behavior in # Capabilities so the agent is aware of it.
+
+Failing to add the refinement as a strict rule in the # Rules section is the worst possible outcome. Be strict.`
           }
         ],
         response_format: { type: "json_object" },
-        max_tokens: 1200
+        temperature: 0.3,
+        max_tokens: 1400
       });
 
       const raw = completion.choices[0].message.content || "{}";
