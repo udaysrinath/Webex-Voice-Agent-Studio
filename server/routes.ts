@@ -1494,7 +1494,7 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
             ? { personaId: data.personaConfig.personaId }
             : {
                 name: data.personaConfig?.name || "Assistant",
-                avatarId: data.personaConfig?.avatarId || "30fa96d0-26c4-4e55-94a0-517025942e18",
+                avatarId: data.personaConfig?.avatarId || "b65e7a35-a056-494d-9ffe-fc05e3ffbf40",
                 voiceId: data.personaConfig?.voiceId || "6bfbe25a-979d-40f3-a92b-5394170af54b",
                 llmId: data.personaConfig?.llmId || "0934d97d-0c3a-4f33-91b0-5e136a0ef466",
                 systemPrompt: enrichedSystemPrompt,
