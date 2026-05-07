@@ -53,7 +53,7 @@ graph TD
         APIs["External APIs: OpenAI, Deepgram, Webex, Twilio, Anam"]
     end
 
-    subgraph DB["PostgreSQL (Neon Serverless)"]
+    subgraph DB["PostgreSQL (Local Docker or Neon)"]
         Tables["Tables: agents, evaluations, webex_rooms, webex_messages, knowledge_base_items"]
     end
 
@@ -68,7 +68,7 @@ graph TD
 ### Prerequisites
 
 - **Node.js** 20 or later
-- **Neon** database account (https://neon.tech/ — free tier works)
+- **Docker** (for local PostgreSQL) or a [Neon](https://neon.tech/) account
 - **OpenAI API key** (strongly recommended)
 
 ### Installation
@@ -87,9 +87,16 @@ Copy the example file and fill in your values:
 cp .env.example .env
 ```
 
+The app auto-detects which Postgres driver to use based on `DATABASE_URL`:
+- URLs containing `neon.tech` or `neon-` → Neon serverless driver (WebSocket)
+- Everything else → standard `pg` driver (TCP)
+
 ```env
-# Required - app will not start without this (Neon serverless PostgreSQL)
-DATABASE_URL=postgresql://user:password@host/dbname?sslmode=require
+# Required - pick one:
+# Local Postgres (Docker):
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/voice_agent_studio
+# Neon (serverless):
+# DATABASE_URL=postgresql://user:password@ep-xyz.us-east-2.aws.neon.tech/dbname?sslmode=require
 
 # Strongly recommended - TTS, chat, prompt generation, OCR all depend on this
 OPENAI_API_KEY=sk-...
@@ -114,9 +121,27 @@ ANAM_API_KEY=...
 
 ### Database Setup
 
+#### Option A: Local PostgreSQL with Docker (recommended for development)
+
 ```bash
+# Start Postgres in the background
+docker compose up -d
+
+# Push schema to create tables
 npm run db:push
 ```
+
+This starts PostgreSQL 16 on `localhost:5432` with the default credentials already in `.env`.
+
+To stop: `docker compose down` (data persists in a named volume).  
+To reset: `docker compose down -v` (deletes all data).
+
+#### Option B: Neon (serverless, used in production)
+
+1. Create a free account at https://neon.tech/
+2. Create a project and database
+3. Copy the connection string and set it as `DATABASE_URL` in `.env`
+4. Run `npm run db:push`
 
 ### Run
 
@@ -243,7 +268,7 @@ After deployment, pushing to `main` on GitHub auto-redeploys.
 | Backend | Express.js, TypeScript |
 | ORM | Drizzle |
 | Validation | Zod |
-| Database | PostgreSQL (Neon serverless) |
+| Database | PostgreSQL (local Docker or Neon serverless) |
 | Voice (STT) | Deepgram |
 | Voice (TTS) | OpenAI |
 | LLM | OpenAI GPT-4o |

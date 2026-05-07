@@ -1,6 +1,3 @@
-import { drizzle } from "drizzle-orm/neon-serverless";
-import { Pool, neonConfig } from "@neondatabase/serverless";
-import ws from "ws";
 import { eq, desc } from "drizzle-orm";
 import {
   type User,
@@ -23,10 +20,25 @@ import {
   knowledgeBaseItems,
 } from "@shared/schema";
 
-neonConfig.webSocketConstructor = ws;
+function createDb() {
+  const isNeon = process.env.DATABASE_URL?.includes("neon.tech") || process.env.DATABASE_URL?.includes("neon-");
 
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-const db = drizzle(pool);
+  if (isNeon) {
+    const { Pool, neonConfig } = require("@neondatabase/serverless");
+    const { drizzle } = require("drizzle-orm/neon-serverless");
+    const ws = require("ws");
+    neonConfig.webSocketConstructor = ws;
+    const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+    return drizzle(pool);
+  } else {
+    const { Pool } = require("pg");
+    const { drizzle } = require("drizzle-orm/node-postgres");
+    const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+    return drizzle(pool);
+  }
+}
+
+const db = createDb();
 
 export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
