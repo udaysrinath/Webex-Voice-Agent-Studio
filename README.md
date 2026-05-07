@@ -6,8 +6,21 @@ A low-code platform for building, configuring, and evaluating AI-powered voice a
 
 ---
 
+## Quick Start
+
+```bash
+cp .env.example .env
+# Edit .env — add your OPENAI_API_KEY (optional keys can stay blank)
+docker compose up
+```
+
+Open http://localhost:3000. That's it — Postgres, schema, and the app all start automatically.
+
+---
+
 ## Table of Contents
 
+- [Quick Start](#quick-start)
 - [Features](#features)
 - [Architecture](#architecture)
 - [Getting Started](#getting-started)
@@ -67,36 +80,54 @@ graph TD
 
 ### Prerequisites
 
-- **Node.js** 20 or later
-- **Docker** (for local PostgreSQL) or a [Neon](https://neon.tech/) account
-- **OpenAI API key** (strongly recommended)
+- **Docker** (only requirement for local development)
 
-### Installation
+Or, if running without Docker:
+- Node.js 20+
+- PostgreSQL 16 (or a [Neon](https://neon.tech/) account)
+
+### Option A: Docker (recommended — one command)
 
 ```bash
-git clone git@github.com:udaysrinath/Webex-Voice-Agent-Studio.git
+git clone <repo-url>
+cd Webex-Voice-Agent-Studio
+cp .env.example .env
+# Edit .env — add your OPENAI_API_KEY
+docker compose up
+```
+
+This starts PostgreSQL + the app together. Schema is auto-created on first boot.  
+Open http://localhost:3000.
+
+- **Hot reload:** Edit files in `client/`, `server/`, or `shared/` — changes reflect immediately.
+- **Stop:** `Ctrl+C` or `docker compose down`
+- **Reset database:** `docker compose down -v`
+- **Rebuild after package.json changes:** `docker compose up --build`
+- **Custom port:** Set `APP_PORT=8080` in `.env` to change from default 3000
+
+### Option B: Without Docker (Node.js + external Postgres)
+
+```bash
+git clone <repo-url>
 cd Webex-Voice-Agent-Studio
 npm install
-```
-
-### Environment Variables
-
-Copy the example file and fill in your values:
-
-```bash
 cp .env.example .env
+# Edit .env — set DATABASE_URL to your Postgres (local or Neon)
+npm run db:push
+npm run dev
 ```
+
+Open http://localhost:5000.
 
 The app auto-detects which Postgres driver to use based on `DATABASE_URL`:
 - URLs containing `neon.tech` or `neon-` → Neon serverless driver (WebSocket)
 - Everything else → standard `pg` driver (TCP)
 
+### Environment Variables
+
 ```env
-# Required - pick one:
-# Local Postgres (Docker):
+# Database (auto-provided by Docker Compose, or set manually)
 DATABASE_URL=postgresql://postgres:postgres@localhost:5432/voice_agent_studio
-# Neon (serverless):
-# DATABASE_URL=postgresql://user:password@ep-xyz.us-east-2.aws.neon.tech/dbname?sslmode=require
 
 # Strongly recommended - TTS, chat, prompt generation, OCR all depend on this
 OPENAI_API_KEY=sk-...
@@ -117,37 +148,7 @@ TWILIO_PHONE_NUMBER=+1XXXXXXXXXX
 ANAM_API_KEY=...
 ```
 
-> **Minimum to start the app:** Only `DATABASE_URL` is strictly required. Without `OPENAI_API_KEY` the app boots but TTS, chat, prompt generation, and OCR return 503 errors. All other keys are optional — missing ones cause those features to degrade gracefully.
-
-### Database Setup
-
-#### Option A: Local PostgreSQL with Docker (recommended for development)
-
-```bash
-# Start Postgres in the background
-docker compose up -d
-
-# Push schema to create tables
-npm run db:push
-```
-
-This starts PostgreSQL 16 on `localhost:5432` with the default credentials already in `.env`.
-
-To stop: `docker compose down` (data persists in a named volume).  
-To reset: `docker compose down -v` (deletes all data).
-
-#### Option B: Neon (serverless, used in production)
-
-1. Create a free account at https://neon.tech/
-2. Create a project and database
-3. Copy the connection string and set it as `DATABASE_URL` in `.env`
-4. Run `npm run db:push`
-
-### Run
-
-```bash
-npm run dev
-```
+> **Minimum to start:** With Docker, only `OPENAI_API_KEY` matters (Postgres is handled automatically). Without `OPENAI_API_KEY` the app boots but TTS, chat, prompt generation, and OCR return 503 errors. All other keys are optional.
 
 Open http://localhost:5000.
 
@@ -162,7 +163,7 @@ The app is hosted on Replit. Follow these steps to set up your own instance.
 1. Go to https://replit.com/ and sign up (GitHub login works)
 2. Choose **Hacker** or **Pro** plan for custom domains and always-on deployments
 3. Click **+ Create Repl** > **Import from GitHub**
-4. Paste: `https://github.com/udaysrinath/Webex-Voice-Agent-Studio`
+4. Paste the GitHub repository URL
 5. Click **Import from GitHub**
 
 Replit auto-detects the `.replit` config file and configures run/build commands.
