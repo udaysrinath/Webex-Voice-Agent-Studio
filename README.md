@@ -129,28 +129,28 @@ The app auto-detects which Postgres driver to use based on `DATABASE_URL`:
 # Database (auto-provided by Docker Compose, or set manually)
 DATABASE_URL=postgresql://postgres:postgres@localhost:5432/voice_agent_studio
 
-# Strongly recommended - TTS, chat, prompt generation, OCR all depend on this
-OPENAI_API_KEY=sk-...
+# Provider selection (defaults to openai for both)
+CHAT_PROVIDER=openai        # openai | groq
+CHAT_MODEL=                 # auto-selected per provider if blank
+TTS_PROVIDER=openai         # openai | deepgram
 
-# Optional - Webex room/message sync
-WEBEX_ACCESS_TOKEN=...
-
-# Optional - Speech-to-text (voice input in evaluate page)
-DEEPGRAM_API_KEY=...
+# API keys (provide keys for your selected providers)
+OPENAI_API_KEY=sk-...       # chat (default), TTS (default), OCR, transcription
+GROQ_API_KEY=gsk_...        # only if CHAT_PROVIDER=groq
+DEEPGRAM_API_KEY=...        # STT (voice input), and TTS if TTS_PROVIDER=deepgram
 DEEPGRAM_PROJECT_ID=...
 
-# Optional - Twilio SMS (OTP in banking demo)
-TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+# Optional integrations
+WEBEX_ACCESS_TOKEN=...
+TWILIO_ACCOUNT_SID=...
 TWILIO_AUTH_TOKEN=...
-TWILIO_PHONE_NUMBER=+1XXXXXXXXXX
-
-# Optional - Avatar rendering
+TWILIO_PHONE_NUMBER=...
 ANAM_API_KEY=...
 ```
 
-> **Minimum to start:** With Docker, only `OPENAI_API_KEY` matters (Postgres is handled automatically). Without `OPENAI_API_KEY` the app boots but TTS, chat, prompt generation, and OCR return 503 errors. All other keys are optional.
+> **Minimum to start:** With Docker, you only need one chat provider key (`OPENAI_API_KEY` or `GROQ_API_KEY`). Postgres is handled automatically. If using Groq for chat, note that tool calling (banking demo, Webex actions) is not supported — those features require OpenAI.
 
-Open http://localhost:5000.
+Open http://localhost:3000.
 
 ---
 

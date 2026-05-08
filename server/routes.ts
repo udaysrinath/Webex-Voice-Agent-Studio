@@ -89,6 +89,32 @@ async function paginateGet(
   return allItems;
 }
 
+// --- Provider configuration ---
+const CHAT_PROVIDER = process.env.CHAT_PROVIDER || "openai";
+const CHAT_MODEL = process.env.CHAT_MODEL || (CHAT_PROVIDER === "groq" ? "llama-3.1-70b-versatile" : "gpt-4o");
+const TTS_PROVIDER = process.env.TTS_PROVIDER || "openai";
+
+const DEEPGRAM_VOICE_MAP: Record<string, string> = {
+  alloy: "aura-asteria-en",
+  echo: "aura-orion-en",
+  fable: "aura-arcas-en",
+  onyx: "aura-perseus-en",
+  nova: "aura-luna-en",
+  shimmer: "aura-stella-en",
+};
+
+function getChatClient(): OpenAI | null {
+  if (CHAT_PROVIDER === "groq") {
+    if (!process.env.GROQ_API_KEY) return null;
+    return new OpenAI({
+      apiKey: process.env.GROQ_API_KEY,
+      baseURL: "https://api.groq.com/openai/v1",
+    });
+  }
+  if (!process.env.OPENAI_API_KEY) return null;
+  return new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+}
+
 function getOpenAIClient(): OpenAI | null {
   if (!process.env.OPENAI_API_KEY) {
     return null;
@@ -456,14 +482,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Spark Builder: generate agent name + system prompt + contextual suggestions + integrations
   app.post("/api/agents/generate-prompt", async (req, res) => {
     try {
-      const openai = getOpenAIClient();
-      if (!openai) return res.status(503).json({ error: "OpenAI not configured" });
+      const chatClient = getChatClient();
+      if (!chatClient) return res.status(503).json({ error: "Chat provider not configured" });
 
       const { description } = req.body;
       if (!description?.trim()) return res.status(400).json({ error: "Description required" });
 
-      const completion = await openai.chat.completions.create({
-        model: "gpt-4o",
+      const completion = await chatClient.chat.completions.create({
+        model: CHAT_MODEL,
         messages: [
           {
             role: "system",
@@ -512,16 +538,16 @@ Return valid JSON only: {"agentName":"...","agentCategory":"...","systemPrompt":
   // Spark Builder: refine an existing system prompt based on a follow-up request
   app.post("/api/agents/refine-prompt", async (req, res) => {
     try {
-      const openai = getOpenAIClient();
-      if (!openai) return res.status(503).json({ error: "OpenAI not configured" });
+      const chatClient = getChatClient();
+      if (!chatClient) return res.status(503).json({ error: "Chat provider not configured" });
 
       const { systemPrompt, agentName, refinement } = req.body;
       if (!systemPrompt?.trim() || !refinement?.trim()) {
         return res.status(400).json({ error: "systemPrompt and refinement are required" });
       }
 
-      const completion = await openai.chat.completions.create({
-        model: "gpt-4o",
+      const completion = await chatClient.chat.completions.create({
+        model: CHAT_MODEL,
         messages: [
           {
             role: "system",
@@ -587,35 +613,70 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
 
   app.post("/api/tts", async (req, res) => {
     try {
-      const openai = getOpenAIClient();
-      if (!openai) {
-        return res.status(503).json({ 
-          error: "Text-to-speech is not configured. Please add your OpenAI API key." 
+      const data = ttsRequestSchema.parse(req.body);
+
+      if (TTS_PROVIDER === "deepgram") {
+        const deepgram = getDeepgramClient();
+        if (!deepgram) {
+          return res.status(503).json({
+            error: "Text-to-speech is not configured. Please add your DEEPGRAM_API_KEY."
+          });
+        }
+
+        const voiceModel = DEEPGRAM_VOICE_MAP[data.voice] || "aura-asteria-en";
+        const response = await deepgram.speak.request(
+          { text: data.text },
+          { model: voiceModel, encoding: "mp3" }
+        );
+
+        const stream = await response.getStream();
+        if (!stream) {
+          return res.status(500).json({ error: "Failed to generate speech stream" });
+        }
+
+        const chunks: Buffer[] = [];
+        const reader = stream.getReader();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(Buffer.from(value));
+        }
+        const buffer = Buffer.concat(chunks);
+        const base64Audio = buffer.toString("base64");
+
+        res.json({
+          audio: base64Audio,
+          contentType: "audio/mpeg"
+        });
+      } else {
+        const openai = getOpenAIClient();
+        if (!openai) {
+          return res.status(503).json({
+            error: "Text-to-speech is not configured. Please add your OPENAI_API_KEY."
+          });
+        }
+
+        const mp3 = await openai.audio.speech.create({
+          model: data.model,
+          voice: data.voice,
+          input: data.text,
+        });
+
+        const buffer = Buffer.from(await mp3.arrayBuffer());
+        const base64Audio = buffer.toString("base64");
+
+        res.json({
+          audio: base64Audio,
+          contentType: "audio/mpeg"
         });
       }
-
-      const data = ttsRequestSchema.parse(req.body);
-      
-      const mp3 = await openai.audio.speech.create({
-        model: data.model,
-        voice: data.voice,
-        input: data.text,
-      });
-
-      const buffer = Buffer.from(await mp3.arrayBuffer());
-      const base64Audio = buffer.toString("base64");
-
-      res.json({ 
-        audio: base64Audio,
-        contentType: "audio/mpeg"
-      });
     } catch (error: any) {
       console.error("TTS Error:", error);
       if (error.name === "ZodError") {
         return res.status(400).json({ error: fromError(error).toString() });
       }
       if (error.status === 401) {
-        return res.status(401).json({ error: "Invalid OpenAI API key" });
+        return res.status(401).json({ error: "Invalid API key" });
       }
       res.status(500).json({ error: "Failed to generate speech" });
     }
@@ -924,14 +985,14 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
     const { message, agentId } = req.body;
     if (!message) return res.status(400).json({ error: "message required" });
 
-    const openai = getOpenAIClient();
+    const chatClient = getChatClient();
     let name: string | null = null;
     let last4: string | null = null;
 
-    if (openai) {
+    if (chatClient) {
       try {
-        const extraction = await openai.chat.completions.create({
-          model: "gpt-4o-mini",
+        const extraction = await chatClient.chat.completions.create({
+          model: CHAT_MODEL,
           messages: [
             {
               role: "system",
@@ -977,17 +1038,17 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
     const { message } = req.body;
     if (!message) return res.status(400).json({ error: "message required" });
 
-    const openai = getOpenAIClient();
+    const chatClient = getChatClient();
     let code: string | null = null;
 
     const cleaned = message.replace(/\s+/g, "");
     const directMatch = cleaned.match(/\d{4,8}/);
     if (directMatch) {
       code = directMatch[0];
-    } else if (openai) {
+    } else if (chatClient) {
       try {
-        const extraction = await openai.chat.completions.create({
-          model: "gpt-4o-mini",
+        const extraction = await chatClient.chat.completions.create({
+          model: CHAT_MODEL,
           messages: [
             { role: "system", content: `Extract a numeric verification code (4 to 8 digits) from this spoken message. The digits may be spoken individually like "two four seven eight nine one". Return JSON: {"code": "247891"} or {"code": null}.` },
             { role: "user", content: message }
@@ -1288,10 +1349,10 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
 
   app.post("/api/chat", async (req, res) => {
     try {
-      const openai = getOpenAIClient();
-      if (!openai) {
-        return res.status(503).json({ 
-          error: "Chat is not configured. Please add your OpenAI API key." 
+      const chatClient = getChatClient();
+      if (!chatClient) {
+        return res.status(503).json({
+          error: "Chat is not configured. Please set OPENAI_API_KEY or GROQ_API_KEY."
         });
       }
 
@@ -1362,17 +1423,18 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
         ...(hasWebex ? webexTools : []),
       ];
 
-      const completion = await openai.chat.completions.create({
-        model: "gpt-4o",
+      const supportsTools = CHAT_PROVIDER !== "groq";
+
+      const completion = await chatClient.chat.completions.create({
+        model: CHAT_MODEL,
         messages,
         max_tokens: 500,
-        tools: allTools,
-        tool_choice: "auto",
+        ...(supportsTools && allTools.length > 0 ? { tools: allTools, tool_choice: "auto" } : {}),
       });
 
       const assistantMessage = completion.choices[0]?.message;
 
-      if (assistantMessage?.tool_calls && assistantMessage.tool_calls.length > 0) {
+      if (supportsTools && assistantMessage?.tool_calls && assistantMessage.tool_calls.length > 0) {
         const toolCall = assistantMessage.tool_calls[0] as { id: string; type: string; function: { name: string; arguments: string } };
         const functionName = toolCall.function.name;
         const functionArgs = JSON.parse(toolCall.function.arguments);
@@ -1391,8 +1453,8 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
           content: JSON.stringify(functionResult),
         });
 
-        const followUpCompletion = await openai.chat.completions.create({
-          model: "gpt-4o",
+        const followUpCompletion = await chatClient.chat.completions.create({
+          model: CHAT_MODEL,
           messages,
           max_tokens: 500,
         });
