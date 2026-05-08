@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { Link, useLocation, useSearch } from "wouter";
 import { motion } from "framer-motion";
-import { ArrowLeft, Mic, MicOff, Play, Pause, Send, Download, Settings2, Star, Loader2, Volume2, MessageCircle, Square, Video, VideoOff, User, Maximize2, Minimize2, Camera, ScanLine, X, RotateCcw, CheckCircle2, Wallet, TrendingUp, ArrowUpRight } from "lucide-react";
+import { ArrowLeft, Mic, MicOff, Play, Pause, Send, Download, Settings2, Star, Loader2, Volume2, MessageCircle, Square, Video, VideoOff, User, Maximize2, Minimize2, Camera, ScanLine, X, RotateCcw, CheckCircle2, Wallet, TrendingUp, ArrowUpRight, Phone } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { Separator } from "@/components/ui/separator";
@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Label } from "@/components/ui/label";
 import { Card } from "@/components/ui/card";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { agentsApi, evaluationsApi, ttsApi, chatApi, anamApi, ocrApi, type TTSRequest } from "@/lib/api";
@@ -1186,193 +1187,202 @@ export default function Evaluate() {
            </div>
         </div>
 
-        <div className="lg:col-span-5 bg-background overflow-y-auto border-l border-white/5 flex flex-col">
+        <div className="lg:col-span-5 bg-background border-l border-white/5 flex flex-col overflow-hidden">
+          <Tabs defaultValue="voice" className="flex flex-col h-full">
+            <TabsList className="w-full justify-start rounded-none border-b border-white/10 bg-transparent px-4 pt-2 h-auto">
+              <TabsTrigger value="voice" className="gap-2 data-[state=active]:bg-white/5 rounded-b-none border-b-2 border-transparent data-[state=active]:border-primary">
+                <Phone className="w-4 h-4" /> Voice
+              </TabsTrigger>
+              <TabsTrigger value="eval" className="gap-2 data-[state=active]:bg-white/5 rounded-b-none border-b-2 border-transparent data-[state=active]:border-primary">
+                <Star className="w-4 h-4" /> Evaluate
+              </TabsTrigger>
+            </TabsList>
 
-           <div className="border-b border-white/10 h-[360px]">
-             <VoiceAgentPanel
-               agentId={agent.id}
-               agentName={agent.name}
-               systemPrompt={agent.systemPrompt || undefined}
-               voice={agent.voiceModel}
-             />
-           </div>
+            <TabsContent value="voice" className="flex-1 overflow-hidden m-0">
+              <VoiceAgentPanel
+                agentId={agent.id}
+                agentName={agent.name}
+                systemPrompt={agent.systemPrompt || undefined}
+                voice={agent.voiceModel}
+              />
+            </TabsContent>
 
-           <div className="p-8">
-
-           <div className="mb-8">
-              <div
-                className="rounded-2xl overflow-hidden border border-white/10 relative"
-                style={{ background: "linear-gradient(135deg, #0f2027 0%, #1a3a4a 50%, #0d2137 100%)" }}
-                data-testid="card-bank-account"
-              >
-                <div className="absolute inset-0 opacity-10"
-                  style={{ backgroundImage: "repeating-linear-gradient(45deg, transparent, transparent 30px, rgba(255,255,255,0.03) 30px, rgba(255,255,255,0.03) 60px)" }}
-                />
-                <div className="relative p-5">
-                  <div className="flex items-start justify-between mb-4">
-                    <div className="flex items-center gap-2">
-                      <div className="h-8 w-8 rounded-lg bg-cyan-500/20 border border-cyan-500/30 flex items-center justify-center">
-                        <Wallet className="w-4 h-4 text-cyan-400" />
+            <TabsContent value="eval" className="flex-1 overflow-y-auto m-0 p-8">
+              <div className="mb-8">
+                <div
+                  className="rounded-2xl overflow-hidden border border-white/10 relative"
+                  style={{ background: "linear-gradient(135deg, #0f2027 0%, #1a3a4a 50%, #0d2137 100%)" }}
+                  data-testid="card-bank-account"
+                >
+                  <div className="absolute inset-0 opacity-10"
+                    style={{ backgroundImage: "repeating-linear-gradient(45deg, transparent, transparent 30px, rgba(255,255,255,0.03) 30px, rgba(255,255,255,0.03) 60px)" }}
+                  />
+                  <div className="relative p-5">
+                    <div className="flex items-start justify-between mb-4">
+                      <div className="flex items-center gap-2">
+                        <div className="h-8 w-8 rounded-lg bg-cyan-500/20 border border-cyan-500/30 flex items-center justify-center">
+                          <Wallet className="w-4 h-4 text-cyan-400" />
+                        </div>
+                        <div>
+                          <p className="text-xs text-cyan-300/70 font-medium tracking-wide uppercase">Checking Account</p>
+                          <p className="text-xs text-white/40">•••• •••• •••• 4291</p>
+                        </div>
                       </div>
-                      <div>
-                        <p className="text-xs text-cyan-300/70 font-medium tracking-wide uppercase">Checking Account</p>
-                        <p className="text-xs text-white/40">•••• •••• •••• 4291</p>
+                      <div className="text-right">
+                        <p className="text-xs text-white/40 mb-1">Available Balance</p>
+                        <p
+                          className="text-2xl font-mono font-bold text-white tracking-tight"
+                          data-testid="text-bank-balance"
+                        >
+                          ${bankBalance.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </p>
                       </div>
                     </div>
-                    <div className="text-right">
-                      <p className="text-xs text-white/40 mb-1">Available Balance</p>
-                      <p
-                        className="text-2xl font-mono font-bold text-white tracking-tight"
-                        data-testid="text-bank-balance"
+
+                    {lastDeposit && (
+                      <motion.div
+                        initial={{ opacity: 0, y: 4 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className="flex items-center justify-between bg-green-500/10 border border-green-500/20 rounded-lg px-3 py-2 mt-2"
+                        data-testid="card-last-deposit"
                       >
-                        ${bankBalance.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                      </p>
-                    </div>
-                  </div>
+                        <div className="flex items-center gap-2 text-green-400 text-xs">
+                          <ArrowUpRight className="w-3.5 h-3.5" />
+                          <span className="font-medium">Deposit processed</span>
+                        </div>
+                        <span className="text-green-300 text-xs font-mono font-semibold">
+                          +${lastDeposit.amount.toLocaleString("en-US", { minimumFractionDigits: 2 })}
+                        </span>
+                      </motion.div>
+                    )}
 
-                  {lastDeposit && (
-                    <motion.div
-                      initial={{ opacity: 0, y: 4 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      className="flex items-center justify-between bg-green-500/10 border border-green-500/20 rounded-lg px-3 py-2 mt-2"
-                      data-testid="card-last-deposit"
-                    >
-                      <div className="flex items-center gap-2 text-green-400 text-xs">
-                        <ArrowUpRight className="w-3.5 h-3.5" />
-                        <span className="font-medium">Deposit processed</span>
+                    {!lastDeposit && (
+                      <div className="flex items-center gap-2 text-white/30 text-xs mt-2">
+                        <TrendingUp className="w-3.5 h-3.5" />
+                        <span>No recent transactions</span>
                       </div>
-                      <span className="text-green-300 text-xs font-mono font-semibold">
-                        +${lastDeposit.amount.toLocaleString("en-US", { minimumFractionDigits: 2 })}
-                      </span>
-                    </motion.div>
-                  )}
-
-                  {!lastDeposit && (
-                    <div className="flex items-center gap-2 text-white/30 text-xs mt-2">
-                      <TrendingUp className="w-3.5 h-3.5" />
-                      <span>No recent transactions</span>
-                    </div>
-                  )}
+                    )}
+                  </div>
                 </div>
               </div>
-           </div>
 
-           <div className="mb-8">
-              <h2 className="text-xl font-display font-semibold mb-2 flex items-center gap-2">
-                <Star className="w-5 h-5 text-yellow-500 fill-yellow-500" /> 
-                Quality Evaluation
-              </h2>
-              <p className="text-sm text-muted-foreground">Rate the generated speech quality based on the attributes below.</p>
-           </div>
-
-           <div className="space-y-8">
-              
-              <div className="space-y-4">
-                 <div className="flex justify-between items-center">
-                    <Label className="text-base font-medium">Naturalness</Label>
-                    <span className="text-sm font-mono text-primary">{ratings.naturalness}%</span>
-                 </div>
-                 <Slider 
-                   value={[ratings.naturalness]} 
-                   onValueChange={(v) => setRatings({...ratings, naturalness: v[0]})}
-                   max={100} 
-                   step={1}
-                   className="py-2"
-                   data-testid="slider-naturalness"
-                 />
-                 <p className="text-xs text-muted-foreground">Does the voice sound human-like and authentic?</p>
+              <div className="mb-8">
+                <h2 className="text-xl font-display font-semibold mb-2 flex items-center gap-2">
+                  <Star className="w-5 h-5 text-yellow-500 fill-yellow-500" />
+                  Quality Evaluation
+                </h2>
+                <p className="text-sm text-muted-foreground">Rate the generated speech quality based on the attributes below.</p>
               </div>
 
-              <Separator className="bg-white/5" />
+              <div className="space-y-8">
 
-              <div className="space-y-4">
-                 <div className="flex justify-between items-center">
-                    <Label className="text-base font-medium">Clarity & Pronunciation</Label>
-                    <span className="text-sm font-mono text-primary">{ratings.clarity}%</span>
-                 </div>
-                 <Slider 
-                   value={[ratings.clarity]} 
-                   onValueChange={(v) => setRatings({...ratings, clarity: v[0]})}
-                   max={100} 
-                   step={1}
-                   className="py-2"
-                   data-testid="slider-clarity"
-                 />
-                 <p className="text-xs text-muted-foreground">Are words pronounced clearly and correctly?</p>
-              </div>
+                <div className="space-y-4">
+                   <div className="flex justify-between items-center">
+                      <Label className="text-base font-medium">Naturalness</Label>
+                      <span className="text-sm font-mono text-primary">{ratings.naturalness}%</span>
+                   </div>
+                   <Slider
+                     value={[ratings.naturalness]}
+                     onValueChange={(v) => setRatings({...ratings, naturalness: v[0]})}
+                     max={100}
+                     step={1}
+                     className="py-2"
+                     data-testid="slider-naturalness"
+                   />
+                   <p className="text-xs text-muted-foreground">Does the voice sound human-like and authentic?</p>
+                </div>
 
-              <Separator className="bg-white/5" />
+                <Separator className="bg-white/5" />
 
-              <div className="space-y-4">
-                 <div className="flex justify-between items-center">
-                    <Label className="text-base font-medium">Intonation & Emotion</Label>
-                    <span className="text-sm font-mono text-primary">{ratings.intonation}%</span>
-                 </div>
-                 <Slider 
-                   value={[ratings.intonation]} 
-                   onValueChange={(v) => setRatings({...ratings, intonation: v[0]})}
-                   max={100} 
-                   step={1}
-                   className="py-2"
-                   data-testid="slider-intonation"
-                 />
-                 <p className="text-xs text-muted-foreground">Does the speech have appropriate emotional range?</p>
-              </div>
+                <div className="space-y-4">
+                   <div className="flex justify-between items-center">
+                      <Label className="text-base font-medium">Clarity & Pronunciation</Label>
+                      <span className="text-sm font-mono text-primary">{ratings.clarity}%</span>
+                   </div>
+                   <Slider
+                     value={[ratings.clarity]}
+                     onValueChange={(v) => setRatings({...ratings, clarity: v[0]})}
+                     max={100}
+                     step={1}
+                     className="py-2"
+                     data-testid="slider-clarity"
+                   />
+                   <p className="text-xs text-muted-foreground">Are words pronounced clearly and correctly?</p>
+                </div>
 
-              <Separator className="bg-white/5" />
+                <Separator className="bg-white/5" />
 
-              <div className="space-y-4">
-                 <div className="flex justify-between items-center">
-                    <Label className="text-base font-medium">Speed & Pacing</Label>
-                    <span className="text-sm font-mono text-primary">{ratings.speed}%</span>
-                 </div>
-                 <Slider 
-                   value={[ratings.speed]} 
-                   onValueChange={(v) => setRatings({...ratings, speed: v[0]})}
-                   max={100} 
-                   step={1}
-                   className="py-2"
-                   data-testid="slider-speed"
-                 />
-                 <p className="text-xs text-muted-foreground">Is the speaking rate comfortable to listen to?</p>
-              </div>
+                <div className="space-y-4">
+                   <div className="flex justify-between items-center">
+                      <Label className="text-base font-medium">Intonation & Emotion</Label>
+                      <span className="text-sm font-mono text-primary">{ratings.intonation}%</span>
+                   </div>
+                   <Slider
+                     value={[ratings.intonation]}
+                     onValueChange={(v) => setRatings({...ratings, intonation: v[0]})}
+                     max={100}
+                     step={1}
+                     className="py-2"
+                     data-testid="slider-intonation"
+                   />
+                   <p className="text-xs text-muted-foreground">Does the speech have appropriate emotional range?</p>
+                </div>
 
-              {evaluations.length > 0 && (
-                <>
-                  <Separator className="bg-white/5" />
-                  <div className="pt-2">
-                    <h3 className="font-medium mb-3 text-sm">Previous Evaluations ({evaluations.length})</h3>
-                    <div className="space-y-2 max-h-40 overflow-y-auto">
-                      {evaluations.slice(-5).reverse().map((evaluation) => (
-                        <div key={evaluation.id} className="p-3 rounded-lg bg-white/5 border border-white/10 text-xs">
-                          <div className="flex justify-between mb-1">
-                            <span className="text-muted-foreground">
-                              {new Date(evaluation.createdAt).toLocaleDateString()}
-                            </span>
-                            <span className="text-primary font-mono">
-                              Avg: {Math.round((evaluation.naturalness + evaluation.clarity + evaluation.intonation + evaluation.speed) / 4)}%
-                            </span>
+                <Separator className="bg-white/5" />
+
+                <div className="space-y-4">
+                   <div className="flex justify-between items-center">
+                      <Label className="text-base font-medium">Speed & Pacing</Label>
+                      <span className="text-sm font-mono text-primary">{ratings.speed}%</span>
+                   </div>
+                   <Slider
+                     value={[ratings.speed]}
+                     onValueChange={(v) => setRatings({...ratings, speed: v[0]})}
+                     max={100}
+                     step={1}
+                     className="py-2"
+                     data-testid="slider-speed"
+                   />
+                   <p className="text-xs text-muted-foreground">Is the speaking rate comfortable to listen to?</p>
+                </div>
+
+                {evaluations.length > 0 && (
+                  <>
+                    <Separator className="bg-white/5" />
+                    <div className="pt-2">
+                      <h3 className="font-medium mb-3 text-sm">Previous Evaluations ({evaluations.length})</h3>
+                      <div className="space-y-2 max-h-40 overflow-y-auto">
+                        {evaluations.slice(-5).reverse().map((evaluation) => (
+                          <div key={evaluation.id} className="p-3 rounded-lg bg-white/5 border border-white/10 text-xs">
+                            <div className="flex justify-between mb-1">
+                              <span className="text-muted-foreground">
+                                {new Date(evaluation.createdAt).toLocaleDateString()}
+                              </span>
+                              <span className="text-primary font-mono">
+                                Avg: {Math.round((evaluation.naturalness + evaluation.clarity + evaluation.intonation + evaluation.speed) / 4)}%
+                              </span>
+                            </div>
+                            <p className="text-muted-foreground line-clamp-1">{evaluation.inputText}</p>
                           </div>
-                          <p className="text-muted-foreground line-clamp-1">{evaluation.inputText}</p>
-                        </div>
-                      ))}
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                </>
-              )}
+                  </>
+                )}
 
-              <div className="pt-6">
-                 <Card className="bg-white/5 border-white/10 p-4">
-                    <h3 className="font-medium mb-2 text-sm">AI Analysis</h3>
-                    <p className="text-xs text-muted-foreground leading-relaxed">
-                       The agent demonstrates high clarity but slightly monotonic intonation in this sample.
-                       Consider increasing the temperature parameter for more variability.
-                    </p>
-                 </Card>
+                <div className="pt-6">
+                   <Card className="bg-white/5 border-white/10 p-4">
+                      <h3 className="font-medium mb-2 text-sm">AI Analysis</h3>
+                      <p className="text-xs text-muted-foreground leading-relaxed">
+                         The agent demonstrates high clarity but slightly monotonic intonation in this sample.
+                         Consider increasing the temperature parameter for more variability.
+                      </p>
+                   </Card>
+                </div>
+
               </div>
-
-           </div>
-           </div>
+            </TabsContent>
+          </Tabs>
         </div>
 
       </main>

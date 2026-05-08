@@ -153,6 +153,8 @@ function handleBrowserSession(ws: WebSocket): void {
           }
         }
 
+        instructions = "Always respond in English unless the user explicitly asks for another language.\n\n" + instructions;
+
         openai = new OpenAIRealtimeClient(process.env.OPENAI_API_KEY || "", {
           instructions,
           voice,
@@ -170,10 +172,6 @@ function handleBrowserSession(ws: WebSocket): void {
         });
 
         openai.on("speechStarted", () => {
-          if (responseActive && lastItemId) {
-            const estimatedMs = audioChunkCount * 100;
-            openai!.truncateResponse(lastItemId, estimatedMs);
-          }
           responseActive = false;
           audioChunkCount = 0;
           lastItemId = null;
