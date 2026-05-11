@@ -14,6 +14,9 @@ interface UseVoiceAgentOptions {
   voice?: string;
 }
 
+const ASSISTANT_PLAYBACK_MIC_COOLDOWN_MS = 1200;
+const MIN_MIC_RMS = 0.004;
+
 export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
   const [state, setState] = useState<VoiceAgentState>("idle");
   const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
@@ -28,8 +31,11 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
   const nextPlayTimeRef = useRef(0);
   const activeSourcesRef = useRef<AudioBufferSourceNode[]>([]);
   const gainNodeRef = useRef<GainNode | null>(null);
+  const assistantPlaybackActiveRef = useRef(false);
+  const assistantPlaybackBlockedUntilRef = useRef(0);
+  const playbackEndTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const clearPlayback = useCallback(() => {
+  function clearPlayback(): void {
     activeSourcesRef.current.forEach((src) => {
       try { src.stop(); } catch {}
     });
@@ -37,7 +43,8 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
     if (audioContextRef.current) {
       nextPlayTimeRef.current = audioContextRef.current.currentTime;
     }
-  }, []);
+    markAssistantPlaybackEnded(false);
+  }
 
   const start = useCallback(async () => {
     try {
@@ -101,12 +108,19 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
 
       processor.onaudioprocess = (e) => {
         if (ws.readyState !== WebSocket.OPEN) return;
+        if (isMicUploadSuppressed()) return;
+
         const input = e.inputBuffer.getChannelData(0);
         const pcm16 = new Int16Array(input.length);
+        let sumSquares = 0;
         for (let i = 0; i < input.length; i++) {
           const s = Math.max(-1, Math.min(1, input[i]));
+          sumSquares += s * s;
           pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
         }
+        const rms = Math.sqrt(sumSquares / input.length);
+        if (rms < MIN_MIC_RMS) return;
+
         ws.send(pcm16.buffer);
       };
 
@@ -136,9 +150,13 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
       case "interruptClear":
         clearPlayback();
         setAssistantPartial("");
+        setState("listening");
         break;
-      case "speechStarted":
-        setState("speaking");
+      case "userSpeechStarted":
+        setState("listening");
+        break;
+      case "userSpeechStopped":
+        setState("listening");
         break;
       case "userTranscript":
         appendTranscript("user", msg.text);
@@ -153,7 +171,9 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
         setAssistantPartial("");
         break;
       case "responseDone":
-        setState("listening");
+        if (!isMicUploadSuppressed()) {
+          setState("listening");
+        }
         break;
       case "error":
         setError(msg.message);
@@ -191,9 +211,13 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
     src.start(startTime);
     nextPlayTimeRef.current = startTime + buffer.duration;
     activeSourcesRef.current.push(src);
+    markAssistantPlaybackStarted();
+    setState("speaking");
     src.onended = () => {
       activeSourcesRef.current = activeSourcesRef.current.filter((s) => s !== src);
+      scheduleAssistantPlaybackEndCheck();
     };
+    scheduleAssistantPlaybackEndCheck();
   }
 
   function cleanup(): void {
@@ -209,7 +233,84 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
     audioContextRef.current?.close();
     audioContextRef.current = null;
     nextPlayTimeRef.current = 0;
+    assistantPlaybackActiveRef.current = false;
+    assistantPlaybackBlockedUntilRef.current = 0;
+    if (playbackEndTimerRef.current) {
+      clearTimeout(playbackEndTimerRef.current);
+      playbackEndTimerRef.current = null;
+    }
     wsRef.current = null;
+  }
+
+  function isMicUploadSuppressed(): boolean {
+    const ctx = audioContextRef.current;
+    const hasQueuedPlayback = Boolean(ctx && nextPlayTimeRef.current > ctx.currentTime + 0.05);
+    return (
+      assistantPlaybackActiveRef.current ||
+      hasQueuedPlayback ||
+      Date.now() < assistantPlaybackBlockedUntilRef.current
+    );
+  }
+
+  function markAssistantPlaybackStarted(): void {
+    assistantPlaybackBlockedUntilRef.current = 0;
+    if (playbackEndTimerRef.current) {
+      clearTimeout(playbackEndTimerRef.current);
+      playbackEndTimerRef.current = null;
+    }
+    if (assistantPlaybackActiveRef.current) return;
+
+    assistantPlaybackActiveRef.current = true;
+    sendControlEvent({ type: "assistantPlaybackStarted" });
+  }
+
+  function markAssistantPlaybackEnded(withCooldown: boolean): void {
+    if (playbackEndTimerRef.current) {
+      clearTimeout(playbackEndTimerRef.current);
+      playbackEndTimerRef.current = null;
+    }
+
+    if (withCooldown) {
+      assistantPlaybackBlockedUntilRef.current = Date.now() + ASSISTANT_PLAYBACK_MIC_COOLDOWN_MS;
+    } else {
+      assistantPlaybackBlockedUntilRef.current = 0;
+    }
+
+    const cooldownMs = withCooldown ? ASSISTANT_PLAYBACK_MIC_COOLDOWN_MS : 0;
+    playbackEndTimerRef.current = setTimeout(() => {
+      assistantPlaybackActiveRef.current = false;
+      assistantPlaybackBlockedUntilRef.current = 0;
+      playbackEndTimerRef.current = null;
+      sendControlEvent({ type: "assistantPlaybackEnded" });
+      setState((current) => (current === "speaking" ? "listening" : current));
+    }, cooldownMs);
+  }
+
+  function scheduleAssistantPlaybackEndCheck(): void {
+    if (playbackEndTimerRef.current) {
+      clearTimeout(playbackEndTimerRef.current);
+      playbackEndTimerRef.current = null;
+    }
+
+    playbackEndTimerRef.current = setTimeout(() => {
+      const ctx = audioContextRef.current;
+      const playbackRemainingMs = ctx
+        ? Math.max(0, (nextPlayTimeRef.current - ctx.currentTime) * 1000)
+        : 0;
+
+      if (activeSourcesRef.current.length > 0 || playbackRemainingMs > 50) {
+        scheduleAssistantPlaybackEndCheck();
+        return;
+      }
+
+      markAssistantPlaybackEnded(true);
+    }, 80);
+  }
+
+  function sendControlEvent(event: object): void {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify(event));
+    }
   }
 
   useEffect(() => () => cleanup(), []);

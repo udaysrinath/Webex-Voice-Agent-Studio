@@ -22,25 +22,111 @@ function mapVoice(voice: string): string {
 }
 
 const SPURIOUS_SHORT_TRANSCRIPTS = new Set(["bye", "goodbye"]);
+const BROWSER_AUDIO_ECHO_GUARD_MS = 1200;
+const BROWSER_TRANSCRIPT_ECHO_GUARD_MS = 1200;
+const BROWSER_ASSISTANT_ECHO_MATCH_MS = 5000;
+
+interface BrowserTranscriptGuardContext {
+  acceptedUserTranscriptCount: number;
+  browserPlaybackActive: boolean;
+  language: string;
+  lastAssistantAudioAt: number;
+  lastAssistantDoneAt: number;
+  lastAssistantTranscript: string;
+  lastBrowserPlaybackEndedAt: number;
+  responseActive: boolean;
+}
 
 function normalizeTranscript(text: string): string {
   return text.trim().toLowerCase().replace(/[.!?,\s]+$/g, "");
 }
 
+function getPrimaryLanguageCode(language: string | undefined): string {
+  return (language || "en").split(/[-_]/)[0]?.toLowerCase() || "en";
+}
+
+function isEnglishLanguage(language: string): boolean {
+  return getPrimaryLanguageCode(language) === "en";
+}
+
+function hasMostlyNonLatinLetters(text: string): boolean {
+  const latinLetters = text.match(/[A-Za-z]/g)?.length || 0;
+  const nonAsciiChars = text.match(/[\u0080-\uFFFF]/g)?.length || 0;
+  const signalChars = latinLetters + nonAsciiChars;
+  if (signalChars < 3) return false;
+
+  return latinLetters / signalChars < 0.6;
+}
+
+function tokenizeTranscript(text: string): string[] {
+  return normalizeTranscript(text)
+    .split(/[^a-z0-9']+/i)
+    .map((token) => token.replace(/^'+|'+$/g, ""))
+    .filter((token) => token.length > 2);
+}
+
+function hasHighAssistantEchoOverlap(userText: string, assistantText: string): boolean {
+  const userTokens = new Set(tokenizeTranscript(userText));
+  const assistantTokens = new Set(tokenizeTranscript(assistantText));
+  if (userTokens.size < 3 || assistantTokens.size < 3) return false;
+
+  let shared = 0;
+  for (const token of Array.from(userTokens)) {
+    if (assistantTokens.has(token)) shared++;
+  }
+
+  return shared / userTokens.size >= 0.75;
+}
+
+function shouldSuppressBrowserAudioInput(
+  responseActive: boolean,
+  browserPlaybackActive: boolean,
+  lastAssistantAudioAt: number,
+  lastBrowserPlaybackEndedAt: number
+): boolean {
+  const now = Date.now();
+  return (
+    responseActive ||
+    browserPlaybackActive ||
+    now - lastAssistantAudioAt < BROWSER_AUDIO_ECHO_GUARD_MS ||
+    now - lastBrowserPlaybackEndedAt < BROWSER_AUDIO_ECHO_GUARD_MS
+  );
+}
+
 function shouldSuppressBrowserUserTranscript(
   text: string,
-  lastAssistantDoneAt: number,
-  acceptedUserTranscriptCount: number,
-  responseActive: boolean
+  context: BrowserTranscriptGuardContext
 ): boolean {
   const normalized = normalizeTranscript(text);
   if (!normalized) return true;
 
+  const now = Date.now();
+  const justAfterAssistant =
+    now - context.lastAssistantDoneAt < BROWSER_TRANSCRIPT_ECHO_GUARD_MS ||
+    now - context.lastAssistantAudioAt < BROWSER_TRANSCRIPT_ECHO_GUARD_MS ||
+    now - context.lastBrowserPlaybackEndedAt < BROWSER_TRANSCRIPT_ECHO_GUARD_MS;
+
+  if (context.responseActive || context.browserPlaybackActive || justAfterAssistant) {
+    return true;
+  }
+
+  if (isEnglishLanguage(context.language) && hasMostlyNonLatinLetters(normalized)) {
+    return true;
+  }
+
+  const recentAssistant = now - context.lastAssistantDoneAt < BROWSER_ASSISTANT_ECHO_MATCH_MS;
+  if (
+    recentAssistant &&
+    context.lastAssistantTranscript &&
+    hasHighAssistantEchoOverlap(normalized, context.lastAssistantTranscript)
+  ) {
+    return true;
+  }
+
   const isShortFarewell = SPURIOUS_SHORT_TRANSCRIPTS.has(normalized);
   if (!isShortFarewell) return false;
 
-  const justAfterAssistant = Date.now() - lastAssistantDoneAt < 2500;
-  return responseActive || justAfterAssistant || acceptedUserTranscriptCount === 0;
+  return context.acceptedUserTranscriptCount === 0;
 }
 
 export function attachVoiceAgentWebSocket(server: Server): void {
@@ -110,7 +196,7 @@ function handleTwilioSession(ws: WebSocket): void {
           markQueue.push(markName);
         });
 
-        openai.on("speechStarted", () => {
+        openai.on("userSpeechStarted", () => {
           if (markQueue.length > 0 && responseStartTs !== null) {
             const elapsed = latestTs - responseStartTs;
             if (lastItemId) openai!.truncateResponse(lastItemId, elapsed);
@@ -158,14 +244,28 @@ function handleTwilioSession(ws: WebSocket): void {
 
 function handleBrowserSession(ws: WebSocket): void {
   let openai: OpenAIRealtimeClient | null = null;
-  let lastItemId: string | null = null;
   let responseActive = false;
-  let audioChunkCount = 0;
+  let browserPlaybackActive = false;
+  let lastAssistantAudioAt = 0;
   let lastAssistantDoneAt = 0;
+  let lastAssistantTranscript = "";
+  let lastBrowserPlaybackEndedAt = 0;
   let acceptedUserTranscriptCount = 0;
+  let language = "en-US";
 
   ws.on("message", async (raw) => {
     if (Buffer.isBuffer(raw) && openai) {
+      if (
+        shouldSuppressBrowserAudioInput(
+          responseActive,
+          browserPlaybackActive,
+          lastAssistantAudioAt,
+          lastBrowserPlaybackEndedAt
+        )
+      ) {
+        return;
+      }
+
       const base64 = raw.toString("base64");
       openai.appendAudio(base64);
       return;
@@ -178,12 +278,14 @@ function handleBrowserSession(ws: WebSocket): void {
         const { agentId, config } = msg;
         let instructions = config?.systemPrompt || "You are a helpful voice assistant. Keep responses concise and conversational.";
         let voice = "alloy";
+        language = config?.language || language;
 
         if (agentId) {
           const agent = await storage.getAgent(parseInt(agentId));
           if (agent) {
             instructions = agent.systemPrompt || instructions;
             voice = mapVoice(agent.voiceModel);
+            language = agent.language || language;
           }
         }
 
@@ -194,28 +296,60 @@ function handleBrowserSession(ws: WebSocket): void {
           voice,
           inputAudioFormat: "pcm16",
           outputAudioFormat: "pcm16",
+          inputAudioTranscriptionLanguage: getPrimaryLanguageCode(language),
+          turnDetection: {
+            type: "server_vad",
+            threshold: 0.65,
+            silence_duration_ms: 700,
+            interrupt_response: false,
+          },
         });
 
-        openai.on("audio", (base64: string, itemId: string) => {
-          lastItemId = itemId;
+        openai.on("audio", (base64: string, _itemId: string) => {
           responseActive = true;
-          audioChunkCount++;
+          lastAssistantAudioAt = Date.now();
           if (ws.readyState === WebSocket.OPEN) {
             ws.send(Buffer.from(base64, "base64"));
           }
         });
 
-        openai.on("speechStarted", () => {
-          responseActive = false;
-          audioChunkCount = 0;
-          lastItemId = null;
-          sendEvent({ type: "interruptClear" });
-          sendEvent({ type: "speechStarted" });
+        openai.on("audioDone", () => {
+          lastAssistantAudioAt = Date.now();
+        });
+
+        openai.on("userSpeechStarted", () => {
+          if (
+            shouldSuppressBrowserAudioInput(
+              responseActive,
+              browserPlaybackActive,
+              lastAssistantAudioAt,
+              lastBrowserPlaybackEndedAt
+            )
+          ) {
+            return;
+          }
+
+          sendEvent({ type: "userSpeechStarted" });
+        });
+
+        openai.on("userSpeechStopped", () => {
+          sendEvent({ type: "userSpeechStopped" });
         });
 
         openai.on("userTranscript", (text: string) => {
           const trimmed = text.trim();
-          if (shouldSuppressBrowserUserTranscript(trimmed, lastAssistantDoneAt, acceptedUserTranscriptCount, responseActive)) {
+          if (
+            shouldSuppressBrowserUserTranscript(trimmed, {
+              acceptedUserTranscriptCount,
+              browserPlaybackActive,
+              language,
+              lastAssistantAudioAt,
+              lastAssistantDoneAt,
+              lastAssistantTranscript,
+              lastBrowserPlaybackEndedAt,
+              responseActive,
+            })
+          ) {
             return;
           }
           acceptedUserTranscriptCount++;
@@ -230,12 +364,12 @@ function handleBrowserSession(ws: WebSocket): void {
           const trimmed = text.trim();
           if (!trimmed) return;
           lastAssistantDoneAt = Date.now();
+          lastAssistantTranscript = trimmed;
           sendEvent({ type: "assistantTranscriptDone", text: trimmed });
         });
 
         openai.on("responseDone", () => {
           responseActive = false;
-          audioChunkCount = 0;
           sendEvent({ type: "responseDone" });
         });
 
@@ -252,6 +386,11 @@ function handleBrowserSession(ws: WebSocket): void {
       } else if (msg.type === "stop") {
         openai?.close();
         openai = null;
+      } else if (msg.type === "assistantPlaybackStarted") {
+        browserPlaybackActive = true;
+      } else if (msg.type === "assistantPlaybackEnded") {
+        browserPlaybackActive = false;
+        lastBrowserPlaybackEndedAt = Date.now();
       }
     } catch {}
   });

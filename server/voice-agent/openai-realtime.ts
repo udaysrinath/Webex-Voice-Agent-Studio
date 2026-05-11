@@ -13,6 +13,8 @@ export interface RealtimeSessionConfig {
     silence_duration_ms?: number;
     interrupt_response?: boolean;
   };
+  inputAudioTranscriptionLanguage?: string;
+  inputAudioTranscriptionPrompt?: string;
   tools?: Array<{
     type: "function";
     name: string;
@@ -79,7 +81,11 @@ export class OpenAIRealtimeClient extends EventEmitter {
         tools: this.config.tools || [],
         tool_choice: "auto",
         temperature: this.config.temperature ?? 0.8,
-        input_audio_transcription: { model: "whisper-1" },
+        input_audio_transcription: {
+          model: "whisper-1",
+          language: this.config.inputAudioTranscriptionLanguage,
+          prompt: this.config.inputAudioTranscriptionPrompt,
+        },
       },
     });
   }
@@ -93,10 +99,10 @@ export class OpenAIRealtimeClient extends EventEmitter {
         this.emit("sessionReady", event);
         break;
       case "input_audio_buffer.speech_started":
-        this.emit("speechStarted");
+        this.emit("userSpeechStarted");
         break;
       case "input_audio_buffer.speech_stopped":
-        this.emit("speechStopped");
+        this.emit("userSpeechStopped");
         break;
       case "response.audio.delta":
         if (event.delta) {
