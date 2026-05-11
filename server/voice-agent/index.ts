@@ -2,6 +2,7 @@ import { WebSocketServer, WebSocket } from "ws";
 import type { Server } from "http";
 import { OpenAIRealtimeClient, RealtimeSessionConfig } from "./openai-realtime";
 import { storage } from "../storage";
+import { realtimeTools, executeTool } from "../tools";
 
 const OPENAI_REALTIME_VOICE_MAP: Record<string, string> = {
   alloy: "alloy",
@@ -180,11 +181,14 @@ function handleTwilioSession(ws: WebSocket): void {
           }
         }
 
+        const tools = realtimeTools;
+
         openai = new OpenAIRealtimeClient(process.env.OPENAI_API_KEY || "", {
           instructions,
           voice,
           inputAudioFormat: "g711_ulaw",
           outputAudioFormat: "g711_ulaw",
+          tools,
         });
 
         openai.on("audio", (base64: string, itemId: string) => {
@@ -217,6 +221,19 @@ function handleTwilioSession(ws: WebSocket): void {
 
         openai.on("error", (err: Error) => {
           console.error("[VoiceAgent/Twilio] Error:", err.message);
+        });
+
+        openai.on("functionCall", async ({ callId, name, arguments: argsString }) => {
+          console.log(`[VoiceAgent/Twilio] Function call: ${name}`);
+          try {
+            const args = JSON.parse(argsString);
+            const result = await executeTool(name, args);
+            console.log(`[VoiceAgent/Twilio] Function result:`, result);
+            openai?.sendFunctionOutput(callId, JSON.stringify(result));
+          } catch (e: any) {
+            console.error(`[VoiceAgent/Twilio] Function execution failed:`, e);
+            openai?.sendFunctionOutput(callId, JSON.stringify({ success: false, error: e.message }));
+          }
         });
 
         openai.once("sessionReady", () => {
@@ -289,6 +306,8 @@ function handleBrowserSession(ws: WebSocket): void {
           }
         }
 
+        const tools = realtimeTools;
+
         instructions = "Always respond in English unless the user explicitly asks for another language.\n\n" + instructions;
 
         openai = new OpenAIRealtimeClient(process.env.OPENAI_API_KEY || "", {
@@ -303,6 +322,7 @@ function handleBrowserSession(ws: WebSocket): void {
             silence_duration_ms: 700,
             interrupt_response: false,
           },
+          tools,
         });
 
         openai.on("audio", (base64: string, _itemId: string) => {
@@ -379,6 +399,19 @@ function handleBrowserSession(ws: WebSocket): void {
 
         openai.on("error", (err: Error) => {
           sendEvent({ type: "error", message: err.message });
+        });
+
+        openai.on("functionCall", async ({ callId, name, arguments: argsString }) => {
+          console.log(`[VoiceAgent/Browser] Function call: ${name}`);
+          try {
+            const args = JSON.parse(argsString);
+            const result = await executeTool(name, args);
+            console.log(`[VoiceAgent/Browser] Function result:`, result);
+            openai?.sendFunctionOutput(callId, JSON.stringify(result));
+          } catch (e: any) {
+            console.error(`[VoiceAgent/Browser] Function execution failed:`, e);
+            openai?.sendFunctionOutput(callId, JSON.stringify({ success: false, error: e.message }));
+          }
         });
 
         openai.connect();

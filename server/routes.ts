@@ -10,6 +10,7 @@ import * as path from "path";
 import * as os from "os";
 import multer from "multer";
 import { createClient } from "@deepgram/sdk";
+import { chatTools, executeTool } from "./tools";
 
 const upload = multer({ 
   dest: os.tmpdir(),
@@ -1164,113 +1165,6 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
     },
   ];
 
-  const webexTools: OpenAI.Chat.Completions.ChatCompletionTool[] = [
-    {
-      type: "function",
-      function: {
-        name: "send_webex_message",
-        description: "Send a message to a Webex space/room. Use this when the user asks you to send a message to a Webex room or space.",
-        parameters: {
-          type: "object",
-          properties: {
-            roomTitle: {
-              type: "string",
-              description: "The title/name of the Webex room to send the message to. Match this to available rooms.",
-            },
-            message: {
-              type: "string",
-              description: "The message content to send.",
-            },
-          },
-          required: ["roomTitle", "message"],
-        },
-      },
-    },
-  ];
-
-  // Sanitize Unicode characters that cause issues with Node.js fetch
-  function sanitizeText(text: string): string {
-    return text
-      .replace(/[\u2018\u2019]/g, "'")  // Curly single quotes to straight
-      .replace(/[\u201C\u201D]/g, '"')  // Curly double quotes to straight
-      .replace(/\u2013/g, '-')          // En dash to hyphen
-      .replace(/\u2014/g, '--')         // Em dash to double hyphen
-      .replace(/\u2026/g, '...')        // Ellipsis to three dots
-      .replace(/\u00A0/g, ' ');         // Non-breaking space to regular space
-  }
-
-  async function executeWebexFunction(
-    functionName: string,
-    args: Record<string, any>
-  ): Promise<{ success: boolean; result?: string; error?: string }> {
-    const token = process.env.WEBEX_ACCESS_TOKEN;
-    if (!token) {
-      return { success: false, error: "Webex is not configured" };
-    }
-
-    if (functionName === "send_webex_message") {
-      const { roomTitle, message: rawMessage } = args;
-      const message = sanitizeText(rawMessage);
-      
-      const rooms = await storage.getAllWebexRooms();
-      const matchedRoom = rooms.find(
-        (r: { title: string }) => r.title.toLowerCase().includes(roomTitle.toLowerCase()) ||
-               roomTitle.toLowerCase().includes(r.title.toLowerCase())
-      );
-      
-      if (!matchedRoom) {
-        const availableRooms = rooms.slice(0, 10).map((r: { title: string }) => r.title).join(", ");
-        return { 
-          success: false, 
-          error: `Could not find a room matching "${roomTitle}". Available rooms: ${availableRooms}` 
-        };
-      }
-
-      try {
-        console.log("Sending Webex message to room:", matchedRoom.title, "roomId:", matchedRoom.id);
-        console.log("Message content:", JSON.stringify(message));
-        
-        const response = await fetch('https://webexapis.com/v1/messages', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            roomId: matchedRoom.id,
-            text: message,
-          }),
-        });
-
-        if (!response.ok) {
-          const errorText = await response.text();
-          console.error("Webex send message error - Status:", response.status);
-          console.error("Webex send message error - Response:", errorText);
-          let errorMsg = response.statusText;
-          try {
-            const errorData = JSON.parse(errorText);
-            errorMsg = errorData.message || errorData.errors?.[0]?.description || response.statusText;
-          } catch {}
-          return { 
-            success: false, 
-            error: `Webex error (${response.status}): ${errorMsg}` 
-          };
-        }
-
-        console.log("Message sent successfully to", matchedRoom.title);
-        return { 
-          success: true, 
-          result: `Message successfully sent to "${matchedRoom.title}"` 
-        };
-      } catch (error: any) {
-        console.error("Webex send message exception:", error);
-        return { success: false, error: error.message || "Failed to send message" };
-      }
-    }
-
-    return { success: false, error: `Unknown function: ${functionName}` };
-  }
-
   // Levenshtein distance for fuzzy name matching
   function levenshtein(a: string, b: string): number {
     const m = a.length, n = b.length;
@@ -1468,7 +1362,7 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
       const bankingFunctionNames = ["lookup_customer", "send_verification_code", "verify_code"];
       const allTools = [
         ...bankingAuthTools,
-        ...(hasWebex ? webexTools : []),
+        ...chatTools,
       ];
 
       const supportsTools = CHAT_PROVIDER !== "groq";
@@ -1491,7 +1385,7 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
         if (bankingFunctionNames.includes(functionName)) {
           functionResult = await executeBankingFunction(functionName, functionArgs, data.agentId);
         } else {
-          functionResult = await executeWebexFunction(functionName, functionArgs);
+          functionResult = await executeTool(functionName, functionArgs);
         }
 
         messages.push(assistantMessage);
