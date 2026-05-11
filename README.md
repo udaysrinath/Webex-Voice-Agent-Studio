@@ -514,8 +514,8 @@ git push origin main
 ### Production Build (Local)
 
 ```bash
-npm run build   # Vite bundles client to dist/public/, esbuild bundles server to dist/index.js
-npm run start   # Serves both API and static files on port 5000
+npm run build   # Vite bundles client to dist/public/, esbuild bundles server to dist/index.js and creates dist/index.cjs
+npm run start   # Runs the production CJS launcher and serves API/static files on port 5000
 ```
 
 ---
