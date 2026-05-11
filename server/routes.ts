@@ -285,10 +285,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const agent = await storage.createAgent(data);
       res.json(agent);
     } catch (error: any) {
+      console.error("Agent creation error details:", error);
       if (error.name === "ZodError") {
         return res.status(400).json({ error: fromError(error).toString() });
       }
-      res.status(500).json({ error: "Failed to create agent" });
+      res.status(500).json({ error: "Failed to create agent", details: error?.message || String(error) });
     }
   });
 
@@ -1556,17 +1557,15 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
         return res.send(twiml.toString());
       }
 
-      const greeting = process.env.TWILIO_VOICE_GREETING || "Welcome to Webex Voice Agent Studio. Please leave your message after the tone.";
-      const noRecordingMsg = process.env.TWILIO_VOICE_NO_RECORDING || "We did not receive a recording. Goodbye.";
+      const greeting = process.env.TWILIO_VOICE_GREETING;
+      if (greeting) {
+        twiml.say({ voice: "Polly.Joanna" }, greeting);
+      }
 
-      twiml.say({ voice: "Polly.Joanna" }, greeting);
-      twiml.record({
-        maxLength: 60,
-        action: `${baseUrl}/api/twilio/voice/recording`,
-        transcribe: true,
-        transcribeCallback: `${baseUrl}/api/twilio/voice/transcription`,
-      });
-      twiml.say(noRecordingMsg);
+      const wsUrl = baseUrl.replace(/^https?/, "wss") + "/ws/twilio-stream";
+      const connect = twiml.connect();
+      const stream = connect.stream({ url: wsUrl });
+      stream.parameter({ name: "agentId", value: req.body?.agentId || "default" });
 
       res.type("text/xml");
       res.send(twiml.toString());

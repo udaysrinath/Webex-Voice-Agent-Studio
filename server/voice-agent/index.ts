@@ -47,20 +47,26 @@ export function attachVoiceAgentWebSocket(server: Server): void {
   const wss = new WebSocketServer({ noServer: true });
 
   server.on("upgrade", (request, socket, head) => {
+    console.log(`[WebSocket] Upgrade request received for URL: ${request.url}`);
     const url = new URL(request.url || "", `http://${request.headers.host}`);
     if (url.pathname === "/ws/twilio-stream" || url.pathname === "/ws/voice-agent") {
       wss.handleUpgrade(request, socket, head, (ws) => {
+        console.log(`[WebSocket] Connection established for ${url.pathname}`);
         if (url.pathname === "/ws/twilio-stream") {
           handleTwilioSession(ws);
         } else {
           handleBrowserSession(ws);
         }
       });
+    } else {
+      // Let other handlers (like Vite HMR) process this
+      return;
     }
   });
 }
 
 function handleTwilioSession(ws: WebSocket): void {
+  console.log("[TwilioSession] New session started");
   let openai: OpenAIRealtimeClient | null = null;
   let streamSid: string | null = null;
   let lastItemId: string | null = null;
