@@ -89,7 +89,10 @@ function buildTwilioCallInstructions(baseInstructions: string, callerPhone: stri
     ? `Before the call ends, when the caller's main need appears handled or they indicate they are done, ask once: "Would you like me to text a brief summary of our discussion to this number?" If and only if the caller clearly agrees, call twilio_sms_caller_summary with a concise summary and next steps. Do not ask the caller to repeat their phone number. Do not send a summary without explicit consent.`
     : `If the caller asks for an SMS or a call summary by text, explain that SMS delivery is not configured for this call.`;
 
-  return `${baseInstructions}
+  return `Always respond in English unless the caller explicitly asks for another language.
+Start the call in English with a brief greeting and ask how you can help.
+
+${baseInstructions}
 
 CRITICAL CALL CONTEXT:
 - The caller is calling from ${callerPhone || "an unavailable phone number"}.
