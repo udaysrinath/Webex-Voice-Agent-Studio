@@ -237,7 +237,7 @@ After deployment, pushing to `main` on GitHub auto-redeploys.
 | `npm run build` | Production build (client + server) |
 | `npm run start` | Run production build |
 | `npm run check` | TypeScript type checking |
-| `npm run db:push` | Apply schema changes to database |
+| `npm run db:push` | Apply schema changes with a one-off Drizzle Kit CLI |
 
 ### Project Structure
 

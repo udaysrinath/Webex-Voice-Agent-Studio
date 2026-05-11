@@ -62,7 +62,7 @@ Preferred communication style: Simple, everyday language.
 - Drizzle ORM for type-safe database queries and schema management
 - PostgreSQL as the primary database (via Neon serverless)
 - Schema defined in `shared/schema.ts` for shared types between frontend and backend
-- Drizzle Kit for migrations and schema synchronization
+- Drizzle Kit is run as a one-off CLI for migrations and schema synchronization
 
 **Database Schema**
 The application has five core tables:
@@ -144,7 +144,7 @@ The application has five core tables:
 
 **Database**
 - `drizzle-orm` - TypeScript ORM
-- `drizzle-kit` - Migration and schema management CLI
+- `drizzle-kit` - Migration and schema management CLI, invoked on demand instead of pinned in the app dependency graph
 - `@neondatabase/serverless` - Neon PostgreSQL client with WebSocket support
 
 **Session Management (Configured but Not Active)**
