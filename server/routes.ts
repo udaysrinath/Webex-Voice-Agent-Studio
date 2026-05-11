@@ -1460,6 +1460,9 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
       const connect = twiml.connect();
       const stream = connect.stream({ url: wsUrl });
       stream.parameter({ name: "agentId", value: req.body?.agentId || "default" });
+      if (req.body?.From) {
+        stream.parameter({ name: "callerPhone", value: req.body.From });
+      }
 
       res.type("text/xml");
       res.send(twiml.toString());
@@ -1552,6 +1555,9 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
       const connect = twiml.connect();
       const stream = connect.stream({ url: wsUrl });
       stream.parameter({ name: "agentId", value: req.body?.agentId || "default" });
+      if (req.body?.From) {
+        stream.parameter({ name: "callerPhone", value: req.body.From });
+      }
 
       res.type("text/xml");
       res.send(twiml.toString());

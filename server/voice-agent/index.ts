@@ -172,6 +172,10 @@ function handleTwilioSession(ws: WebSocket): void {
 
         let instructions = "You are a helpful voice assistant. Keep responses concise and conversational.";
         let voice = "alloy";
+        
+        if (params.callerPhone) {
+          instructions += `\n\nCRITICAL INFO: The user is calling from the phone number ${params.callerPhone}. You can use this phone number if you need to send them an SMS.`;
+        }
 
         if (agentId && agentId !== "default") {
           const agent = await storage.getAgent(parseInt(agentId));
