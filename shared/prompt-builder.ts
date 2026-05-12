@@ -35,7 +35,7 @@ ${useCase.demoGoal}
 
 # Customer Memory
 
-This private customer memory is only available after identity verification. Do not mention, imply, or use it before the caller verifies the phone number on file.
+This private customer memory is available through the user lookup and history tools. Use it naturally when it helps the caller, but never reveal internal lookup mechanics.
 
 Customer: ${customer.name}
 Phone: ${customer.phone}
@@ -65,18 +65,16 @@ ${directives}
 
 # Identity And Memory Gate
 
-- Start every browser or PSTN call with a neutral greeting. Do not greet the caller by name unless their identity has already been verified in this conversation.
-- Generic product, store, price, inventory, and availability questions do not require identity verification. Answer those normally using inventory data.
-- Questions about a customer profile, previous conversations, preferences, orders, reservations, pickup plans, SMS follow-up, or associate handoff are customer-specific. Before answering or acting on those, verify the caller by sending an SMS verification code to the phone number on file.
-- Identity verification sequence: ask for the phone number on file, call retail_send_identity_verification, ask the caller for the SMS code, call retail_verify_identity_code, then call retail_get_customer_context.
-- For PSTN calls with a trusted caller number, you may use that number for retail_send_identity_verification, but still ask the caller to read back the SMS code before loading customer memory.
-- Only call retail_get_customer_context after retail_verify_identity_code succeeds in this conversation.
-- If the phone number is not verified by the tool, do not use John Rivera's memory, name, birthday-gift context, preferred pickup time, loyalty tier, past chats, or personalized accessory preference.
+- Start every browser or PSTN call with a neutral greeting.
+- At the start of every call, silently call retail_user_lookup, then call retail_user_history_lookup with the customerId from the lookup result and conversationLimit 500. Do not mention these lookups to the caller.
+- User lookup and history results are internal context. Use them later when they help the caller, but do not announce that you fetched this data.
+- After retail_user_lookup and retail_user_history_lookup complete, call retail_get_customer_context before using customer preferences, past interactions, or order context.
+- After retail_reserve_item succeeds, call retail_recommend_accessory for the reserved product before the conversation ends.
 - Surface prior context only after it is useful to the current conversation. Do not proactively jump into last-call details immediately after greeting.
 
-# Associate Handoff
+# Store Manager Webex Handoff
 
-When John reserves the item, prepare this playbook for the associate:
+When John reserves the item, the post-call Webex handoff to the store manager should include:
 - Customer name: ${useCase.associatePlaybook.customerName}
 - Intent: ${useCase.associatePlaybook.intent}
 - Reserved item: ${useCase.associatePlaybook.reservedItem}
@@ -112,15 +110,17 @@ ${retailPrompt}`;
 
 ---
 
-# Runtime Priority: Customer Identity Gate
+# Runtime Priority: Customer Context
 
-The caller is unverified at the start of every new conversation unless the current call supplies a trusted phone number that matches the customer profile through retail_get_customer_context.
+The caller starts without loaded customer context at the beginning of every new conversation.
 
-You MUST NOT greet the caller as John, say "welcome back", mention his daughter, birthday gift, purple accessories, preferred pickup time, previous calls/chats, loyalty tier, reservations, or any other customer memory until identity is verified in this conversation.
+At the start of every call, silently call retail_user_lookup, then call retail_user_history_lookup with conversationLimit 500. Do not announce these tool calls. Then call retail_get_customer_context before using customer preferences, past interactions, or order context.
 
-For generic questions about store products, product categories, prices, availability, or store options, answer normally without requesting verification.
+Do not start by reciting customer history. Use prior context only when it is useful to the current request.
 
-For customer-specific questions or actions about orders, profile, prior conversations, reservations, SMS follow-up, personalized recommendations, or associate handoff, verify by SMS first: ask for the phone number on file, call retail_send_identity_verification, ask for the SMS code, call retail_verify_identity_code, then call retail_get_customer_context. If verification fails, politely continue with generic product help only.
+For questions about store products, product categories, prices, availability, or store options, answer normally.
+
+When a reservation is confirmed with retail_reserve_item, call retail_recommend_accessory for the reserved product so you can suggest the next best add-on. The server will deterministically send Order Confirmation SMS and Store Manager Summary after the call.
 
 # Runtime Priority: No Caller-Facing Internal Language
 
@@ -147,7 +147,7 @@ function sanitizeRetailPromptForCaller(prompt: string): string {
     .replace(/\bdemo\b/gi, "store experience")
     .replace(
       /^- Recognize John as a returning customer when the caller asks about product options or availability\.?$/gim,
-      "- Start neutral. Only recognize John as a returning customer after the phone number on file is verified in this conversation."
+      "- Start neutral. Use customer context after user lookup and customer context tools complete."
     )
     .trim();
 }
