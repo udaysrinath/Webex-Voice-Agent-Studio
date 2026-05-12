@@ -17,6 +17,11 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
+import {
+  RetailInlineAssist,
+  createRetailAssistState,
+  updateRetailAssistState,
+} from "@/components/retail-agent-assist";
 
 type MonitorState = "connecting" | "waiting" | "in-call" | "ended" | "error";
 
@@ -27,9 +32,27 @@ interface TranscriptEntry {
 }
 
 interface TwilioMonitorMessage {
-  type: "connected" | "callStarted" | "callEnded" | "smsSent" | "userTranscript" | "assistantTranscript";
+  type:
+    | "connected"
+    | "callStarted"
+    | "callEnded"
+    | "smsSent"
+    | "userTranscript"
+    | "assistantTranscript"
+    | "toolCallStarted"
+    | "toolCallCompleted"
+    | "customerContextLoaded"
+    | "inventoryUpdated"
+    | "recommendationCreated"
+    | "reservationCreated"
+    | "associateHandoffCreated";
   text?: string;
   to?: string;
+  toolName?: string;
+  data?: unknown;
+  success?: boolean;
+  result?: string;
+  error?: string;
   timestamp?: number;
 }
 
@@ -42,6 +65,7 @@ export default function PstnCall() {
   const hasAgentId = Number.isFinite(agentId) && agentId > 0;
   const [monitorState, setMonitorState] = useState<MonitorState>("connecting");
   const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
+  const [assistState, setAssistState] = useState(createRetailAssistState);
 
   const { data: agent, isLoading: agentLoading } = useQuery({
     queryKey: ["agent", agentId],
@@ -78,6 +102,7 @@ export default function PstnCall() {
     ws.onopen = () => setMonitorState("waiting");
     ws.onmessage = (event) => {
       const msg = JSON.parse(event.data) as TwilioMonitorMessage;
+      setAssistState((current) => updateRetailAssistState(current, msg));
       if (msg.type === "connected") {
         setMonitorState("waiting");
         return;
@@ -85,6 +110,7 @@ export default function PstnCall() {
 
       if (msg.type === "callStarted") {
         setMonitorState("in-call");
+        setAssistState(createRetailAssistState());
         appendTranscript("system", "PSTN call connected.");
         return;
       }
@@ -114,7 +140,7 @@ export default function PstnCall() {
     if (transcriptRef.current) {
       transcriptRef.current.scrollTop = transcriptRef.current.scrollHeight;
     }
-  }, [transcript]);
+  }, [transcript, assistState]);
 
   function appendTranscript(role: TranscriptEntry["role"], text: string, timestamp = Date.now()): void {
     const cleaned = text.trim();
@@ -171,7 +197,7 @@ export default function PstnCall() {
               <PhoneCall className="w-5 h-5 text-primary" />
             </div>
             <div className="min-w-0">
-              <h1 className="truncate text-xl font-semibold">PSTN Test Call</h1>
+              <h1 className="truncate text-xl font-semibold">PSTN Agent Assist</h1>
               <p className="truncate text-sm text-muted-foreground">
                 {agent?.name || "Loading agent..."}
               </p>
@@ -181,22 +207,22 @@ export default function PstnCall() {
         </div>
       </div>
 
-      <main className="mx-auto grid max-w-7xl gap-5 px-6 py-6 lg:grid-cols-[420px_minmax(0,1fr)]">
-        <section className="space-y-4">
-          <Card className="p-5 bg-card/50 border-white/10">
-            <div className="flex items-start gap-3">
+      <main className="mx-auto flex max-w-6xl flex-col gap-5 px-6 py-6">
+        <Card className="p-4 bg-card/50 border-white/10">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-green-500/10 border border-green-500/20">
                 <PhoneCall className="w-5 h-5 text-green-300" />
               </div>
               <div className="min-w-0 flex-1">
                 <h2 className="text-base font-semibold">Call From A Phone</h2>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  Dial the Twilio number from a PSTN device. This browser stays open as the live monitor.
+                  Dial the Twilio number. Assist cards appear inside the transcript after the caller is identified.
                 </p>
               </div>
             </div>
 
-            <div className="mt-5 space-y-3">
+            <div className="grid gap-3 lg:min-w-[760px] lg:grid-cols-[minmax(210px,0.8fr)_minmax(0,1.6fr)_minmax(210px,0.8fr)]">
               <InfoRow
                 icon={<PhoneCall className="w-4 h-4" />}
                 label="Twilio number"
@@ -214,6 +240,7 @@ export default function PstnCall() {
                 icon={<Settings className="w-4 h-4" />}
                 label="Voice webhook"
                 value={agentWebhookUrl || "Set APP_BASE_URL"}
+                wrapValue
                 action={
                   agentWebhookUrl ? (
                     <Button
@@ -230,30 +257,14 @@ export default function PstnCall() {
 
               <InfoRow
                 icon={<CheckCircle2 className="w-4 h-4" />}
-                label="Voice webhook"
-                value={twilioStatus?.voiceConfigured ? "Available" : "Set APP_BASE_URL or use a public host"}
-              />
-
-              <InfoRow
-                icon={<CheckCircle2 className="w-4 h-4" />}
                 label="Summary SMS"
-                value={twilioStatus?.smsConfigured ? "Available for consenting callers" : "Not configured"}
+                value={twilioStatus?.smsConfigured ? "Available with consent" : "Not configured"}
               />
             </div>
-          </Card>
+          </div>
+        </Card>
 
-          <Card className="p-5 bg-card/50 border-white/10">
-            <h2 className="text-base font-semibold">Test Shape</h2>
-            <div className="mt-4 space-y-3 text-sm text-muted-foreground">
-              <Step number="1" text="Set the Twilio number Voice webhook to the agent-specific URL above." />
-              <Step number="2" text="Call the Twilio number from a phone or PSTN-capable device." />
-              <Step number="3" text="Speak to the agent on the phone and watch the transcript update here." />
-              <Step number="4" text="Near the end, say yes when the agent asks whether you want a summary texted to your number." />
-            </div>
-          </Card>
-        </section>
-
-        <section className="min-h-[640px] rounded-lg border border-white/10 bg-card/40">
+        <section className="min-h-[720px] rounded-lg border border-white/10 bg-card/40">
           <div className="flex items-center justify-between border-b border-white/10 px-5 py-4">
             <div className="flex items-center gap-3">
               <div className="relative flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 border border-primary/20">
@@ -276,11 +287,11 @@ export default function PstnCall() {
             </Badge>
           </div>
 
-          <div ref={transcriptRef} className="h-[570px] overflow-y-auto p-5 space-y-4">
+          <div ref={transcriptRef} className="h-[650px] overflow-y-auto p-5 space-y-4">
             {isLoading && (
               <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Loading PSTN test setup...
+                Loading PSTN monitor...
               </div>
             )}
 
@@ -290,7 +301,7 @@ export default function PstnCall() {
                   <Mic className="h-8 w-8 text-primary/70" />
                 </div>
                 <p className="max-w-sm text-sm">
-                  Waiting for a PSTN call on {agent?.name || "this agent"}. Transcript messages will appear here.
+                  Waiting for a PSTN call on {agent?.name || "this agent"}. Customer memory and inventory will appear here only after the agent confirms the caller.
                 </p>
               </div>
             )}
@@ -298,6 +309,8 @@ export default function PstnCall() {
             {transcript.map((entry, index) => (
               <TranscriptBubble key={`${entry.timestamp}-${index}`} entry={entry} agentName={agent?.name || "Agent"} />
             ))}
+
+            <RetailInlineAssist state={assistState} />
           </div>
         </section>
       </main>
@@ -309,19 +322,29 @@ function InfoRow({
   action,
   icon,
   label,
+  wrapValue = false,
   value,
 }: {
   action?: ReactNode;
   icon: ReactNode;
   label: string;
+  wrapValue?: boolean;
   value: string;
 }) {
   return (
-    <div className="flex items-center gap-3 rounded-md border border-white/10 bg-white/[0.03] p-3">
-      <div className="text-muted-foreground">{icon}</div>
+    <div className="flex items-start gap-3 rounded-md border border-white/10 bg-white/[0.03] p-3">
+      <div className="mt-1 text-muted-foreground">{icon}</div>
       <div className="min-w-0 flex-1">
         <div className="text-xs text-muted-foreground">{label}</div>
-        <div className="truncate text-sm font-medium">{value}</div>
+        <div
+          className={
+            wrapValue
+              ? "mt-1 whitespace-normal break-all font-mono text-[12px] leading-relaxed text-foreground"
+              : "truncate text-sm font-medium"
+          }
+        >
+          {value}
+        </div>
       </div>
       {action}
     </div>

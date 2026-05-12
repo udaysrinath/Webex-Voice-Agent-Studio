@@ -1,8 +1,10 @@
 import * as webex from "./webex";
 import * as twilio from "./twilio";
+import * as retail from "./retail";
 
 // Combine tools from all providers that are configured
 export const realtimeTools = [
+  ...retail.retailTools,
   ...(process.env.WEBEX_ACCESS_TOKEN ? webex.webexTools : []),
   ...(twilio.isSmsConfigured() ? twilio.twilioTools : []),
 ];
@@ -18,6 +20,7 @@ export const chatTools: any[] = realtimeTools.map(t => ({
 }));
 
 const providers: Record<string, any> = {
+  retail,
   webex,
   twilio,
 };
@@ -25,7 +28,7 @@ const providers: Record<string, any> = {
 export async function executeTool(
   name: string,
   args: Record<string, any>
-): Promise<{ success: boolean; result?: string; error?: string }> {
+): Promise<{ success: boolean; result?: string; error?: string; data?: unknown }> {
   // Split tool name based on the convention: {provider}_{function}
   // e.g., "webex_message" -> provider: "webex", function: "message"
   const parts = name.split('_');

@@ -8,26 +8,34 @@ export interface RealtimeSessionConfig {
   inputAudioFormat: "g711_ulaw" | "pcm16";
   outputAudioFormat: "g711_ulaw" | "pcm16";
   turnDetection?: {
-    type: "server_vad";
+    type: "server_vad" | "semantic_vad";
+    create_response?: boolean;
+    eagerness?: "low" | "medium" | "high" | "auto";
+    idle_timeout_ms?: number;
+    prefix_padding_ms?: number;
     threshold?: number;
     silence_duration_ms?: number;
     interrupt_response?: boolean;
   };
   inputAudioTranscriptionLanguage?: string;
+  inputAudioTranscriptionModel?: string;
   inputAudioTranscriptionPrompt?: string;
+  inputAudioNoiseReduction?: {
+    type: "near_field" | "far_field";
+  } | null;
   tools?: Array<{
     type: "function";
     name: string;
     description: string;
     parameters: object;
   }>;
-  temperature?: number;
 }
 
 export class OpenAIRealtimeClient extends EventEmitter {
   private ws: WebSocket | null = null;
   private apiKey: string;
   private config: RealtimeSessionConfig;
+  private emittedAssistantTranscriptInResponse = false;
 
   constructor(apiKey: string, config: RealtimeSessionConfig) {
     super();
@@ -36,13 +44,12 @@ export class OpenAIRealtimeClient extends EventEmitter {
   }
 
   connect(): void {
-    const model = this.config.model || "gpt-4o-realtime-preview";
+    const model = this.config.model || process.env.OPENAI_REALTIME_MODEL || "gpt-realtime";
     this.ws = new WebSocket(
       `wss://api.openai.com/v1/realtime?model=${model}`,
       {
         headers: {
           Authorization: `Bearer ${this.apiKey}`,
-          "OpenAI-Beta": "realtime=v1",
         },
       }
     );
@@ -64,29 +71,39 @@ export class OpenAIRealtimeClient extends EventEmitter {
   }
 
   private sendSessionUpdate(): void {
-    this.send({
-      type: "session.update",
-      session: {
-        modalities: ["text", "audio"],
-        voice: this.config.voice || "alloy",
-        input_audio_format: this.config.inputAudioFormat,
-        output_audio_format: this.config.outputAudioFormat,
-        instructions: this.config.instructions,
-        turn_detection: this.config.turnDetection || {
-          type: "server_vad",
-          threshold: 0.5,
-          silence_duration_ms: 500,
-          interrupt_response: true,
+    const session: Record<string, any> = {
+      type: "realtime",
+      output_modalities: ["audio"],
+      audio: {
+        input: {
+          format: getRealtimeAudioFormat(this.config.inputAudioFormat),
+          noise_reduction: this.config.inputAudioNoiseReduction ?? null,
+          turn_detection: this.config.turnDetection || {
+            type: "server_vad",
+            create_response: true,
+            threshold: 0.5,
+            silence_duration_ms: 500,
+            interrupt_response: true,
+          },
+          transcription: {
+            model: this.config.inputAudioTranscriptionModel || "gpt-4o-mini-transcribe",
+            language: this.config.inputAudioTranscriptionLanguage,
+            prompt: this.config.inputAudioTranscriptionPrompt,
+          },
         },
-        tools: this.config.tools || [],
-        tool_choice: "auto",
-        temperature: this.config.temperature ?? 0.8,
-        input_audio_transcription: {
-          model: "whisper-1",
-          language: this.config.inputAudioTranscriptionLanguage,
-          prompt: this.config.inputAudioTranscriptionPrompt,
+        output: {
+          format: getRealtimeAudioFormat(this.config.outputAudioFormat),
+          voice: this.config.voice || "alloy",
         },
       },
+      instructions: this.config.instructions,
+      tools: this.config.tools || [],
+      tool_choice: "auto",
+    };
+
+    this.send({
+      type: "session.update",
+      session,
     });
   }
 
@@ -98,6 +115,10 @@ export class OpenAIRealtimeClient extends EventEmitter {
       case "session.updated":
         this.emit("sessionReady", event);
         break;
+      case "response.created":
+        this.emittedAssistantTranscriptInResponse = false;
+        this.emit("responseStarted", event.response);
+        break;
       case "input_audio_buffer.speech_started":
         this.emit("userSpeechStarted");
         break;
@@ -105,21 +126,46 @@ export class OpenAIRealtimeClient extends EventEmitter {
         this.emit("userSpeechStopped");
         break;
       case "response.audio.delta":
+      case "response.output_audio.delta":
         if (event.delta) {
           this.emit("audio", event.delta, event.item_id);
         }
         break;
       case "response.audio.done":
+      case "response.output_audio.done":
         this.emit("audioDone", event.item_id);
         break;
       case "response.audio_transcript.delta":
+      case "response.output_audio_transcript.delta":
         this.emit("assistantTranscriptDelta", event.delta);
         break;
       case "response.audio_transcript.done":
-        this.emit("assistantTranscriptDone", event.transcript);
+      case "response.output_audio_transcript.done":
+        this.emitAssistantTranscriptDone(event.transcript);
+        break;
+      case "response.output_text.delta":
+        this.emit("assistantTranscriptDelta", event.delta);
+        break;
+      case "response.output_text.done":
+        this.emitAssistantTranscriptDone(event.text);
         break;
       case "conversation.item.input_audio_transcription.completed":
         this.emit("userTranscript", event.transcript);
+        break;
+      case "conversation.item.input_audio_transcription.delta":
+        if (event.delta) {
+          this.emit("userTranscriptDelta", event.delta, event.item_id);
+        }
+        break;
+      case "conversation.item.input_audio_transcription.segment":
+        if (event.text) {
+          this.emit("userTranscriptSegment", event.text, event.item_id);
+        }
+        break;
+      case "conversation.item.input_audio_transcription.failed":
+        this.emit("userTranscriptFailed", event.error);
+        break;
+      case "conversation.item.done":
         break;
       case "response.function_call_arguments.done":
         this.emit("functionCall", {
@@ -136,6 +182,7 @@ export class OpenAIRealtimeClient extends EventEmitter {
         this.emit("responseCancelled");
         break;
       case "error":
+        if (isBenignRealtimeError(event.error)) return;
         this.emit("error", new Error(event.error?.message || "OpenAI Realtime error"));
         break;
     }
@@ -158,8 +205,8 @@ export class OpenAIRealtimeClient extends EventEmitter {
     this.send({ type: "response.cancel" });
   }
 
-  triggerResponse(): void {
-    this.send({ type: "response.create" });
+  triggerResponse(response?: Record<string, unknown>): void {
+    this.send(response ? { type: "response.create", response } : { type: "response.create" });
   }
 
   sendFunctionOutput(callId: string, output: string): void {
@@ -176,10 +223,48 @@ export class OpenAIRealtimeClient extends EventEmitter {
     }
   }
 
+  private emitAssistantTranscriptDone(text: string): void {
+    if (!text?.trim()) return;
+    this.emittedAssistantTranscriptInResponse = true;
+    this.emit("assistantTranscriptDone", text);
+  }
+
   close(): void {
     if (this.ws?.readyState === WebSocket.OPEN) {
       this.ws.close();
     }
     this.ws = null;
   }
+}
+
+function extractAssistantTranscriptFromResponse(response: any): string {
+  if (!response?.output || !Array.isArray(response.output)) return "";
+  const parts = response.output
+    .filter((item: any) => item?.role === "assistant" || item?.type === "message")
+    .flatMap((item: any) => Array.isArray(item.content) ? item.content : [])
+    .map((content: any) => content?.transcript || content?.text || "")
+    .filter(Boolean);
+  return parts.join(" ").trim();
+}
+
+function extractAssistantTranscriptFromItem(item: any): string {
+  if (item?.role !== "assistant" || !Array.isArray(item.content)) return "";
+  return item.content
+    .map((content: any) => content?.transcript || content?.text || "")
+    .filter(Boolean)
+    .join(" ")
+    .trim();
+}
+
+function isBenignRealtimeError(error: any): boolean {
+  const message = String(error?.message || "");
+  return message.includes("Cancellation failed: no active response found");
+}
+
+function getRealtimeAudioFormat(format: RealtimeSessionConfig["inputAudioFormat"]): { type: string; rate?: 24000 } {
+  if (format === "g711_ulaw") {
+    return { type: "audio/pcmu" };
+  }
+
+  return { type: "audio/pcm", rate: 24000 };
 }

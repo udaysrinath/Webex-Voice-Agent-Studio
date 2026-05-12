@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 
 export type VoiceAgentState = "idle" | "connecting" | "listening" | "speaking";
+export type VoiceActivity = "idle" | "connecting" | "ready" | "user_speaking" | "agent_speaking" | "barge_in";
 
 export interface TranscriptEntry {
   role: "user" | "assistant";
@@ -12,14 +13,17 @@ interface UseVoiceAgentOptions {
   agentId?: number;
   systemPrompt?: string;
   voice?: string;
+  onEvent?: (event: any) => void;
 }
 
-const ASSISTANT_PLAYBACK_MIC_COOLDOWN_MS = 1200;
-const MIN_MIC_RMS = 0.004;
+const ASSISTANT_PLAYBACK_MIC_COOLDOWN_MS = 120;
+const TRANSIENT_ACTIVITY_MS = 900;
 
 export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
   const [state, setState] = useState<VoiceAgentState>("idle");
+  const [activity, setActivity] = useState<VoiceActivity>("idle");
   const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
+  const [userPartial, setUserPartial] = useState("");
   const [assistantPartial, setAssistantPartial] = useState("");
   const [error, setError] = useState<string | null>(null);
 
@@ -32,8 +36,15 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
   const activeSourcesRef = useRef<AudioBufferSourceNode[]>([]);
   const gainNodeRef = useRef<GainNode | null>(null);
   const assistantPlaybackActiveRef = useRef(false);
+  const assistantPlaybackStartedAtRef = useRef(0);
   const assistantPlaybackBlockedUntilRef = useRef(0);
+  const transientActivityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const playbackEndTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const onEventRef = useRef(options.onEvent);
+
+  useEffect(() => {
+    onEventRef.current = options.onEvent;
+  }, [options.onEvent]);
 
   function clearPlayback(): void {
     activeSourcesRef.current.forEach((src) => {
@@ -50,15 +61,24 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
     try {
       setError(null);
       setState("connecting");
+      setActivity("connecting");
       setTranscript([]);
+      setUserPartial("");
       setAssistantPartial("");
 
       const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, sampleRate: 24000 },
+        audio: {
+          autoGainControl: true,
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true,
+          sampleRate: 24000,
+          sampleSize: 16,
+        },
       });
       streamRef.current = stream;
 
-      const audioContext = new AudioContext({ sampleRate: 24000 });
+      const audioContext = new AudioContext({ latencyHint: "interactive", sampleRate: 24000 });
       audioContextRef.current = audioContext;
       nextPlayTimeRef.current = audioContext.currentTime;
 
@@ -68,7 +88,7 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
       gainNodeRef.current = gainNode;
 
       const source = audioContext.createMediaStreamSource(stream);
-      const processor = audioContext.createScriptProcessor(2048, 1, 1);
+      const processor = audioContext.createScriptProcessor(1024, 1, 1);
       const processorSink = audioContext.createGain();
       processorSink.gain.value = 0;
       workletNodeRef.current = processor;
@@ -96,30 +116,29 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
       };
 
       ws.onclose = () => {
+        setUserPartial("");
         setState("idle");
+        setActivity("idle");
         cleanup();
       };
 
       ws.onerror = () => {
         setError("Connection failed. Check that OPENAI_API_KEY is configured.");
+        setUserPartial("");
         setState("idle");
+        setActivity("idle");
         cleanup();
       };
 
       processor.onaudioprocess = (e) => {
         if (ws.readyState !== WebSocket.OPEN) return;
-        if (isMicUploadSuppressed()) return;
 
         const input = e.inputBuffer.getChannelData(0);
         const pcm16 = new Int16Array(input.length);
-        let sumSquares = 0;
         for (let i = 0; i < input.length; i++) {
           const s = Math.max(-1, Math.min(1, input[i]));
-          sumSquares += s * s;
           pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
         }
-        const rms = Math.sqrt(sumSquares / input.length);
-        if (rms < MIN_MIC_RMS) return;
 
         ws.send(pcm16.buffer);
       };
@@ -129,7 +148,9 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
       processorSink.connect(audioContext.destination);
     } catch (err: any) {
       setError(err.message || "Failed to start voice agent");
+      setUserPartial("");
       setState("idle");
+      setActivity("idle");
     }
   }, [options.agentId, options.systemPrompt, options.voice]);
 
@@ -139,41 +160,84 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
       wsRef.current.close();
     }
     cleanup();
+    setUserPartial("");
     setState("idle");
+    setActivity("idle");
   }, []);
 
   function handleEvent(msg: any): void {
+    onEventRef.current?.(msg);
+
     switch (msg.type) {
       case "connected":
         setState("listening");
+        setActivity("ready");
         break;
       case "interruptClear":
         clearPlayback();
+        setUserPartial("");
         setAssistantPartial("");
         setState("listening");
+        clearTransientActivityTimer();
+        setActivity((current) => (current === "barge_in" ? "user_speaking" : current));
+        break;
+      case "bargeInDetected":
+        clearPlayback();
+        setUserPartial("");
+        setAssistantPartial("");
+        setState("listening");
+        showTransientActivity("barge_in");
         break;
       case "userSpeechStarted":
+        setUserPartial("");
         setState("listening");
+        clearTransientActivityTimer();
+        setActivity("user_speaking");
         break;
       case "userSpeechStopped":
+        setUserPartial("");
         setState("listening");
+        setActivity((current) => (current === "user_speaking" ? "ready" : current));
+        break;
+      case "userTranscriptSuppressed":
+        setUserPartial("");
+        setState("listening");
+        setActivity((current) => (current === "user_speaking" || current === "barge_in" ? "ready" : current));
         break;
       case "userTranscript":
+        setUserPartial("");
         appendTranscript("user", msg.text);
         setState("listening");
+        setActivity("ready");
+        break;
+      case "userTranscriptDelta":
+        setUserPartial((prev) => `${prev}${msg.delta || ""}`);
+        setState("listening");
+        setActivity("user_speaking");
         break;
       case "assistantTranscriptDelta":
         setAssistantPartial((prev) => prev + msg.delta);
         setState("speaking");
+        clearTransientActivityTimer();
+        setActivity("agent_speaking");
         break;
       case "assistantTranscriptDone":
         appendTranscript("assistant", msg.text);
         setAssistantPartial("");
+        setActivity((current) => (current === "barge_in" ? "ready" : current));
         break;
       case "responseDone":
-        if (!isMicUploadSuppressed()) {
+        if (!isAssistantPlaybackLive()) {
           setState("listening");
+          setActivity((current) => (current === "agent_speaking" || current === "barge_in" ? "ready" : current));
         }
+        break;
+      case "callEnded":
+        wsRef.current?.close();
+        cleanup();
+        setUserPartial("");
+        setState("idle");
+        setActivity("idle");
         break;
       case "error":
         setError(msg.message);
@@ -213,6 +277,7 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
     activeSourcesRef.current.push(src);
     markAssistantPlaybackStarted();
     setState("speaking");
+    setActivity("agent_speaking");
     src.onended = () => {
       activeSourcesRef.current = activeSourcesRef.current.filter((s) => s !== src);
       scheduleAssistantPlaybackEndCheck();
@@ -234,22 +299,14 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
     audioContextRef.current = null;
     nextPlayTimeRef.current = 0;
     assistantPlaybackActiveRef.current = false;
+    assistantPlaybackStartedAtRef.current = 0;
     assistantPlaybackBlockedUntilRef.current = 0;
+    clearTransientActivityTimer();
     if (playbackEndTimerRef.current) {
       clearTimeout(playbackEndTimerRef.current);
       playbackEndTimerRef.current = null;
     }
     wsRef.current = null;
-  }
-
-  function isMicUploadSuppressed(): boolean {
-    const ctx = audioContextRef.current;
-    const hasQueuedPlayback = Boolean(ctx && nextPlayTimeRef.current > ctx.currentTime + 0.05);
-    return (
-      assistantPlaybackActiveRef.current ||
-      hasQueuedPlayback ||
-      Date.now() < assistantPlaybackBlockedUntilRef.current
-    );
   }
 
   function markAssistantPlaybackStarted(): void {
@@ -261,6 +318,7 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
     if (assistantPlaybackActiveRef.current) return;
 
     assistantPlaybackActiveRef.current = true;
+    assistantPlaybackStartedAtRef.current = Date.now();
     sendControlEvent({ type: "assistantPlaybackStarted" });
   }
 
@@ -279,10 +337,12 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
     const cooldownMs = withCooldown ? ASSISTANT_PLAYBACK_MIC_COOLDOWN_MS : 0;
     playbackEndTimerRef.current = setTimeout(() => {
       assistantPlaybackActiveRef.current = false;
+      assistantPlaybackStartedAtRef.current = 0;
       assistantPlaybackBlockedUntilRef.current = 0;
       playbackEndTimerRef.current = null;
       sendControlEvent({ type: "assistantPlaybackEnded" });
       setState((current) => (current === "speaking" ? "listening" : current));
+      setActivity((current) => (current === "agent_speaking" ? "ready" : current));
     }, cooldownMs);
   }
 
@@ -313,7 +373,31 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
     }
   }
 
+  function isAssistantPlaybackLive(): boolean {
+    const ctx = audioContextRef.current;
+    return Boolean(
+      activeSourcesRef.current.length > 0 ||
+      (ctx && nextPlayTimeRef.current > ctx.currentTime + 0.05)
+    );
+  }
+
+  function showTransientActivity(nextActivity: VoiceActivity): void {
+    clearTransientActivityTimer();
+    setActivity(nextActivity);
+    transientActivityTimerRef.current = setTimeout(() => {
+      setActivity((current) => (current === nextActivity ? "ready" : current));
+      transientActivityTimerRef.current = null;
+    }, TRANSIENT_ACTIVITY_MS);
+  }
+
+  function clearTransientActivityTimer(): void {
+    if (transientActivityTimerRef.current) {
+      clearTimeout(transientActivityTimerRef.current);
+      transientActivityTimerRef.current = null;
+    }
+  }
+
   useEffect(() => () => cleanup(), []);
 
-  return { state, transcript, assistantPartial, error, start, stop };
+  return { state, activity, transcript, userPartial, assistantPartial, error, start, stop };
 }

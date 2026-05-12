@@ -13,6 +13,8 @@ import { useToast } from "@/hooks/use-toast";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { agentsApi, ttsApi, webexApi, knowledgeBaseApi, type TTSRequest, type KnowledgeBaseItem } from "@/lib/api";
 import type { InsertAgent } from "@shared/schema";
+import { VOICE_USE_CASES } from "@shared/use-cases";
+import { buildUseCaseSystemPrompt } from "@shared/prompt-builder";
 
 const FALLBACK_LLMS = [
   { id: "gpt-4o", name: "GPT-4o", provider: "OpenAI", desc: "Best for reasoning & nuance" },
@@ -653,6 +655,7 @@ export default function Build() {
 
   const [buildMode, setBuildMode] = useState<'choice' | 'scratch' | 'template'>(urlAgentId ? 'scratch' : 'choice');
   const [selectedTemplate, setSelectedTemplate] = useState<string | null>(null);
+  const [selectedUseCaseId, setSelectedUseCaseId] = useState<string | null>(null);
 
   const [agentName, setAgentName] = useState("Agent Alpha-1");
   const [systemPrompt, setSystemPrompt] = useState(DEFAULT_SYSTEM_PROMPT);
@@ -930,12 +933,35 @@ export default function Build() {
       setGender(template.config.gender);
       setTools(template.config.tools);
       setSelectedTemplate(templateId);
+      setSelectedUseCaseId(null);
       setBuildMode('template');
       toast({
         title: "Template Applied",
         description: `${template.name} settings loaded. Customize as needed.`,
       });
     }
+  };
+
+  const applyUseCase = (useCaseId: string) => {
+    const useCase = VOICE_USE_CASES.find((item) => item.id === useCaseId);
+    if (!useCase) return;
+
+    setAgentName(useCase.agentName);
+    setSystemPrompt(buildUseCaseSystemPrompt(useCase));
+    const matchedLLM = LLMS.find((llm: any) => llm.id === useCase.defaultLLM);
+    setSelectedLLM(matchedLLM ? useCase.defaultLLM : LLMS[0]?.id || "");
+    const matchedVoice = VOICES.find((voice: any) => voice.id === useCase.defaultVoice);
+    setSelectedVoice(matchedVoice ? useCase.defaultVoice : VOICES[0]?.id || "");
+    setLanguage(useCase.language);
+    setGender(useCase.gender);
+    setTools(useCase.recommendedTools);
+    setSelectedTemplate(null);
+    setSelectedUseCaseId(useCase.id);
+    setBuildMode("template");
+    toast({
+      title: "Use Case Applied",
+      description: `${useCase.title} demo script loaded with prompts, tools, and guardrails.`,
+    });
   };
 
   const handleGhostwriter = async () => {
@@ -1637,6 +1663,52 @@ export default function Build() {
 
               <div className="flex items-center gap-4 mb-6">
                 <div className="h-px flex-1 bg-white/10" />
+                <span className="text-xs text-muted-foreground uppercase tracking-wider">or choose a demo use case</span>
+                <div className="h-px flex-1 bg-white/10" />
+              </div>
+
+              <div className="grid md:grid-cols-1 gap-6 mb-8">
+                {VOICE_USE_CASES.map((useCase) => (
+                  <motion.div
+                    key={useCase.id}
+                    whileHover={{ scale: 1.01 }}
+                    whileTap={{ scale: 0.99 }}
+                  >
+                    <Card
+                      className="cursor-pointer border border-cyan-500/25 bg-gradient-to-br from-cyan-500/10 via-blue-500/5 to-purple-500/10 p-6 transition-all hover:border-cyan-300/50"
+                      onClick={() => applyUseCase(useCase.id)}
+                      data-testid={`use-case-card-${useCase.id}`}
+                    >
+                      <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="rounded-full bg-cyan-400/10 px-3 py-1 text-xs font-medium text-cyan-200">
+                              {useCase.category}
+                            </span>
+                            <span className="text-xs text-muted-foreground">{useCase.heroMetric}</span>
+                          </div>
+                          <h3 className="mt-3 text-xl font-semibold">{useCase.title}</h3>
+                          <p className="mt-2 max-w-3xl text-sm text-muted-foreground">{useCase.description}</p>
+                          <div className="mt-4 flex flex-wrap gap-2">
+                            {useCase.capabilityChips.map((chip) => (
+                              <span key={chip} className="rounded-full bg-white/10 px-2.5 py-1 text-xs text-white/70">
+                                {chip}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                        <Button className="shrink-0 bg-cyan-600 text-white hover:bg-cyan-500">
+                          <Workflow className="mr-2 h-4 w-4" />
+                          Load Use Case
+                        </Button>
+                      </div>
+                    </Card>
+                  </motion.div>
+                ))}
+              </div>
+
+              <div className="flex items-center gap-4 mb-6">
+                <div className="h-px flex-1 bg-white/10" />
                 <span className="text-xs text-muted-foreground uppercase tracking-wider">or pick a template</span>
                 <div className="h-px flex-1 bg-white/10" />
               </div>
@@ -1686,7 +1758,11 @@ export default function Build() {
                 <Button
                   variant="outline"
                   size="lg"
-                  onClick={() => setBuildMode('scratch')}
+                  onClick={() => {
+                    setBuildMode('scratch');
+                    setSelectedTemplate(null);
+                    setSelectedUseCaseId(null);
+                  }}
                   className="px-8"
                   data-testid="button-build-from-scratch"
                 >
@@ -1719,7 +1795,71 @@ export default function Build() {
                     </span>
                   </span>
                 )}
+                {selectedUseCaseId && (
+                  <span className="text-sm text-muted-foreground">
+                    Use case: <span className="text-cyan-300 font-medium">
+                      {VOICE_USE_CASES.find(t => t.id === selectedUseCaseId)?.title}
+                    </span>
+                  </span>
+                )}
               </div>
+
+          <motion.section
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.4 }}
+          >
+            <div className="flex items-center gap-3 mb-6">
+              <div className="w-10 h-10 rounded-full bg-cyan-500/10 flex items-center justify-center text-cyan-300">
+                <Workflow className="w-5 h-5" />
+              </div>
+              <div>
+                <h2 className="text-2xl font-display font-semibold">Use Case</h2>
+                <p className="text-muted-foreground text-sm">Load a demo script that sets identity, prompt rules, tools, and UI context.</p>
+              </div>
+            </div>
+
+            <div className="grid gap-4">
+              {VOICE_USE_CASES.map((useCase) => {
+                const selected = selectedUseCaseId === useCase.id;
+                return (
+                  <Card
+                    key={useCase.id}
+                    className={`p-5 transition-all ${selected ? "border-cyan-300/50 bg-cyan-500/10" : "border-white/10 bg-card/50 hover:border-white/25"}`}
+                  >
+                    <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="rounded-full bg-cyan-400/10 px-2.5 py-1 text-xs font-medium text-cyan-200">
+                            {useCase.category}
+                          </span>
+                          <span className="text-xs text-muted-foreground">{useCase.heroMetric}</span>
+                        </div>
+                        <h3 className="mt-3 text-lg font-semibold">{useCase.title}</h3>
+                        <p className="mt-2 max-w-4xl text-sm text-muted-foreground">{useCase.demoGoal}</p>
+                        <div className="mt-4 flex flex-wrap gap-2">
+                          {useCase.capabilityChips.map((chip) => (
+                            <span key={chip} className="rounded-full bg-white/10 px-2.5 py-1 text-xs text-white/70">
+                              {chip}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                      <Button
+                        variant={selected ? "secondary" : "outline"}
+                        className="shrink-0"
+                        onClick={() => applyUseCase(useCase.id)}
+                        data-testid={`button-apply-use-case-${useCase.id}`}
+                      >
+                        {selected ? <Check className="mr-2 h-4 w-4" /> : <Workflow className="mr-2 h-4 w-4" />}
+                        {selected ? "Applied" : "Apply Use Case"}
+                      </Button>
+                    </div>
+                  </Card>
+                );
+              })}
+            </div>
+          </motion.section>
 
           <motion.section 
             initial={{ opacity: 0, y: 20 }}

@@ -11,6 +11,8 @@ import * as os from "os";
 import multer from "multer";
 import { createClient } from "@deepgram/sdk";
 import { chatTools, executeTool } from "./tools";
+import { buildRetailRuntimePrompt } from "@shared/prompt-builder";
+import { isRetailStoreUseCasePrompt } from "@shared/use-cases";
 
 const upload = multer({ 
   dest: os.tmpdir(),
@@ -1321,7 +1323,10 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
       }
 
       let kbSection = "";
+      let agentNameForPrompt = "";
       if (data.agentId) {
+        const agent = await storage.getAgent(data.agentId);
+        agentNameForPrompt = agent?.name || "";
         const kbItems = await storage.getKnowledgeBaseItemsByAgent(data.agentId);
         if (kbItems.length > 0) {
           const kbContent = kbItems.map(item => `### ${item.title}\n${item.content}`).join("\n\n");
@@ -1329,7 +1334,10 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
         }
       }
       
-      const systemContent = data.systemPrompt || "You are a helpful AI assistant.";
+      let systemContent = data.systemPrompt || "You are a helpful AI assistant.";
+      if (isRetailStoreUseCasePrompt(systemContent, agentNameForPrompt)) {
+        systemContent = buildRetailRuntimePrompt(systemContent);
+      }
       const contextSection = contextMessages 
         ? `\n\n## Recent Webex Messages (Knowledge Base):\nUse these messages as context to provide relevant and personalized responses:\n\n${contextMessages}` 
         : "";
@@ -1377,37 +1385,55 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
       const assistantMessage = completion.choices[0]?.message;
 
       if (supportsTools && assistantMessage?.tool_calls && assistantMessage.tool_calls.length > 0) {
-        const toolCall = assistantMessage.tool_calls[0] as { id: string; type: string; function: { name: string; arguments: string } };
-        const functionName = toolCall.function.name;
-        const functionArgs = JSON.parse(toolCall.function.arguments);
+        let currentAssistantMessage = assistantMessage;
+        const toolResults: Array<{ toolName: string; result: Record<string, any> }> = [];
+        let verified = false;
 
-        let functionResult: Record<string, any>;
-        if (bankingFunctionNames.includes(functionName)) {
-          functionResult = await executeBankingFunction(functionName, functionArgs, data.agentId);
-        } else {
-          functionResult = await executeTool(functionName, functionArgs);
+        for (let i = 0; i < 4 && currentAssistantMessage?.tool_calls?.length; i++) {
+          messages.push(currentAssistantMessage);
+
+          for (const rawToolCall of currentAssistantMessage.tool_calls) {
+            const toolCall = rawToolCall as { id: string; type: string; function: { name: string; arguments: string } };
+            const functionName = toolCall.function.name;
+            const functionArgs = JSON.parse(toolCall.function.arguments || "{}");
+
+            const functionResult: Record<string, any> = bankingFunctionNames.includes(functionName)
+              ? await executeBankingFunction(functionName, functionArgs, data.agentId)
+              : await executeTool(functionName, functionArgs);
+
+            if (functionResult.verified === true) verified = true;
+            toolResults.push({ toolName: functionName, result: functionResult });
+
+            messages.push({
+              role: "tool",
+              tool_call_id: toolCall.id,
+              content: JSON.stringify(functionResult),
+            });
+          }
+
+          const followUpCompletion = await chatClient.chat.completions.create({
+            model: CHAT_MODEL,
+            messages,
+            max_tokens: 500,
+            ...(allTools.length > 0 ? { tools: allTools, tool_choice: "auto" } : {}),
+          });
+
+          currentAssistantMessage = followUpCompletion.choices[0]?.message;
         }
 
-        messages.push(assistantMessage);
-        messages.push({
-          role: "tool",
-          tool_call_id: toolCall.id,
-          content: JSON.stringify(functionResult),
+        const lastTool = toolResults[toolResults.length - 1];
+        const response = currentAssistantMessage?.content ||
+          (lastTool?.result?.success
+            ? `Done! ${lastTool.result.result}`
+            : `Sorry, there was an issue: ${lastTool?.result?.error || "the tool sequence did not complete."}`);
+
+        res.json({
+          response,
+          verified,
+          toolUsed: lastTool?.toolName,
+          toolResult: lastTool?.result,
+          toolResults,
         });
-
-        const followUpCompletion = await chatClient.chat.completions.create({
-          model: CHAT_MODEL,
-          messages,
-          max_tokens: 500,
-        });
-
-        const response = followUpCompletion.choices[0]?.message?.content ||
-          (functionResult.success
-            ? `Done! ${functionResult.result}`
-            : `Sorry, there was an issue: ${functionResult.error}`);
-
-        const verified = functionResult.verified === true;
-        res.json({ response, verified, toolUsed: functionName });
       } else {
         const response = assistantMessage?.content || "I'm sorry, I couldn't generate a response.";
         res.json({ response });
@@ -1502,6 +1528,7 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
   }
 
   app.all("/api/twilio/voice", handleTwilioVoiceWebhook);
+  app.all("/api/v1/twilio/voice", handleTwilioVoiceWebhook);
 
   app.post("/api/twilio/voice/recording", async (req, res) => {
     const twilio = (await import("twilio")).default;
@@ -1564,6 +1591,7 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
 
   // ── Twilio Voice — Real-Time AI Agent (OpenAI Realtime API) ──────────────────
   app.all("/api/twilio/voice-stream", handleTwilioVoiceWebhook);
+  app.all("/api/v1/twilio/voice-stream", handleTwilioVoiceWebhook);
 
   // ── Twilio status endpoint ──────────────────────────────────────────────────
   app.get("/api/twilio/status", (req, res) => {
@@ -1582,8 +1610,8 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
       baseUrl,
       phoneNumber,
       webhooks: baseUrl ? {
-        voice: `${baseUrl}/api/twilio/voice`,
-        voiceStream: `${baseUrl}/api/twilio/voice-stream`,
+        voice: `${baseUrl}/api/v1/twilio/voice`,
+        voiceStream: `${baseUrl}/api/v1/twilio/voice-stream`,
         sms: `${baseUrl}/api/twilio/sms`,
       } : null,
     });

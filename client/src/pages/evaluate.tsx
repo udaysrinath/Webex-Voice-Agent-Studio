@@ -17,7 +17,11 @@ import { agentsApi, evaluationsApi, ttsApi, chatApi, anamApi, ocrApi, type TTSRe
 import type { InsertEvaluation } from "@shared/schema";
 import type { ChatMessage } from "@/lib/api";
 import { VoiceAgentPanel } from "@/components/voice-agent-panel";
-import type { VoiceAgentState } from "@/hooks/use-voice-agent";
+import {
+  createRetailAssistState,
+  getRetailAssistEventTypeForTool,
+  updateRetailAssistState,
+} from "@/components/retail-agent-assist";
 
 export default function Evaluate() {
   const search = useSearch();
@@ -44,7 +48,7 @@ export default function Evaluate() {
 
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState("");
-  const [voiceState, setVoiceState] = useState<VoiceAgentState>("idle");
+  const [retailAssistState, setRetailAssistState] = useState(createRetailAssistState);
   
   const [isRecording, setIsRecording] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
@@ -80,6 +84,10 @@ export default function Evaluate() {
     } else {
       document.exitFullscreen().catch(() => {});
     }
+  }, []);
+
+  const handleRetailRealtimeEvent = useCallback((event: any) => {
+    setRetailAssistState((current) => updateRetailAssistState(current, event));
   }, []);
 
   const [ocrOpen, setOcrOpen] = useState(false);
@@ -178,6 +186,12 @@ export default function Evaluate() {
     queryKey: ["anam-status"],
     queryFn: () => anamApi.getStatus(),
   });
+
+  useEffect(() => {
+    if (agent?.id) {
+      setRetailAssistState(createRetailAssistState());
+    }
+  }, [agent?.id]);
 
   const startAvatar = useCallback(async () => {
     if (!agent) return;
@@ -489,6 +503,37 @@ export default function Evaluate() {
     }),
     onSuccess: (response) => {
       if (response.verified === true) setIsAuthenticated(true);
+      const completedTools = response.toolResults?.length
+        ? response.toolResults
+        : response.toolUsed
+          ? [{ toolName: response.toolUsed, result: response.toolResult || {} }]
+          : [];
+      if (completedTools.length > 0) {
+        setRetailAssistState((current) => {
+          let next = current;
+          for (const completedTool of completedTools) {
+            const completedEvent = {
+              type: "toolCallCompleted",
+              toolName: completedTool.toolName,
+              success: completedTool.result?.success ?? true,
+              result: completedTool.result?.result,
+              error: completedTool.result?.error,
+              data: completedTool.result?.data,
+              timestamp: Date.now(),
+            };
+            next = updateRetailAssistState(next, completedEvent);
+            const assistEventType = getRetailAssistEventTypeForTool(completedTool.toolName);
+            if (assistEventType && completedTool.result?.data !== undefined) {
+              next = updateRetailAssistState(next, {
+                type: assistEventType,
+                data: completedTool.result.data,
+                timestamp: Date.now(),
+              });
+            }
+          }
+          return next;
+        });
+      }
       const assistantMsg = response.response;
       setChatMessages(prev => {
         const updated = [...prev, { role: "assistant" as const, content: assistantMsg }];
@@ -942,21 +987,19 @@ export default function Evaluate() {
 
       <main className="flex-1 min-h-0 grid lg:grid-cols-12 gap-0 overflow-hidden">
         {isStoreAssistant ? (
-          <>
-            <div className="lg:col-span-8 flex flex-col min-h-0 border-r border-white/10 bg-card/20">
+          <div className="lg:col-span-12 min-h-0 bg-card/20 p-4">
+            <div className="flex h-full min-h-0 overflow-hidden rounded-lg border border-white/10 bg-background/50">
               <VoiceAgentPanel
                 agentId={agent.id}
                 agentName={agent.name}
                 systemPrompt={agent.systemPrompt || undefined}
                 voice={agent.voiceModel}
-                onStateChange={setVoiceState}
+                onRealtimeEvent={handleRetailRealtimeEvent}
+                assistState={retailAssistState}
+                layout="split"
               />
             </div>
-
-            <div className="hidden lg:flex lg:col-span-4 min-h-0 bg-background border-l border-white/5">
-              <StoreAssistantCallStage agentName={agent.name} state={voiceState} />
-            </div>
-          </>
+          </div>
         ) : (
           <>
         <div className="lg:col-span-7 flex flex-col min-h-0 border-r border-white/10 bg-card/20 p-6 overflow-y-auto">
@@ -1563,48 +1606,4 @@ export default function Evaluate() {
       )}
     </div>
   );
-}
-
-function StoreAssistantCallStage({ agentName, state }: { agentName: string; state: VoiceAgentState }) {
-  const isActive = state !== "idle";
-  const isTalking = state === "speaking";
-  const status = getVoiceStatusLabel(state);
-  const ringColor = isTalking ? "bg-blue-400/25" : "bg-green-400/25";
-  const iconColor = isTalking ? "text-blue-300" : isActive ? "text-green-300" : "text-primary";
-
-  return (
-    <div className="flex h-full w-full flex-col items-center justify-center p-8 text-center">
-      <div className="relative mb-8 flex h-36 w-36 items-center justify-center rounded-full border border-primary/20 bg-primary/10">
-        {isActive && (
-          <>
-            <span className={`absolute inset-0 rounded-full ${ringColor} animate-ping`} />
-            <span className={`absolute inset-4 rounded-full ${ringColor} animate-pulse`} />
-          </>
-        )}
-        {state === "connecting" ? (
-          <Loader2 className="relative z-10 h-12 w-12 animate-spin text-yellow-300" />
-        ) : (
-          <Mic className={`relative z-10 h-12 w-12 ${iconColor}`} />
-        )}
-      </div>
-      <div className="space-y-2">
-        <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">Live Voice</p>
-        <h2 className="text-2xl font-display font-semibold">{agentName}</h2>
-        <p className="text-sm text-muted-foreground" aria-live="polite">{status}</p>
-      </div>
-    </div>
-  );
-}
-
-function getVoiceStatusLabel(state: VoiceAgentState): string {
-  switch (state) {
-    case "connecting":
-      return "Connecting";
-    case "listening":
-      return "Call underway";
-    case "speaking":
-      return "Talking";
-    default:
-      return "Ready";
-  }
 }

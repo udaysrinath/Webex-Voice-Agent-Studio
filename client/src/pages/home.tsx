@@ -38,6 +38,32 @@ const GENDER_OPTIONS = [
   { value: "neutral", label: "Neutral" },
 ];
 
+function getModelLabel(agent: Agent, providerConfig: any): string {
+  const model = providerConfig?.llmModels?.find((item: any) => item.id === agent.llmModel);
+  return model ? `${model.name} (${model.provider})` : agent.llmModel;
+}
+
+function getVoiceDisplay(agent: Agent, providerConfig: any): { name: string; detail: string } {
+  const voice = providerConfig?.voices?.find((item: any) => item.id === agent.voiceModel);
+  if (!voice) {
+    return { name: agent.voiceModel, detail: "Voice profile" };
+  }
+
+  const detail = [voice.style, voice.gender].filter(Boolean).join(" · ");
+  return {
+    name: voice.name,
+    detail: detail || agent.voiceModel,
+  };
+}
+
+function getPromptPreview(prompt: string): string {
+  return prompt
+    .replace(/^#+\s*/gm, "")
+    .replace(/\n+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export default function Home() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -216,7 +242,7 @@ export default function Home() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.6, delay: 0.2 }}
-            className="w-full max-w-4xl mt-16"
+            className="w-full max-w-6xl mt-16"
           >
             <div className="flex items-center justify-between mb-6">
               <h2 className="text-2xl font-display font-bold">Your Agents</h2>
@@ -224,19 +250,24 @@ export default function Home() {
             </div>
             
             <div className="grid gap-4">
-              {agents.map((agent) => (
+              {agents.map((agent) => {
+                const modelLabel = getModelLabel(agent, providerConfig);
+                const voiceDisplay = getVoiceDisplay(agent, providerConfig);
+                const promptPreview = getPromptPreview(agent.systemPrompt || "");
+
+                return (
                 <Card 
                   key={agent.id} 
-                  className="p-5 bg-card/50 backdrop-blur-sm border-white/10 hover:border-white/20 transition-colors"
+                  className="p-6 bg-card/50 backdrop-blur-sm border-white/10 hover:border-white/20 transition-colors"
                   data-testid={`card-agent-${agent.id}`}
                 >
-                  <div className="flex items-start justify-between gap-4">
+                  <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_280px] xl:items-stretch">
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-3 mb-3">
-                        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary/20 to-purple-500/20 flex items-center justify-center">
-                          <Bot className="w-5 h-5 text-primary" />
+                      <div className="mb-5 flex items-center gap-4">
+                        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-primary/20 to-purple-500/20">
+                          <Bot className="h-6 w-6 text-primary" />
                         </div>
-                        <div>
+                        <div className="min-w-0">
                           <h3 className="font-semibold text-lg" data-testid={`text-agent-name-${agent.id}`}>{agent.name}</h3>
                           <p className="text-xs text-muted-foreground">
                             Created {new Date(agent.createdAt).toLocaleDateString()}
@@ -244,80 +275,103 @@ export default function Home() {
                         </div>
                       </div>
                       
-                      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-                        <div className="flex items-center gap-2 text-muted-foreground">
-                          <Cpu className="w-4 h-4" />
-                          <span className="truncate" data-testid={`text-agent-llm-${agent.id}`}>{agent.llmModel}</span>
+                      <div className="grid gap-3 text-sm md:grid-cols-2 xl:grid-cols-4">
+                        <div className="flex min-h-[86px] items-start gap-2 rounded-lg border border-white/10 bg-white/[0.03] p-3 text-muted-foreground">
+                          <Cpu className="mt-0.5 h-4 w-4 shrink-0" />
+                          <div className="min-w-0">
+                            <p className="text-[11px] uppercase tracking-wide text-muted-foreground/80">Model</p>
+                            <p className="break-words font-medium text-foreground/90" data-testid={`text-agent-llm-${agent.id}`}>{modelLabel}</p>
+                          </div>
                         </div>
-                        <div className="flex items-center gap-2 text-muted-foreground">
-                          <Mic className="w-4 h-4" />
-                          <span className="truncate capitalize" data-testid={`text-agent-voice-${agent.id}`}>{agent.voiceModel}</span>
+                        <div className="flex min-h-[86px] items-start gap-2 rounded-lg border border-white/10 bg-white/[0.03] p-3 text-muted-foreground">
+                          <Mic className="mt-0.5 h-4 w-4 shrink-0" />
+                          <div className="min-w-0">
+                            <p className="text-[11px] uppercase tracking-wide text-muted-foreground/80">Voice</p>
+                            <p className="break-words font-medium text-foreground/90" data-testid={`text-agent-voice-${agent.id}`}>{voiceDisplay.name}</p>
+                            <p className="mt-0.5 break-words text-xs capitalize">{voiceDisplay.detail}</p>
+                          </div>
                         </div>
-                        <div className="flex items-center gap-2 text-muted-foreground">
-                          <Globe className="w-4 h-4" />
-                          <span className="truncate" data-testid={`text-agent-language-${agent.id}`}>{agent.language}</span>
+                        <div className="flex min-h-[86px] items-start gap-2 rounded-lg border border-white/10 bg-white/[0.03] p-3 text-muted-foreground">
+                          <Globe className="mt-0.5 h-4 w-4 shrink-0" />
+                          <div className="min-w-0">
+                            <p className="text-[11px] uppercase tracking-wide text-muted-foreground/80">Language</p>
+                            <p className="break-words font-medium text-foreground/90" data-testid={`text-agent-language-${agent.id}`}>{agent.language}</p>
+                          </div>
                         </div>
-                        <div className="flex items-center gap-2 text-muted-foreground">
-                          <User className="w-4 h-4" />
-                          <span className="truncate capitalize" data-testid={`text-agent-gender-${agent.id}`}>{agent.gender}</span>
+                        <div className="flex min-h-[86px] items-start gap-2 rounded-lg border border-white/10 bg-white/[0.03] p-3 text-muted-foreground">
+                          <User className="mt-0.5 h-4 w-4 shrink-0" />
+                          <div className="min-w-0">
+                            <p className="text-[11px] uppercase tracking-wide text-muted-foreground/80">Persona</p>
+                            <p className="break-words font-medium capitalize text-foreground/90" data-testid={`text-agent-gender-${agent.id}`}>{agent.gender}</p>
+                          </div>
                         </div>
                       </div>
 
-                      {agent.systemPrompt && (
-                        <div className="mt-3 flex items-start gap-2 text-sm text-muted-foreground">
-                          <MessageSquare className="w-4 h-4 mt-0.5 flex-shrink-0" />
-                          <p className="line-clamp-2" data-testid={`text-agent-prompt-${agent.id}`}>{agent.systemPrompt}</p>
+                      {promptPreview && (
+                        <div className="mt-3 flex items-start gap-3 rounded-lg border border-white/10 bg-white/[0.03] p-3 text-sm text-muted-foreground">
+                          <MessageSquare className="mt-0.5 h-4 w-4 flex-shrink-0" />
+                          <div className="min-w-0">
+                            <p className="mb-1 text-[11px] uppercase tracking-wide text-muted-foreground/80">Description</p>
+                            <p className="line-clamp-4 leading-relaxed" data-testid={`text-agent-prompt-${agent.id}`}>{promptPreview}</p>
+                          </div>
                         </div>
                       )}
                     </div>
                     
-                    <div className="flex items-center gap-2 flex-shrink-0">
-                      <Button 
-                        variant="ghost" 
-                        size="sm"
-                        className="gap-2"
+                    <div className="flex flex-col gap-3 border-white/10 xl:border-l xl:pl-6">
+                      <Button
+                        variant="outline"
+                        className="h-11 w-full justify-start gap-3 px-3"
                         onClick={() => handleEditClick(agent)}
                         data-testid={`button-edit-agent-${agent.id}`}
                       >
-                        <Pencil className="w-4 h-4" />
+                        <Pencil className="h-4 w-4 shrink-0" />
                         Edit
                       </Button>
-                      <Link href={`/evaluate?agentId=${agent.id}`}>
+                      <Link href={`/evaluate?agentId=${agent.id}`} className="w-full">
                         <Button 
                           variant="outline" 
-                          size="sm"
-                          className="gap-2"
+                          className="min-h-[82px] w-full justify-start gap-3 px-3 py-3 text-left"
                           data-testid={`button-evaluate-agent-${agent.id}`}
                         >
-                          <Mic className="w-4 h-4" />
-                          Chat
+                          <Mic className="h-5 w-5 shrink-0" />
+                          <span className="min-w-0">
+                            <span className="block text-sm font-semibold">Call in browser</span>
+                            <span className="block whitespace-normal text-xs font-normal text-muted-foreground">
+                              Use this browser microphone and live transcript.
+                            </span>
+                          </span>
                         </Button>
                       </Link>
-                      <Link href={`/pstn-call?agentId=${agent.id}`}>
+                      <Link href={`/pstn-call?agentId=${agent.id}`} className="w-full">
                         <Button
                           variant="outline"
-                          size="sm"
-                          className="gap-2 border-green-500/30 text-green-300"
+                          className="min-h-[82px] w-full justify-start gap-3 border-green-500/30 px-3 py-3 text-left text-green-300"
                           data-testid={`button-pstn-call-agent-${agent.id}`}
                         >
-                          <PhoneCall className="w-4 h-4" />
-                          Call
+                          <PhoneCall className="h-5 w-5 shrink-0" />
+                          <span className="min-w-0">
+                            <span className="block text-sm font-semibold">Call by phone</span>
+                            <span className="block whitespace-normal text-xs font-normal text-green-200/70">
+                              Dial PSTN and monitor the phone transcript.
+                            </span>
+                          </span>
                         </Button>
                       </Link>
                       <Button 
                         variant="ghost" 
-                        size="sm"
-                        className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                        className="h-11 w-full justify-start gap-3 text-destructive hover:text-destructive hover:bg-destructive/10"
                         onClick={() => deleteAgentMutation.mutate(agent.id)}
                         disabled={deleteAgentMutation.isPending}
                         data-testid={`button-delete-agent-${agent.id}`}
                       >
-                        <Trash2 className="w-4 h-4" />
+                        <Trash2 className="h-4 w-4 shrink-0" />
+                        Delete
                       </Button>
                     </div>
                   </div>
                 </Card>
-              ))}
+              )})}
             </div>
           </motion.div>
         )}

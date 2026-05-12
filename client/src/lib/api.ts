@@ -115,6 +115,21 @@ export interface ChatResponse {
   response: string;
   verified?: boolean;
   toolUsed?: string;
+  toolResult?: {
+    success?: boolean;
+    result?: string;
+    error?: string;
+    data?: unknown;
+  };
+  toolResults?: Array<{
+    toolName: string;
+    result: {
+      success?: boolean;
+      result?: string;
+      error?: string;
+      data?: unknown;
+    };
+  }>;
 }
 
 export const chatApi = {
