@@ -19,6 +19,7 @@ import { Card } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import {
   RetailInlineAssist,
+  RetailProgressTimeline,
   createRetailAssistState,
   updateRetailAssistState,
 } from "@/components/retail-agent-assist";
@@ -41,6 +42,8 @@ interface TwilioMonitorMessage {
     | "assistantTranscript"
     | "toolCallStarted"
     | "toolCallCompleted"
+    | "identityVerificationSent"
+    | "identityVerified"
     | "customerContextLoaded"
     | "inventoryUpdated"
     | "recommendationCreated"
@@ -264,7 +267,8 @@ export default function PstnCall() {
           </div>
         </Card>
 
-        <section className="min-h-[720px] rounded-lg border border-white/10 bg-card/40">
+        <section className="grid min-h-[720px] overflow-hidden rounded-lg border border-white/10 bg-card/40 lg:grid-cols-[minmax(0,1fr)_360px]">
+          <div className="min-w-0">
           <div className="flex items-center justify-between border-b border-white/10 px-5 py-4">
             <div className="flex items-center gap-3">
               <div className="relative flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 border border-primary/20">
@@ -312,6 +316,10 @@ export default function PstnCall() {
 
             <RetailInlineAssist state={assistState} />
           </div>
+          </div>
+          <aside className="border-t border-white/10 p-4 lg:border-l lg:border-t-0">
+            <RetailProgressTimeline state={assistState} />
+          </aside>
         </section>
       </main>
     </div>

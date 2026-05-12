@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { useVoiceAgent, type VoiceActivity, type VoiceAgentState, type TranscriptEntry } from "@/hooks/use-voice-agent";
-import { RetailInlineAssist, type RetailAssistState } from "@/components/retail-agent-assist";
+import { RetailInlineAssist, RetailProgressTimeline, type RetailAssistState } from "@/components/retail-agent-assist";
 
 interface VoiceAgentPanelProps {
   agentId: number;
@@ -70,6 +70,7 @@ export function VoiceAgentPanel({
             isActive={isActive}
             start={start}
             stop={stop}
+            assistState={assistState}
           />
           {error && <ErrorBanner message={error} />}
         </div>
@@ -258,6 +259,7 @@ function CallControlPane({
   isActive,
   start,
   stop,
+  assistState,
 }: {
   agentName: string;
   state: VoiceAgentState;
@@ -265,6 +267,7 @@ function CallControlPane({
   isActive: boolean;
   start: () => void;
   stop: () => void;
+  assistState?: RetailAssistState;
 }) {
   return (
     <div className="flex-1 min-h-0 flex flex-col">
@@ -303,9 +306,14 @@ function CallControlPane({
         )}
       </div>
 
-      <div className="flex-1 min-h-0 flex flex-col items-center justify-center gap-6 p-8 text-center">
-        <CallStage agentName={agentName} state={state} activity={activity} isActive={isActive} />
-        {isActive && <CallActivityStack activity={activity} />}
+      <div className="flex-1 min-h-0 overflow-y-auto p-6">
+        <div className="flex min-h-full flex-col justify-center gap-5">
+          <div className="text-center">
+            <CallStage agentName={agentName} state={state} activity={activity} isActive={isActive} />
+            {isActive && <CallActivityStack activity={activity} />}
+          </div>
+          {assistState && <RetailProgressTimeline state={assistState} />}
+        </div>
       </div>
     </div>
   );

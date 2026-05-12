@@ -258,7 +258,10 @@ function extractAssistantTranscriptFromItem(item: any): string {
 
 function isBenignRealtimeError(error: any): boolean {
   const message = String(error?.message || "");
-  return message.includes("Cancellation failed: no active response found");
+  return (
+    message.includes("Cancellation failed: no active response found") ||
+    /Audio content of \d+ms is already shorter than \d+ms/.test(message)
+  );
 }
 
 function getRealtimeAudioFormat(format: RealtimeSessionConfig["inputAudioFormat"]): { type: string; rate?: 24000 } {

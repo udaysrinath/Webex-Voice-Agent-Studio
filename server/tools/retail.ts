@@ -4,10 +4,57 @@ import {
   type RetailActionPlan,
   type RetailInventoryItem,
 } from "@shared/use-cases";
+import { isSmsConfigured, sms } from "./twilio";
 
 type ToolResult = { success: boolean; result?: string; error?: string; data?: unknown };
 
+const RETAIL_VERIFICATION_TTL_MS = 10 * 60 * 1000;
+const RETAIL_VERIFIED_TTL_MS = 60 * 60 * 1000;
+const retailIdentityVerifications = new Map<string, {
+  code: string;
+  expiresAt: number;
+  sentAt: number;
+  verifiedAt?: number;
+  verifiedUntil?: number;
+}>();
+
 export const retailTools = [
+  {
+    type: "function" as const,
+    name: "retail_send_identity_verification",
+    description:
+      "Send an SMS verification code to the customer's phone number before loading profile memory, previous chats, reservations, or personalized context.",
+    parameters: {
+      type: "object",
+      properties: {
+        phone: {
+          type: "string",
+          description: "Customer phone number in E.164 format.",
+        },
+      },
+      required: ["phone"],
+    },
+  },
+  {
+    type: "function" as const,
+    name: "retail_verify_identity_code",
+    description:
+      "Verify the SMS code provided by the customer. Use this before retrieving previous call history or customer-specific context.",
+    parameters: {
+      type: "object",
+      properties: {
+        phone: {
+          type: "string",
+          description: "Customer phone number in E.164 format.",
+        },
+        code: {
+          type: "string",
+          description: "Verification code the customer received by SMS.",
+        },
+      },
+      required: ["phone", "code"],
+    },
+  },
   {
     type: "function" as const,
     name: "retail_get_customer_context",
@@ -146,18 +193,143 @@ export const retailTools = [
   },
 ];
 
+export async function send_identity_verification(args: Record<string, any>): Promise<ToolResult> {
+  const phone = typeof args.phone === "string" ? args.phone.trim() : "";
+  if (!phone) {
+    return { success: false, error: "Customer phone number is required to send SMS verification." };
+  }
+  if (!isVerifiedCustomerPhone(phone)) {
+    return {
+      success: false,
+      error: "That phone number is not the customer phone on file. Continue with generic product help only.",
+      data: {
+        suppliedPhone: maskPhone(phone),
+        verificationRequired: true,
+      },
+    };
+  }
+  if (!isSmsConfigured()) {
+    return {
+      success: false,
+      error: "SMS verification is not configured. Twilio SMS credentials are required.",
+      data: {
+        phone: maskPhone(phone),
+        method: "sms",
+        smsConfigured: false,
+      },
+    };
+  }
+
+  const normalizedPhone = normalizePhone(phone);
+  const code = generateVerificationCode();
+  const sentAt = Date.now();
+  const expiresAt = sentAt + RETAIL_VERIFICATION_TTL_MS;
+  retailIdentityVerifications.set(normalizedPhone, { code, sentAt, expiresAt });
+
+  const smsResult = await sms({
+    to: RETAIL_STORE_ASSISTANT_USE_CASE.customer.phone,
+    body: `Your Store Assistant verification code is ${code}. It expires in 10 minutes.`,
+  });
+
+  if (!smsResult.success) {
+    retailIdentityVerifications.delete(normalizedPhone);
+    return {
+      success: false,
+      error: smsResult.error || "Failed to send SMS verification code.",
+      data: {
+        phone: maskPhone(phone),
+        method: "sms",
+        smsSent: false,
+      },
+    };
+  }
+
+  return {
+    success: true,
+    result: `SMS verification code sent to ${maskPhone(phone)}.`,
+    data: {
+      phone: maskPhone(phone),
+      method: "sms",
+      smsSent: true,
+      expiresAt,
+    },
+  };
+}
+
+export async function verify_identity_code(args: Record<string, any>): Promise<ToolResult> {
+  const phone = typeof args.phone === "string" ? args.phone.trim() : "";
+  const code = normalizeVerificationCode(args.code);
+  if (!phone || !code) {
+    return { success: false, error: "Phone number and SMS verification code are required." };
+  }
+  if (!isVerifiedCustomerPhone(phone)) {
+    return {
+      success: false,
+      error: "That phone number is not the customer phone on file. Continue with generic product help only.",
+      data: {
+        suppliedPhone: maskPhone(phone),
+        verified: false,
+      },
+    };
+  }
+
+  const normalizedPhone = normalizePhone(phone);
+  const record = retailIdentityVerifications.get(normalizedPhone);
+  if (!record || Date.now() > record.expiresAt) {
+    retailIdentityVerifications.delete(normalizedPhone);
+    return {
+      success: false,
+      error: "The SMS verification code is missing or expired. Send a new verification code.",
+      data: {
+        phone: maskPhone(phone),
+        verified: false,
+        expired: true,
+      },
+    };
+  }
+  if (record.code !== code) {
+    return {
+      success: false,
+      error: "The SMS verification code did not match. Ask the customer to check the code and try again.",
+      data: {
+        phone: maskPhone(phone),
+        verified: false,
+      },
+    };
+  }
+
+  const verifiedAt = Date.now();
+  retailIdentityVerifications.set(normalizedPhone, {
+    ...record,
+    verifiedAt,
+    verifiedUntil: verifiedAt + RETAIL_VERIFIED_TTL_MS,
+  });
+
+  return {
+    success: true,
+    result: `Customer identity verified by SMS for ${maskPhone(phone)}.`,
+    data: {
+      phone: maskPhone(phone),
+      method: "sms",
+      verified: true,
+      verifiedAt,
+      confidence: "sms-code",
+    },
+  };
+}
+
 export async function get_customer_context(args: Record<string, any>): Promise<ToolResult> {
   const customer = RETAIL_STORE_ASSISTANT_USE_CASE.customer;
   const suppliedName = typeof args.customerName === "string" ? args.customerName.trim() : "";
   const suppliedPhone = typeof args.phone === "string" ? args.phone.trim() : "";
-  const verified = isVerifiedCustomerPhone(suppliedPhone);
+  const verified = isVerifiedCustomerPhone(suppliedPhone) && isRetailIdentityRecentlyVerified(suppliedPhone);
 
   if (!verified) {
     return {
       success: false,
       error: suppliedPhone
-        ? "Customer verification failed. Continue with generic product help only."
-        : "Customer phone number is required before loading profile, previous chats, preferences, reservations, or personalized context.",
+        ? "SMS identity verification is required before loading profile, previous chats, preferences, reservations, or personalized context."
+        : "Customer phone number and SMS identity verification are required before loading profile, previous chats, preferences, reservations, or personalized context.",
       data: {
         verificationRequired: true,
         suppliedName,
@@ -170,8 +342,14 @@ export async function get_customer_context(args: Record<string, any>): Promise<T
     success: true,
     result: `Verified ${customer.name} (${customer.loyaltyTier}). ${customer.intent}`,
     data: {
-      confidence: "verified-phone",
+      confidence: "sms-code",
       verified: true,
+      verification: {
+        phone: maskPhone(suppliedPhone),
+        method: "sms",
+        verified: true,
+        verifiedAt: retailIdentityVerifications.get(normalizePhone(suppliedPhone))?.verifiedAt,
+      },
       customer,
       pastChats: customer.pastChats,
     },
@@ -315,11 +493,11 @@ export async function create_associate_handoff(args: Record<string, any>): Promi
 
 function requireVerifiedPhone(args: Record<string, any>): ToolResult | null {
   const phone = typeof args.phone === "string" ? args.phone.trim() : "";
-  if (isVerifiedCustomerPhone(phone)) return null;
+  if (isVerifiedCustomerPhone(phone) && isRetailIdentityRecentlyVerified(phone)) return null;
 
   return {
     success: false,
-    error: "Customer phone verification is required before using profile memory, making reservations, personalized recommendations, or associate handoff actions.",
+    error: "SMS identity verification is required before using profile memory, making reservations, personalized recommendations, or associate handoff actions.",
     data: {
       verificationRequired: true,
       suppliedPhone: phone ? maskPhone(phone) : "",
@@ -329,6 +507,16 @@ function requireVerifiedPhone(args: Record<string, any>): ToolResult | null {
 
 function isVerifiedCustomerPhone(phone: string): boolean {
   return normalizePhone(phone) === normalizePhone(RETAIL_STORE_ASSISTANT_USE_CASE.customer.phone);
+}
+
+function isRetailIdentityRecentlyVerified(phone: string): boolean {
+  const record = retailIdentityVerifications.get(normalizePhone(phone));
+  if (!record?.verifiedUntil) return false;
+  if (Date.now() > record.verifiedUntil) {
+    retailIdentityVerifications.delete(normalizePhone(phone));
+    return false;
+  }
+  return true;
 }
 
 function normalizePhone(phone: string): string {
@@ -341,6 +529,45 @@ function maskPhone(phone: string): string {
   const digits = normalizePhone(phone);
   if (digits.length < 4) return "";
   return `***-***-${digits.slice(-4)}`;
+}
+
+function generateVerificationCode(): string {
+  return String(Math.floor(100000 + Math.random() * 900000));
+}
+
+function normalizeVerificationCode(value: unknown): string {
+  const raw = String(value || "").trim().toLowerCase();
+  const directDigits = raw.replace(/\D/g, "");
+  if (directDigits) return directDigits;
+
+  const digitWords: Record<string, string> = {
+    zero: "0",
+    oh: "0",
+    o: "0",
+    one: "1",
+    won: "1",
+    two: "2",
+    too: "2",
+    to: "2",
+    three: "3",
+    four: "4",
+    for: "4",
+    five: "5",
+    six: "6",
+    seven: "7",
+    eight: "8",
+    ate: "8",
+    nine: "9",
+  };
+  const digits = raw
+    .replace(/[-,]/g, " ")
+    .split(/\s+/)
+    .map((token) => token.replace(/[^a-z]/g, ""))
+    .filter(Boolean)
+    .map((token) => digitWords[token] || "")
+    .join("");
+
+  return digits;
 }
 
 function findInventoryItem(productOrSku: string, store: string): RetailInventoryItem | undefined {
