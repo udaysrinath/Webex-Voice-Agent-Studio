@@ -10,9 +10,9 @@ import * as path from "path";
 import * as os from "os";
 import multer from "multer";
 import { createClient } from "@deepgram/sdk";
-import { chatTools, executeTool } from "./tools";
+import { chatTools, executeTool, realtimeTools } from "./tools";
 import { buildRetailRuntimePrompt } from "@shared/prompt-builder";
-import { isRetailStoreUseCasePrompt } from "@shared/use-cases";
+import { VOICE_USE_CASES, isRetailStoreUseCasePrompt } from "@shared/use-cases";
 import { getWebexProfile, updateWebexProfile } from "./webex-profile";
 
 const upload = multer({ 
@@ -188,6 +188,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
       llmModels,
       voices,
     });
+  });
+
+  app.get("/api/use-cases/:id/tools", (req, res) => {
+    const useCase = VOICE_USE_CASES.find((item) => item.id === req.params.id);
+    if (!useCase) {
+      return res.status(404).json({ error: "Use case not found" });
+    }
+
+    if (useCase.id !== "retail-john-cross-store") {
+      return res.json([]);
+    }
+
+    res.json(
+      realtimeTools.map((tool) => ({
+        name: tool.name,
+        description: tool.description,
+        provider: tool.name.split("_")[0],
+        implemented: true,
+      }))
+    );
   });
 
   app.get("/api/deepgram/key", async (_req, res) => {

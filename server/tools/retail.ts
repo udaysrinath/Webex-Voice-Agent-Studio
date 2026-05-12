@@ -1,65 +1,57 @@
 import {
   RETAIL_STORE_ASSISTANT_USE_CASE,
   getRetailInventoryStatusLabel,
-  type RetailActionPlan,
   type RetailInventoryItem,
 } from "@shared/use-cases";
-import { isSmsConfigured, sms } from "./twilio";
 
 type ToolResult = { success: boolean; result?: string; error?: string; data?: unknown };
-
-const RETAIL_VERIFICATION_TTL_MS = 10 * 60 * 1000;
-const RETAIL_VERIFIED_TTL_MS = 60 * 60 * 1000;
-const retailIdentityVerifications = new Map<string, {
-  code: string;
-  expiresAt: number;
-  sentAt: number;
-  verifiedAt?: number;
-  verifiedUntil?: number;
-}>();
 
 export const retailTools = [
   {
     type: "function" as const,
-    name: "retail_send_identity_verification",
+    name: "retail_user_lookup",
     description:
-      "Send an SMS verification code to the customer's phone number before loading profile memory, previous chats, reservations, or personalized context.",
+      "Look up the caller profile at the start of every call. Use this silently before greeting or answering customer-specific questions.",
     parameters: {
       type: "object",
       properties: {
         phone: {
           type: "string",
-          description: "Customer phone number in E.164 format.",
+          description: "Caller phone number in E.164 format when available.",
         },
       },
-      required: ["phone"],
+      required: [],
     },
   },
   {
     type: "function" as const,
-    name: "retail_verify_identity_code",
+    name: "retail_user_history_lookup",
     description:
-      "Verify the SMS code provided by the customer. Use this before retrieving previous call history or customer-specific context.",
+      "Fetch prior orders, issues, and engagement history for the caller. Use this silently after retail_user_lookup so the agent can use the context later when appropriate.",
     parameters: {
       type: "object",
       properties: {
+        customerId: {
+          type: "string",
+          description: "Customer identifier returned by retail_user_lookup.",
+        },
         phone: {
           type: "string",
-          description: "Customer phone number in E.164 format.",
+          description: "Caller phone number in E.164 format when available.",
         },
-        code: {
-          type: "string",
-          description: "Verification code the customer received by SMS.",
+        conversationLimit: {
+          type: "number",
+          description: "Maximum number of past conversations to retrieve.",
         },
       },
-      required: ["phone", "code"],
+      required: [],
     },
   },
   {
     type: "function" as const,
     name: "retail_get_customer_context",
     description:
-      "Retrieve the verified customer's profile, preferences, and previous interactions.",
+      "Retrieve the customer's profile, preferences, and previous interactions after user lookup.",
     parameters: {
       type: "object",
       properties: {
@@ -69,10 +61,10 @@ export const retailTools = [
         },
         phone: {
           type: "string",
-          description: "Caller phone number in E.164 format or the phone number supplied for verification.",
+          description: "Caller phone number in E.164 format when available.",
         },
       },
-      required: ["phone"],
+      required: [],
     },
   },
   {
@@ -125,10 +117,10 @@ export const retailTools = [
         },
         phone: {
           type: "string",
-          description: "Verified customer phone number in E.164 format.",
+          description: "Customer phone number in E.164 format.",
         },
       },
-      required: ["store", "pickupTime", "phone"],
+      required: ["store", "pickupTime"],
     },
   },
   {
@@ -149,171 +141,82 @@ export const retailTools = [
         },
         phone: {
           type: "string",
-          description: "Verified customer phone number in E.164 format.",
+          description: "Customer phone number in E.164 format.",
         },
       },
-      required: ["product", "phone"],
-    },
-  },
-  {
-    type: "function" as const,
-    name: "retail_create_associate_handoff",
-    description:
-      "Create the post-call associate playbook with customer intent, reserved item, pickup time, and upsell recommendation.",
-    parameters: {
-      type: "object",
-      properties: {
-        customerName: {
-          type: "string",
-          description: "Customer name.",
-        },
-        intent: {
-          type: "string",
-          description: "Short summary of what the customer wants.",
-        },
-        reservedItem: {
-          type: "string",
-          description: "Reserved product.",
-        },
-        pickupTime: {
-          type: "string",
-          description: "Pickup time.",
-        },
-        recommendedUpsell: {
-          type: "string",
-          description: "Recommended add-on or upsell.",
-        },
-        phone: {
-          type: "string",
-          description: "Verified customer phone number in E.164 format.",
-        },
-      },
-      required: ["customerName", "intent", "phone"],
+      required: ["product"],
     },
   },
 ];
 
-export async function send_identity_verification(args: Record<string, any>): Promise<ToolResult> {
-  const phone = typeof args.phone === "string" ? args.phone.trim() : "";
-  if (!phone) {
-    return { success: false, error: "Customer phone number is required to send SMS verification." };
-  }
-  if (!isVerifiedCustomerPhone(phone)) {
-    return {
-      success: false,
-      error: "That phone number is not the customer phone on file. Continue with generic product help only.",
-      data: {
-        suppliedPhone: maskPhone(phone),
-        verificationRequired: true,
-      },
-    };
-  }
-  if (!isSmsConfigured()) {
-    return {
-      success: false,
-      error: "SMS verification is not configured. Twilio SMS credentials are required.",
-      data: {
-        phone: maskPhone(phone),
-        method: "sms",
-        smsConfigured: false,
-      },
-    };
-  }
-
-  const normalizedPhone = normalizePhone(phone);
-  const code = generateVerificationCode();
-  const sentAt = Date.now();
-  const expiresAt = sentAt + RETAIL_VERIFICATION_TTL_MS;
-  retailIdentityVerifications.set(normalizedPhone, { code, sentAt, expiresAt });
-
-  const smsResult = await sms({
-    to: RETAIL_STORE_ASSISTANT_USE_CASE.customer.phone,
-    body: `Your Store Assistant verification code is ${code}. It expires in 10 minutes.`,
-  });
-
-  if (!smsResult.success) {
-    retailIdentityVerifications.delete(normalizedPhone);
-    return {
-      success: false,
-      error: smsResult.error || "Failed to send SMS verification code.",
-      data: {
-        phone: maskPhone(phone),
-        method: "sms",
-        smsSent: false,
-      },
-    };
-  }
+export async function user_lookup(args: Record<string, any>): Promise<ToolResult> {
+  const suppliedPhone = typeof args.phone === "string" ? args.phone.trim() : "";
+  const customer = RETAIL_STORE_ASSISTANT_USE_CASE.customer;
 
   return {
     success: true,
-    result: `SMS verification code sent to ${maskPhone(phone)}.`,
+    result: `User lookup complete: John found as a returning Gold member.`,
     data: {
-      phone: maskPhone(phone),
-      method: "sms",
-      smsSent: true,
-      expiresAt,
+      customerId: "cust-john-042",
+      name: "John",
+      fullName: "John Rivera",
+      preferredName: "John",
+      phone: suppliedPhone ? maskPhone(suppliedPhone) : maskPhone(customer.phone),
+      email: "john.rivera@example.com",
+      loyaltyTier: "Gold member",
+      preferredStore: "San Jose",
+      preferredPickupWindow: customer.preferredPickupTime,
+      consent: {
+        sms: true,
+        personalization: true,
+      },
+      accountSignals: {
+        returningCustomer: true,
+        lifetimeOrders: 14,
+        lastSeen: "May 10",
+      },
     },
   };
 }
 
-export async function verify_identity_code(args: Record<string, any>): Promise<ToolResult> {
-  const phone = typeof args.phone === "string" ? args.phone.trim() : "";
-  const code = normalizeVerificationCode(args.code);
-  if (!phone || !code) {
-    return { success: false, error: "Phone number and SMS verification code are required." };
-  }
-  if (!isVerifiedCustomerPhone(phone)) {
-    return {
-      success: false,
-      error: "That phone number is not the customer phone on file. Continue with generic product help only.",
-      data: {
-        suppliedPhone: maskPhone(phone),
-        verified: false,
-      },
-    };
-  }
-
-  const normalizedPhone = normalizePhone(phone);
-  const record = retailIdentityVerifications.get(normalizedPhone);
-  if (!record || Date.now() > record.expiresAt) {
-    retailIdentityVerifications.delete(normalizedPhone);
-    return {
-      success: false,
-      error: "The SMS verification code is missing or expired. Send a new verification code.",
-      data: {
-        phone: maskPhone(phone),
-        verified: false,
-        expired: true,
-      },
-    };
-  }
-  if (record.code !== code) {
-    return {
-      success: false,
-      error: "The SMS verification code did not match. Ask the customer to check the code and try again.",
-      data: {
-        phone: maskPhone(phone),
-        verified: false,
-      },
-    };
-  }
-
-  const verifiedAt = Date.now();
-  retailIdentityVerifications.set(normalizedPhone, {
-    ...record,
-    verifiedAt,
-    verifiedUntil: verifiedAt + RETAIL_VERIFIED_TTL_MS,
-  });
+export async function user_history_lookup(args: Record<string, any>): Promise<ToolResult> {
+  const conversationLimit = Number.isFinite(Number(args.conversationLimit))
+    ? Math.max(1, Math.min(500, Math.floor(Number(args.conversationLimit))))
+    : 500;
 
   return {
     success: true,
-    result: `Customer identity verified by SMS for ${maskPhone(phone)}.`,
+    result: `Fetched ${conversationLimit} conversations plus previous orders, issues, and engagement history for John.`,
     data: {
-      phone: maskPhone(phone),
-      method: "sms",
-      verified: true,
-      verifiedAt,
-      confidence: "sms-code",
+      customerId: String(args.customerId || "cust-john-042"),
+      conversationCount: conversationLimit,
+      previousOrder: {
+        orderId: "ORD-88421",
+        date: "May 3",
+        item: "AeroTab 11-inch, 256GB, Blue",
+        status: "Not purchased yet; customer compared pickup options",
+      },
+      previousIssues: [
+        {
+          date: "May 6",
+          channel: "Webex",
+          summary: "Asked whether the tablet supported parental controls and durable kid-friendly cases.",
+          status: "Resolved",
+        },
+        {
+          date: "May 9",
+          channel: "SMS",
+          summary: "Checked purple case availability and asked about same-day pickup.",
+          status: "Open buying journey",
+        },
+      ],
+      engagements: [
+        "Viewed AeroTab 11-inch product page three times this week",
+        "Clicked pickup availability for San Jose and Palo Alto",
+        "Previously responded well to concise SMS follow-up",
+      ],
+      usableLaterContext:
+        "Use this context only when it helps the current conversation. Do not announce the internal lookup.",
     },
   };
 }
@@ -322,36 +225,21 @@ export async function get_customer_context(args: Record<string, any>): Promise<T
   const customer = RETAIL_STORE_ASSISTANT_USE_CASE.customer;
   const suppliedName = typeof args.customerName === "string" ? args.customerName.trim() : "";
   const suppliedPhone = typeof args.phone === "string" ? args.phone.trim() : "";
-  const verified = isVerifiedCustomerPhone(suppliedPhone) && isRetailIdentityRecentlyVerified(suppliedPhone);
-
-  if (!verified) {
-    return {
-      success: false,
-      error: suppliedPhone
-        ? "SMS identity verification is required before loading profile, previous chats, preferences, reservations, or personalized context."
-        : "Customer phone number and SMS identity verification are required before loading profile, previous chats, preferences, reservations, or personalized context.",
-      data: {
-        verificationRequired: true,
-        suppliedName,
-        suppliedPhone: suppliedPhone ? maskPhone(suppliedPhone) : "",
-      },
-    };
-  }
 
   return {
     success: true,
-    result: `Verified ${customer.name} (${customer.loyaltyTier}). ${customer.intent}`,
+    result: `Loaded ${customer.name} (${customer.loyaltyTier}). ${customer.intent}`,
     data: {
-      confidence: "sms-code",
-      verified: true,
+      confidence: "user-lookup",
       verification: {
-        phone: maskPhone(suppliedPhone),
-        method: "sms",
+        phone: suppliedPhone ? maskPhone(suppliedPhone) : maskPhone(customer.phone),
+        method: "lookup",
         verified: true,
-        verifiedAt: retailIdentityVerifications.get(normalizePhone(suppliedPhone))?.verifiedAt,
+        verifiedAt: Date.now(),
       },
       customer,
       pastChats: customer.pastChats,
+      suppliedName,
     },
   };
 }
@@ -416,9 +304,6 @@ export async function lookup_inventory(args: Record<string, any>): Promise<ToolR
 }
 
 export async function reserve_item(args: Record<string, any>): Promise<ToolResult> {
-  const verification = requireVerifiedPhone(args);
-  if (verification) return verification;
-
   const store = String(args.store || RETAIL_STORE_ASSISTANT_USE_CASE.associatePlaybook.reservedStore).trim();
   const pickupTime = String(args.pickupTime || RETAIL_STORE_ASSISTANT_USE_CASE.associatePlaybook.pickupTime).trim();
   const product = String(args.product || args.sku || RETAIL_STORE_ASSISTANT_USE_CASE.associatePlaybook.reservedItem).trim();
@@ -441,7 +326,6 @@ export async function reserve_item(args: Record<string, any>): Promise<ToolResul
     pickupTime,
     status: "confirmed",
   };
-
   return {
     success: true,
     result: `${item.name} is reserved for ${customerName} at ${store} for ${pickupTime}. Reservation RSV-430-JOHN.`,
@@ -450,9 +334,6 @@ export async function reserve_item(args: Record<string, any>): Promise<ToolResul
 }
 
 export async function recommend_accessory(args: Record<string, any>): Promise<ToolResult> {
-  const verification = requireVerifiedPhone(args);
-  if (verification) return verification;
-
   const product = String(args.product || "").trim();
   const accessory = RETAIL_STORE_ASSISTANT_USE_CASE.inventory.find((item) => item.sku === "CASE-PURPLE-11");
 
@@ -469,56 +350,6 @@ export async function recommend_accessory(args: Record<string, any>): Promise<To
   };
 }
 
-export async function create_associate_handoff(args: Record<string, any>): Promise<ToolResult> {
-  const verification = requireVerifiedPhone(args);
-  if (verification) return verification;
-
-  const defaultPlan = RETAIL_STORE_ASSISTANT_USE_CASE.associatePlaybook;
-  const playbook: RetailActionPlan = {
-    customerName: String(args.customerName || defaultPlan.customerName),
-    intent: String(args.intent || defaultPlan.intent),
-    reservedItem: String(args.reservedItem || defaultPlan.reservedItem),
-    reservedStore: String(args.reservedStore || defaultPlan.reservedStore),
-    pickupTime: String(args.pickupTime || defaultPlan.pickupTime),
-    recommendedUpsell: String(args.recommendedUpsell || defaultPlan.recommendedUpsell),
-    associateMessage: defaultPlan.associateMessage,
-  };
-
-  return {
-    success: true,
-    result: `Associate playbook created for ${playbook.customerName}: ${playbook.reservedItem}, pickup ${playbook.pickupTime}, recommend ${playbook.recommendedUpsell}.`,
-    data: playbook,
-  };
-}
-
-function requireVerifiedPhone(args: Record<string, any>): ToolResult | null {
-  const phone = typeof args.phone === "string" ? args.phone.trim() : "";
-  if (isVerifiedCustomerPhone(phone) && isRetailIdentityRecentlyVerified(phone)) return null;
-
-  return {
-    success: false,
-    error: "SMS identity verification is required before using profile memory, making reservations, personalized recommendations, or associate handoff actions.",
-    data: {
-      verificationRequired: true,
-      suppliedPhone: phone ? maskPhone(phone) : "",
-    },
-  };
-}
-
-function isVerifiedCustomerPhone(phone: string): boolean {
-  return normalizePhone(phone) === normalizePhone(RETAIL_STORE_ASSISTANT_USE_CASE.customer.phone);
-}
-
-function isRetailIdentityRecentlyVerified(phone: string): boolean {
-  const record = retailIdentityVerifications.get(normalizePhone(phone));
-  if (!record?.verifiedUntil) return false;
-  if (Date.now() > record.verifiedUntil) {
-    retailIdentityVerifications.delete(normalizePhone(phone));
-    return false;
-  }
-  return true;
-}
-
 function normalizePhone(phone: string): string {
   const digits = phone.replace(/\D/g, "");
   if (digits.length === 11 && digits.startsWith("1")) return digits.slice(1);
@@ -529,45 +360,6 @@ function maskPhone(phone: string): string {
   const digits = normalizePhone(phone);
   if (digits.length < 4) return "";
   return `***-***-${digits.slice(-4)}`;
-}
-
-function generateVerificationCode(): string {
-  return String(Math.floor(100000 + Math.random() * 900000));
-}
-
-function normalizeVerificationCode(value: unknown): string {
-  const raw = String(value || "").trim().toLowerCase();
-  const directDigits = raw.replace(/\D/g, "");
-  if (directDigits) return directDigits;
-
-  const digitWords: Record<string, string> = {
-    zero: "0",
-    oh: "0",
-    o: "0",
-    one: "1",
-    won: "1",
-    two: "2",
-    too: "2",
-    to: "2",
-    three: "3",
-    four: "4",
-    for: "4",
-    five: "5",
-    six: "6",
-    seven: "7",
-    eight: "8",
-    ate: "8",
-    nine: "9",
-  };
-  const digits = raw
-    .replace(/[-,]/g, " ")
-    .split(/\s+/)
-    .map((token) => token.replace(/[^a-z]/g, ""))
-    .filter(Boolean)
-    .map((token) => digitWords[token] || "")
-    .join("");
-
-  return digits;
 }
 
 function findInventoryItem(productOrSku: string, store: string): RetailInventoryItem | undefined {

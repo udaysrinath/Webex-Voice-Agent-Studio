@@ -40,13 +40,14 @@ export interface RetailToolEvent {
   toolName: string;
   status: "ready" | "running" | "done" | "error";
   result?: string;
+  args?: Record<string, unknown>;
   timestamp: number;
 }
 
 export interface RetailAssistState {
   verification?: {
     phone: string;
-    method: "sms";
+    method: "sms" | "lookup";
     status: "sent" | "verified";
     smsSent?: boolean;
     sentAt?: number;
@@ -136,7 +137,7 @@ export function updateRetailAssistState(current: RetailAssistState, event: any):
         verification: data.verification
           ? {
               phone: data.verification.phone || current.verification?.phone || "",
-              method: "sms",
+              method: data.verification.method === "lookup" ? "lookup" : "sms",
               status: "verified",
               smsSent: current.verification?.smsSent ?? true,
               sentAt: current.verification?.sentAt,
@@ -186,30 +187,34 @@ export function updateRetailAssistState(current: RetailAssistState, event: any):
     }
     case "toolCallStarted": {
       const toolName = String(event.toolName || "tool");
+      if (toolName === "twilio_sms" || toolName === "twilio_sms_caller_summary") return current;
       return {
         ...current,
         toolEvents: [
-          { id: `${toolName}-${timestamp}`, toolName, status: "running", timestamp },
-          ...current.toolEvents.filter((item) => item.toolName !== toolName).slice(0, 5),
-        ],
+          { id: `${toolName}-${timestamp}`, toolName, status: "running", args: event.args, timestamp },
+          ...current.toolEvents,
+        ].slice(0, 12),
       };
     }
     case "toolCallCompleted": {
       const toolName = String(event.toolName || "tool");
-      const updated = current.toolEvents.map((item) =>
-        item.toolName === toolName
-          ? {
-              ...item,
-              status: event.success ? "done" as const : "error" as const,
-              result: event.result || event.error,
-              timestamp,
-            }
-          : item
-      );
-      const hasExisting = updated.some((item) => item.toolName === toolName);
+      if (toolName === "twilio_sms" || toolName === "twilio_sms_caller_summary") return current;
+      let updatedMostRecentRunning = false;
+      const updated = current.toolEvents.map((item) => {
+        if (!updatedMostRecentRunning && item.toolName === toolName && item.status === "running") {
+          updatedMostRecentRunning = true;
+          return {
+            ...item,
+            status: event.success ? "done" as const : "error" as const,
+            result: event.result || event.error,
+            timestamp,
+          };
+        }
+        return item;
+      });
       return {
         ...current,
-        toolEvents: hasExisting
+        toolEvents: updatedMostRecentRunning
           ? updated
           : [
               {
@@ -220,7 +225,7 @@ export function updateRetailAssistState(current: RetailAssistState, event: any):
                 timestamp,
               },
               ...current.toolEvents,
-            ].slice(0, 6),
+            ].slice(0, 12),
       };
     }
     default:
@@ -230,10 +235,6 @@ export function updateRetailAssistState(current: RetailAssistState, event: any):
 
 export function getRetailAssistEventTypeForTool(toolName: string): string | null {
   switch (toolName) {
-    case "retail_send_identity_verification":
-      return "identityVerificationSent";
-    case "retail_verify_identity_code":
-      return "identityVerified";
     case "retail_get_customer_context":
       return "customerContextLoaded";
     case "retail_lookup_inventory":
@@ -242,8 +243,6 @@ export function getRetailAssistEventTypeForTool(toolName: string): string | null
       return "recommendationCreated";
     case "retail_reserve_item":
       return "reservationCreated";
-    case "retail_create_associate_handoff":
-      return "associateHandoffCreated";
     default:
       return null;
   }
@@ -272,9 +271,9 @@ export function RetailInlineAssist({ state }: { state: RetailAssistState }) {
               <p className="text-sm font-semibold">Agent Assist</p>
               <p className="text-xs text-muted-foreground">
                 {customerLoaded
-                  ? `${state.customer.name} verified and context loaded`
+                  ? `${state.customer.name} context loaded`
                   : customerConfirmed
-                    ? `Identity verified with ${state.verification?.phone || "phone on file"}`
+                    ? `Customer context loaded for ${state.verification?.phone || "phone on file"}`
                     : state.verification?.status === "sent"
                       ? `SMS verification sent to ${state.verification.phone}`
                       : "Waiting for customer identity"}
@@ -299,7 +298,7 @@ export function RetailInlineAssist({ state }: { state: RetailAssistState }) {
             )}
             {customerConfirmed && (
               <p className="text-xs text-muted-foreground">
-                Identity is verified. Previous call history will appear after the customer context tool completes.
+                Customer context is loaded. Previous call history will appear after the customer context tool completes.
               </p>
             )}
           </div>
@@ -407,6 +406,7 @@ function VerificationAssistCard({ state }: { state: RetailAssistState }) {
   if (!verification) return null;
 
   const verified = verification.status === "verified" || state.completedStages.identityVerified;
+  const lookupLoaded = verification.method === "lookup";
   return (
     <div
       className={cn(
@@ -430,7 +430,7 @@ function VerificationAssistCard({ state }: { state: RetailAssistState }) {
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <p className="text-sm font-semibold">
-              {verified ? "Customer verified" : "SMS verification sent"}
+              {lookupLoaded ? "Customer context loaded" : verified ? "Customer verified" : "SMS verification sent"}
             </p>
             <Badge
               className={cn(
@@ -444,7 +444,9 @@ function VerificationAssistCard({ state }: { state: RetailAssistState }) {
           </div>
           <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
             {verified
-              ? `Verified with phone number ${verification.phone}. Customer memory can now be used.`
+              ? lookupLoaded
+                ? `Loaded customer profile and history for ${verification.phone}.`
+                : `Verified with phone number ${verification.phone}. Customer memory can now be used.`
               : `Code sent to ${verification.phone}. Waiting for the customer to read back the SMS code.`}
           </p>
         </div>
@@ -454,98 +456,62 @@ function VerificationAssistCard({ state }: { state: RetailAssistState }) {
 }
 
 export function RetailProgressTimeline({ state }: { state: RetailAssistState }) {
-  const steps = [
-    {
-      label: "SMS verification sent",
-      detail: state.verification?.phone
-        ? `Code sent to ${state.verification.phone}`
-        : "Send code to phone on file",
-      done: state.completedStages.identityVerificationSent,
-      active: Boolean(state.toolEvents.find((event) => event.toolName === "retail_send_identity_verification" && event.status === "running")),
-    },
-    {
-      label: "User verified",
-      detail: state.verification?.phone
-        ? `Phone ${state.verification.phone} verified by SMS`
-        : "Confirm SMS code",
-      done: state.completedStages.identityVerified,
-      active: state.completedStages.identityVerificationSent && !state.completedStages.identityVerified,
-    },
-    {
-      label: "Previous call history fetched",
-      detail: state.completedStages.historyFetched
-        ? `${state.customer.pastChats.length} prior interactions loaded`
-        : "Load customer memory after verification",
-      done: state.completedStages.historyFetched,
-      active: state.completedStages.identityVerified && !state.completedStages.historyFetched,
-    },
-    {
-      label: "Inventory lookup complete",
-      detail: state.completedStages.inventoryChecked
-        ? `${state.inventory.length} inventory result${state.inventory.length === 1 ? "" : "s"} checked`
-        : "Check local and nearby stock",
-      done: state.completedStages.inventoryChecked,
-      active: Boolean(state.toolEvents.find((event) => event.toolName === "retail_lookup_inventory" && event.status === "running")),
-    },
-    {
-      label: "Recommendation ready",
-      detail: state.completedStages.recommendationCreated
-        ? state.recommendation?.name || "Personalized add-on selected"
-        : "Use verified memory for next best action",
-      done: state.completedStages.recommendationCreated,
-      active: Boolean(state.toolEvents.find((event) => event.toolName === "retail_recommend_accessory" && event.status === "running")),
-    },
-    {
-      label: "Reservation created",
-      detail: state.completedStages.reservationCreated
-        ? `${state.reservation?.store || "Store"} pickup ${state.reservation?.pickupTime || ""}`.trim()
-        : "Reserve selected item",
-      done: state.completedStages.reservationCreated,
-      active: Boolean(state.toolEvents.find((event) => event.toolName === "retail_reserve_item" && event.status === "running")),
-    },
-    {
-      label: "Associate handoff created",
-      detail: state.completedStages.handoffCreated
-        ? "Store team playbook prepared"
-        : "Prepare associate context",
-      done: state.completedStages.handoffCreated,
-      active: Boolean(state.toolEvents.find((event) => event.toolName === "retail_create_associate_handoff" && event.status === "running")),
-    },
-  ];
+  const events = [...state.toolEvents].reverse();
 
   return (
     <Card className="border-white/10 bg-card/50 p-4">
       <PanelHeader
-        icon={<CheckCircle2 className="h-4 w-4" />}
+        icon={<Radio className="h-4 w-4" />}
         title="Progress Timeline"
-        subtitle="Customer verification and agent-assist milestones"
+        subtitle="Tool calls will appear here as the agent runs them"
       />
       <div className="mt-4 space-y-0">
-        {steps.map((step, index) => (
-          <div key={step.label} className="relative flex gap-3 pb-4 last:pb-0">
-            {index < steps.length - 1 && (
-              <span className="absolute left-[13px] top-7 h-[calc(100%-1.75rem)] w-px bg-white/10" />
-            )}
-            <span
-              className={cn(
-                "relative z-10 flex h-7 w-7 shrink-0 items-center justify-center rounded-md border",
-                step.done && "border-green-400/30 bg-green-400/10 text-green-200",
-                !step.done && step.active && "border-primary/30 bg-primary/10 text-primary",
-                !step.done && !step.active && "border-white/10 bg-white/[0.03] text-muted-foreground"
-              )}
-            >
-              {step.done ? (
-                <CheckCircle2 className="h-4 w-4" />
-              ) : (
-                <span className={cn("h-2 w-2 rounded-full", step.active ? "animate-pulse bg-primary" : "bg-muted-foreground/50")} />
-              )}
-            </span>
-            <div className="min-w-0 pt-0.5">
-              <p className={cn("text-sm font-medium", step.done && "text-green-100")}>{step.label}</p>
-              <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{step.detail}</p>
-            </div>
+        {events.length === 0 ? (
+          <div className="rounded-md border border-dashed border-white/10 bg-white/[0.02] p-4 text-sm text-muted-foreground">
+            No tool calls yet. The timeline will populate as the agent invokes tools.
           </div>
-        ))}
+        ) : (
+          events.map((event, index) => (
+            <div key={event.id} className="relative flex gap-3 pb-4 last:pb-0">
+              {index < events.length - 1 && (
+                <span className="absolute left-[13px] top-7 h-[calc(100%-1.75rem)] w-px bg-white/10" />
+              )}
+              <span
+                className={cn(
+                  "relative z-10 flex h-7 w-7 shrink-0 items-center justify-center rounded-md border",
+                  event.status === "done" && "border-green-400/30 bg-green-400/10 text-green-200",
+                  event.status === "running" && "border-primary/30 bg-primary/10 text-primary",
+                  event.status === "error" && "border-red-400/30 bg-red-400/10 text-red-200",
+                  event.status === "ready" && "border-white/10 bg-white/[0.03] text-muted-foreground"
+                )}
+              >
+                {event.status === "done" ? (
+                  <CheckCircle2 className="h-4 w-4" />
+                ) : (
+                  <span
+                    className={cn(
+                      "h-2 w-2 rounded-full",
+                      event.status === "running" && "animate-pulse bg-primary",
+                      event.status === "error" && "bg-red-400",
+                      event.status === "ready" && "bg-muted-foreground/50"
+                    )}
+                  />
+                )}
+              </span>
+              <div className="min-w-0 pt-0.5">
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className={cn("text-sm font-medium", event.status === "done" && "text-green-100")}>
+                    {formatToolName(event.toolName)}
+                  </p>
+                  <span className="text-[11px] text-muted-foreground">{formatTimelineTime(event.timestamp)}</span>
+                </div>
+                <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+                  {getTimelineEventDetail(event)}
+                </p>
+              </div>
+            </div>
+          ))
+        )}
       </div>
     </Card>
   );
@@ -866,4 +832,24 @@ function formatToolName(name: string): string {
     .replace(/^retail_/, "")
     .replace(/_/g, " ")
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function getTimelineEventDetail(event: RetailToolEvent): string {
+  if (event.result) return event.result;
+  if (event.status === "running" && event.toolName === "retail_user_lookup") return "Looking up caller profile";
+  if (event.status === "running" && event.toolName === "retail_user_history_lookup") return "Fetching 500 conversations, previous orders, issues, and engagements";
+  if (event.status === "running" && event.toolName === "retail_order_confirmation") return "Sending order confirmation SMS with pickup details";
+  if (event.status === "running" && event.toolName === "retail_store_manager_summary") return "Sending Store Manager Summary to Webex";
+  if (event.status === "running") return "Tool call in progress";
+  if (event.status === "error") return "Tool call failed";
+  if (event.status === "done") return "Tool call completed";
+  return "Waiting to run";
+}
+
+function formatTimelineTime(timestamp: number): string {
+  return new Date(timestamp).toLocaleTimeString([], {
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit",
+  });
 }

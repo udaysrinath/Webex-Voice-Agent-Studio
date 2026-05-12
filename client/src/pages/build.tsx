@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { agentsApi, ttsApi, webexApi, knowledgeBaseApi, type TTSRequest, type KnowledgeBaseItem } from "@/lib/api";
+import { agentsApi, ttsApi, webexApi, knowledgeBaseApi, useCaseToolsApi, type AgentTool, type TTSRequest, type KnowledgeBaseItem } from "@/lib/api";
 import type { InsertAgent } from "@shared/schema";
 import { VOICE_USE_CASES } from "@shared/use-cases";
 import { buildUseCaseSystemPrompt } from "@shared/prompt-builder";
@@ -681,7 +681,7 @@ export default function Build() {
   const [integrationSearch, setIntegrationSearch] = useState("");
   const [integrationCategory, setIntegrationCategory] = useState("all");
   const [connectedIntegrations, setConnectedIntegrations] = useState<Set<string>>(new Set());
-  const [tools, setTools] = useState<Array<{name: string; description: string}>>([
+  const [tools, setTools] = useState<AgentTool[]>([
     { name: "send_webex_message", description: "Send a message to a Webex space/room" }
   ]);
   const [customIntegrations, setCustomIntegrations] = useState<Array<{name: string; status: string}>>([]);
@@ -782,6 +782,18 @@ export default function Build() {
     enabled: !!savedAgentId,
   });
 
+  const { data: serverUseCaseTools = [], isLoading: serverUseCaseToolsLoading } = useQuery<AgentTool[]>({
+    queryKey: ["use-case-tools", selectedUseCaseId],
+    queryFn: () => useCaseToolsApi.getByUseCase(selectedUseCaseId!),
+    enabled: !!selectedUseCaseId,
+  });
+
+  useEffect(() => {
+    if (selectedUseCaseId && serverUseCaseTools.length > 0) {
+      setTools(serverUseCaseTools);
+    }
+  }, [selectedUseCaseId, serverUseCaseTools]);
+
   const syncWebexMutation = useMutation({
     mutationFn: (days: number) => webexApi.sync(days),
     onSuccess: (result) => {
@@ -824,19 +836,34 @@ export default function Build() {
     sendMessageMutation.mutate({ roomId: selectedRoomId || undefined, text: messageText.trim() });
   };
 
-  const createAgentMutation = useMutation({
-    mutationFn: (data: InsertAgent) => agentsApi.create(data),
+  const saveAgentMutation = useMutation({
+    mutationFn: async (data: InsertAgent) => {
+      if (savedAgentId) {
+        return agentsApi.update(savedAgentId, data);
+      }
+      return agentsApi.create(data);
+    },
     onSuccess: (agent) => {
       setSavedAgentId(agent.id);
+      setAgentName(agent.name);
+      setSystemPrompt(agent.systemPrompt || "");
+      setSelectedLLM(agent.llmModel);
+      setSelectedVoice(agent.voiceModel);
+      setLanguage(agent.language);
+      setGender(agent.gender || "neutral");
       setActiveKbTab('sources');
+      queryClient.invalidateQueries({ queryKey: ["agents"] });
+      queryClient.invalidateQueries({ queryKey: ["agent", agent.id] });
       toast({
-        title: "Agent Created Successfully",
-        description: "Add knowledge sources below, then start evaluating.",
+        title: savedAgentId ? "Agent Saved" : "Agent Created Successfully",
+        description: savedAgentId
+          ? "System prompt and agent settings were saved."
+          : "Add knowledge sources below, then start evaluating.",
       });
     },
     onError: (error) => {
       toast({
-        title: "Error Creating Agent",
+        title: savedAgentId ? "Error Saving Agent" : "Error Creating Agent",
         description: error.message,
         variant: "destructive",
       });
@@ -910,7 +937,7 @@ export default function Build() {
   };
 
   const handleCreate = () => {
-    createAgentMutation.mutate({
+    saveAgentMutation.mutate({
       name: agentName,
       systemPrompt,
       llmModel: selectedLLM,
@@ -954,7 +981,7 @@ export default function Build() {
     setSelectedVoice(matchedVoice ? useCase.defaultVoice : VOICES[0]?.id || "");
     setLanguage(useCase.language);
     setGender(useCase.gender);
-    setTools(useCase.recommendedTools);
+    setTools([]);
     setSelectedTemplate(null);
     setSelectedUseCaseId(useCase.id);
     setBuildMode("template");
@@ -2304,6 +2331,7 @@ export default function Build() {
                         <p className="font-medium">Agent Tools</p>
                         <p className="text-sm text-muted-foreground">
                           Functions your agent can call to perform actions.
+                          {selectedUseCaseId ? " Loaded from the server tool catalog." : ""}
                         </p>
                       </div>
                       <Button
@@ -2371,6 +2399,12 @@ export default function Build() {
                     )}
 
                     <div className="space-y-2">
+                      {serverUseCaseToolsLoading && selectedUseCaseId && (
+                        <div className="flex items-center gap-2 rounded-lg border border-white/5 bg-background/30 p-3 text-sm text-muted-foreground">
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          Loading server tools...
+                        </div>
+                      )}
                       {tools.map((tool, index) => (
                         <div 
                           key={index}
@@ -2382,7 +2416,14 @@ export default function Build() {
                               <Wrench className="w-4 h-4 text-green-400" />
                             </div>
                             <div>
-                              <p className="font-medium text-sm">{tool.name}</p>
+                              <div className="flex flex-wrap items-center gap-2">
+                                <p className="font-medium text-sm">{tool.name}</p>
+                                {tool.provider && (
+                                  <span className="rounded border border-white/10 bg-white/[0.04] px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+                                    {tool.provider}
+                                  </span>
+                                )}
+                              </div>
                               <p className="text-xs text-muted-foreground">{tool.description}</p>
                             </div>
                           </div>
@@ -3045,13 +3086,13 @@ export default function Build() {
               size="lg" 
               className="px-8 h-12 text-base font-medium bg-gradient-to-r from-primary to-cyan-400 hover:from-primary/90 hover:to-cyan-400/90 text-black shadow-lg shadow-cyan-500/20"
               onClick={handleCreate}
-              disabled={createAgentMutation.isPending || !agentName.trim()}
+              disabled={saveAgentMutation.isPending || !agentName.trim()}
               data-testid="button-create-agent"
              >
-               {createAgentMutation.isPending ? (
-                 <>Creating Agent...</>
+               {saveAgentMutation.isPending ? (
+                 <>{savedAgentId ? "Saving Agent..." : "Creating Agent..."}</>
                ) : (
-                 <>Create Agent <Sparkles className="w-4 h-4 ml-2" /></>
+                 <>{savedAgentId ? "Save Agent" : "Create Agent"} <Sparkles className="w-4 h-4 ml-2" /></>
                )}
              </Button>
           </div>

@@ -393,3 +393,21 @@ export const ocrApi = {
     return res.json();
   },
 };
+
+export interface AgentTool {
+  name: string;
+  description: string;
+  provider?: string;
+  implemented?: boolean;
+}
+
+export const useCaseToolsApi = {
+  getByUseCase: async (useCaseId: string): Promise<AgentTool[]> => {
+    const res = await fetch(`${API_BASE}/use-cases/${encodeURIComponent(useCaseId)}/tools`);
+    if (!res.ok) {
+      const error = await res.json();
+      throw new Error(error.error || "Failed to fetch use case tools");
+    }
+    return res.json();
+  },
+};
