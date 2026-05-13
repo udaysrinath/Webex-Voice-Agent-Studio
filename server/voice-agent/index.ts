@@ -1332,16 +1332,21 @@ ${startupRetailContext}`;
     callEndedSent = true;
     emitTwilioCallStateChange(callSession.startPostCall("Post-call work started"));
     const endedAt = Date.now();
-    void (async () => {
+    sendTwilioMonitorEvent(monitorAgentId, {
+      type: "callEnded",
+      agentId: monitorAgentId,
+      timestamp: Date.now(),
+    });
+    void runTwilioPostCallJobs(endedAt);
+  }
+
+  async function runTwilioPostCallJobs(endedAt: number): Promise<void> {
+    try {
       await sendOrderConfirmationSms();
       await sendStoreManagerSummary(endedAt);
-      emitTwilioCallStateChange(callSession.end("Call ended"));
-      sendTwilioMonitorEvent(monitorAgentId, {
-        type: "callEnded",
-        agentId: monitorAgentId,
-        timestamp: Date.now(),
-      });
-    })();
+    } finally {
+      emitTwilioCallStateChange(callSession.end("Post-call work completed"));
+    }
   }
 
   function emitTwilioCallStateChange(change: ReturnType<CallSession["activate"]>): void {
@@ -2289,11 +2294,6 @@ ${startupRetailContext}`;
     await sendBrowserCallEnded(reason);
     openai?.close();
     openai = null;
-    setTimeout(() => {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.close();
-      }
-    }, 50);
   }
 
   async function sendBrowserCallEnded(reason: string): Promise<void> {
@@ -2301,12 +2301,24 @@ ${startupRetailContext}`;
     browserCallEndedSent = true;
     sendBrowserCallStateChanged(browserCallSession.startPostCall("Browser post-call work started"));
     const endedAt = Date.now();
-    await Promise.all([
-      sendBrowserOrderConfirmationSms(),
-      sendBrowserStoreManagerSummary(endedAt),
-    ]);
-    sendBrowserCallStateChanged(browserCallSession.end(reason));
     sendEvent({ type: "callEnded", reason, timestamp: Date.now() });
+    void runBrowserPostCallJobs(endedAt, reason);
+  }
+
+  async function runBrowserPostCallJobs(endedAt: number, reason: string): Promise<void> {
+    try {
+      await Promise.all([
+        sendBrowserOrderConfirmationSms(),
+        sendBrowserStoreManagerSummary(endedAt),
+      ]);
+    } finally {
+      sendBrowserCallStateChanged(browserCallSession.end(reason));
+      setTimeout(() => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.close();
+        }
+      }, 250);
+    }
   }
 
   async function sendBrowserStoreManagerSummary(endedAt: number): Promise<void> {
