@@ -8,6 +8,7 @@ import OpenAI from "openai";
 type ToolResult = { success: boolean; result?: string; error?: string; data?: unknown };
 
 const generatedInventory = new Map<string, RetailInventoryItem>();
+const RETAIL_DYNAMIC_LOOKUP_TIMEOUT_MS = 3500;
 
 export const retailTools = [
   {
@@ -492,7 +493,7 @@ async function generateInventoryLookup(input: InventoryLookupInput): Promise<Inv
   const alternateStore = preferredStore === "San Jose" ? "Palo Alto" : "San Jose";
 
   try {
-    const completion = await client.chat.completions.create({
+    const completion = await withTimeout(client.chat.completions.create({
       model,
       temperature: 0.35,
       max_tokens: 520,
@@ -542,7 +543,7 @@ async function generateInventoryLookup(input: InventoryLookupInput): Promise<Inv
           }),
         },
       ],
-    });
+    }), RETAIL_DYNAMIC_LOOKUP_TIMEOUT_MS, `Dynamic inventory lookup timed out after ${RETAIL_DYNAMIC_LOOKUP_TIMEOUT_MS}ms`);
 
     const raw = completion.choices[0]?.message?.content || "{}";
     const parsed = JSON.parse(raw);
@@ -566,6 +567,19 @@ async function generateInventoryLookup(input: InventoryLookupInput): Promise<Inv
   } catch (error: any) {
     console.error("Dynamic inventory lookup failed:", error?.message || error);
     return null;
+  }
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<never>((_resolve, reject) => {
+    timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+
+  try {
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
   }
 }
 
