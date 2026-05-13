@@ -6,6 +6,7 @@ export type VoiceActivity = "idle" | "connecting" | "ready" | "user_speaking" | 
 export interface TranscriptEntry {
   role: "user" | "assistant";
   text: string;
+  correctedText?: string;
   timestamp: number;
 }
 
@@ -206,7 +207,7 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
         break;
       case "userTranscript":
         setUserPartial("");
-        appendTranscript("user", msg.text);
+        appendTranscript("user", msg.rawText || msg.text, msg.corrected ? msg.text : undefined);
         setState("listening");
         setActivity("ready");
         break;
@@ -240,21 +241,30 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
         setActivity("idle");
         break;
       case "error":
+        if (isBenignVoiceError(msg.message)) return;
         setError(msg.message);
         break;
     }
   }
 
-  function appendTranscript(role: TranscriptEntry["role"], text: string): void {
+  function appendTranscript(role: TranscriptEntry["role"], text: string, correctedText?: string): void {
     const cleaned = (text || "").trim();
     if (!cleaned) return;
+    const cleanedCorrection = (correctedText || "").trim();
+    const correction = cleanedCorrection && normalizeTranscriptForDedupe(cleanedCorrection) !== normalizeTranscriptForDedupe(cleaned)
+      ? cleanedCorrection
+      : undefined;
 
-    const normalized = cleaned.toLowerCase().replace(/[.!?,\s]+$/g, "");
+    const normalized = normalizeTranscriptForDedupe(cleaned);
     setTranscript((prev) => {
       const last = prev[prev.length - 1];
-      const lastNormalized = last?.text.toLowerCase().replace(/[.!?,\s]+$/g, "");
-      if (last?.role === role && lastNormalized === normalized) return prev;
-      return [...prev, { role, text: cleaned, timestamp: Date.now() }];
+      const lastNormalized = last ? normalizeTranscriptForDedupe(last.text) : "";
+      if (
+        last?.role === role &&
+        lastNormalized === normalized &&
+        normalizeTranscriptForDedupe(last.correctedText || "") === normalizeTranscriptForDedupe(correction || "")
+      ) return prev;
+      return [...prev, { role, text: cleaned, correctedText: correction, timestamp: Date.now() }];
     });
   }
 
@@ -400,4 +410,13 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
   useEffect(() => () => cleanup(), []);
 
   return { state, activity, transcript, userPartial, assistantPartial, error, start, stop };
+}
+
+function isBenignVoiceError(message: unknown): boolean {
+  const text = String(message || "");
+  return /Tool call ID 'call_[^']+' not found in conversation/.test(text);
+}
+
+function normalizeTranscriptForDedupe(text: string): string {
+  return text.toLowerCase().replace(/[.!?,\s]+$/g, "");
 }

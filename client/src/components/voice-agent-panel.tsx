@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { useVoiceAgent, type VoiceActivity, type VoiceAgentState, type TranscriptEntry } from "@/hooks/use-voice-agent";
-import { RetailInlineAssist, RetailProgressTimeline, type RetailAssistState } from "@/components/retail-agent-assist";
+import { RetailProgressTimeline, type RetailAssistState } from "@/components/retail-agent-assist";
 
 interface VoiceAgentPanelProps {
   agentId: number;
@@ -40,7 +40,7 @@ export function VoiceAgentPanel({
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [transcript, userPartial, assistantPartial, assistState]);
+  }, [transcript, userPartial, assistantPartial]);
 
   useEffect(() => {
     onStateChange?.(state);
@@ -57,7 +57,6 @@ export function VoiceAgentPanel({
           transcript={transcript}
           userPartial={userPartial}
           assistantPartial={assistantPartial}
-          assistState={assistState}
           scrollRef={scrollRef}
           hasTranscript={hasTranscript}
         />
@@ -150,8 +149,6 @@ export function VoiceAgentPanel({
 
         {userPartial && <UserPartialBubble text={userPartial} />}
 
-        {assistState && <RetailInlineAssist state={assistState} />}
-
         {assistantPartial && (
           <div className="flex gap-3">
             <Avatar className="h-8 w-8 border border-primary/50 shrink-0 ring-2 ring-primary/30 animate-pulse">
@@ -180,7 +177,6 @@ function TranscriptPane({
   transcript,
   userPartial,
   assistantPartial,
-  assistState,
   scrollRef,
   hasTranscript,
 }: {
@@ -188,14 +184,9 @@ function TranscriptPane({
   transcript: TranscriptEntry[];
   userPartial: string;
   assistantPartial: string;
-  assistState?: RetailAssistState;
   scrollRef: RefObject<HTMLDivElement | null>;
   hasTranscript: boolean;
 }) {
-  const hasAssist =
-    Boolean(assistState?.completedStages.customerLoaded) ||
-    Boolean(assistState?.toolEvents.length);
-
   return (
     <div className="min-h-0 flex flex-col bg-card/20">
       <div className="shrink-0 flex items-center gap-3 px-5 py-4 border-b border-white/10">
@@ -209,7 +200,7 @@ function TranscriptPane({
       </div>
 
       <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto p-5 space-y-4">
-        {!hasTranscript && !hasAssist && (
+        {!hasTranscript && (
           <div className="flex h-full min-h-[320px] items-center justify-center text-center">
             <div className="max-w-sm space-y-2">
               <div className="mx-auto h-12 w-12 rounded-full border border-white/10 bg-white/5 flex items-center justify-center">
@@ -217,7 +208,7 @@ function TranscriptPane({
               </div>
               <p className="text-sm font-medium text-foreground">Waiting for conversation</p>
               <p className="text-sm text-muted-foreground">
-                Customer messages, agent responses, and assist cards will appear here as the call unfolds.
+                Customer messages and agent responses will appear here as the call unfolds.
               </p>
             </div>
           </div>
@@ -228,8 +219,6 @@ function TranscriptPane({
         ))}
 
         {userPartial && <UserPartialBubble text={userPartial} />}
-
-        {assistState && <RetailInlineAssist state={assistState} />}
 
         {assistantPartial && (
           <div className="flex gap-3">
@@ -576,6 +565,9 @@ function TranscriptBubble({ entry, agentName }: { entry: TranscriptEntry; agentN
             : "rounded-tl-none bg-white/5 border border-white/10"
         }`}>
           {entry.text}
+          {isUser && entry.correctedText && (
+            <span className="text-muted-foreground"> [corrected: {entry.correctedText}]</span>
+          )}
         </div>
       </div>
     </div>

@@ -262,7 +262,8 @@ function isBenignRealtimeError(error: any): boolean {
   const message = String(error?.message || "");
   return (
     message.includes("Cancellation failed: no active response found") ||
-    /Audio content of \d+ms is already shorter than \d+ms/.test(message)
+    /Audio content of \d+ms is already shorter than \d+ms/.test(message) ||
+    /Tool call ID 'call_[^']+' not found in conversation/.test(message)
   );
 }
 

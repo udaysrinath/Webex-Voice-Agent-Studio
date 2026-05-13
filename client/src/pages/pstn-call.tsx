@@ -18,7 +18,6 @@ import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import {
-  RetailInlineAssist,
   RetailProgressTimeline,
   createRetailAssistState,
   updateRetailAssistState,
@@ -29,6 +28,7 @@ type MonitorState = "connecting" | "waiting" | "in-call" | "ended" | "error";
 interface TranscriptEntry {
   role: "user" | "assistant" | "system";
   text: string;
+  correctedText?: string;
   timestamp: number;
 }
 
@@ -50,7 +50,11 @@ interface TwilioMonitorMessage {
     | "reservationCreated"
     | "associateHandoffCreated";
   text?: string;
+  rawText?: string;
+  correctedText?: string;
+  corrected?: boolean;
   to?: string;
+  callerPhone?: string;
   toolName?: string;
   data?: unknown;
   success?: boolean;
@@ -69,6 +73,7 @@ export default function PstnCall() {
   const agentId = hasAgentId ? 1 : requestedAgentId;
   const [monitorState, setMonitorState] = useState<MonitorState>("connecting");
   const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
+  const [callerPhone, setCallerPhone] = useState<string | null>(null);
   const [assistState, setAssistState] = useState(createRetailAssistState);
 
   const { data: agent, isLoading: agentLoading } = useQuery({
@@ -120,6 +125,7 @@ export default function PstnCall() {
 
       if (msg.type === "callStarted") {
         setMonitorState("in-call");
+        setCallerPhone(msg.callerPhone || null);
         setAssistState((current) => ({
           ...createRetailAssistState(),
           toolEvents: current.toolEvents,
@@ -140,7 +146,12 @@ export default function PstnCall() {
       }
 
       if ((msg.type === "userTranscript" || msg.type === "assistantTranscript") && msg.text) {
-        appendTranscript(msg.type === "userTranscript" ? "user" : "assistant", msg.text, msg.timestamp);
+        appendTranscript(
+          msg.type === "userTranscript" ? "user" : "assistant",
+          msg.type === "userTranscript" ? msg.rawText || msg.text : msg.text,
+          msg.timestamp,
+          msg.type === "userTranscript" && msg.corrected ? msg.correctedText || msg.text : undefined
+        );
       }
     };
     ws.onerror = () => setMonitorState("error");
@@ -153,16 +164,29 @@ export default function PstnCall() {
     if (transcriptRef.current) {
       transcriptRef.current.scrollTop = transcriptRef.current.scrollHeight;
     }
-  }, [transcript, assistState]);
+  }, [transcript]);
 
-  function appendTranscript(role: TranscriptEntry["role"], text: string, timestamp = Date.now()): void {
+  function appendTranscript(
+    role: TranscriptEntry["role"],
+    text: string,
+    timestamp = Date.now(),
+    correctedText?: string
+  ): void {
     const cleaned = text.trim();
     if (!cleaned) return;
+    const cleanedCorrection = (correctedText || "").trim();
+    const correction = cleanedCorrection && normalizeTranscriptForDedupe(cleanedCorrection) !== normalizeTranscriptForDedupe(cleaned)
+      ? cleanedCorrection
+      : undefined;
 
     setTranscript((prev) => {
       const last = prev[prev.length - 1];
-      if (last?.role === role && last.text === cleaned) return prev;
-      return [...prev, { role, text: cleaned, timestamp }];
+      if (
+        last?.role === role &&
+        last.text === cleaned &&
+        (last.correctedText || "") === (correction || "")
+      ) return prev;
+      return [...prev, { role, text: cleaned, correctedText: correction, timestamp }];
     });
   }
 
@@ -230,7 +254,7 @@ export default function PstnCall() {
               <div className="min-w-0 flex-1">
                 <h2 className="text-base font-semibold">Call From A Phone</h2>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  Dial the Twilio number. Assist cards appear inside the transcript after the caller is identified.
+                  Dial the Twilio number. Transcript appears on the left and progress appears on the right.
                 </p>
               </div>
             </div>
@@ -317,16 +341,19 @@ export default function PstnCall() {
                     <Mic className="h-8 w-8 text-primary/70" />
                   </div>
                   <p className="max-w-sm text-sm">
-                    Waiting for a PSTN call on {agent?.name || "this agent"}. Customer memory and inventory will appear here only after the agent confirms the caller.
+                    Waiting for a PSTN call on {agent?.name || "this agent"}. The live transcript will appear here.
                   </p>
                 </div>
               )}
 
               {transcript.map((entry, index) => (
-                <TranscriptBubble key={`${entry.timestamp}-${index}`} entry={entry} agentName={agent?.name || "Agent"} />
+                <TranscriptBubble
+                  key={`${entry.timestamp}-${index}`}
+                  entry={entry}
+                  agentName={agent?.name || "Agent"}
+                  callerPhone={callerPhone}
+                />
               ))}
-
-              <RetailInlineAssist state={assistState} />
             </div>
           </div>
           <aside className="min-h-0 border-t border-white/10 p-4 lg:border-l lg:border-t-0 lg:overflow-hidden">
@@ -384,7 +411,7 @@ function Step({ number, text }: { number: string; text: string }) {
   );
 }
 
-function TranscriptBubble({ entry, agentName }: { entry: TranscriptEntry; agentName: string }) {
+function TranscriptBubble({ entry, agentName, callerPhone }: { entry: TranscriptEntry; agentName: string; callerPhone?: string | null }) {
   if (entry.role === "system") {
     return (
       <div className="flex justify-center">
@@ -405,7 +432,7 @@ function TranscriptBubble({ entry, agentName }: { entry: TranscriptEntry; agentN
       </div>
       <div className={`min-w-0 flex-1 ${isUser ? "text-right" : ""}`}>
         <div className="mb-1 text-xs text-muted-foreground">
-          {isUser ? "Caller" : agentName}
+          {isUser ? formatCallerPhone(callerPhone) : agentName}
         </div>
         <div className={`inline-block max-w-[85%] rounded-xl border p-3 text-left text-sm ${
           isUser
@@ -413,10 +440,30 @@ function TranscriptBubble({ entry, agentName }: { entry: TranscriptEntry; agentN
             : "rounded-tl-none border-white/10 bg-white/[0.05]"
         }`}>
           {entry.text}
+          {isUser && entry.correctedText && (
+            <span className="text-muted-foreground"> [corrected: {entry.correctedText}]</span>
+          )}
         </div>
       </div>
     </div>
   );
+}
+
+function normalizeTranscriptForDedupe(text: string): string {
+  return text.toLowerCase().replace(/[.!?,\s]+$/g, "");
+}
+
+function formatCallerPhone(value?: string | null): string {
+  const raw = value?.trim();
+  if (!raw) return "Caller";
+  const digits = raw.replace(/\D/g, "");
+  if (digits.length === 11 && digits.startsWith("1")) {
+    return `+1 ${digits.slice(1, 4)} ${digits.slice(4, 7)} ${digits.slice(7)}`;
+  }
+  if (digits.length === 10) {
+    return `${digits.slice(0, 3)} ${digits.slice(3, 6)} ${digits.slice(6)}`;
+  }
+  return raw;
 }
 
 function getMonitorStatusLabel(state: MonitorState): string {

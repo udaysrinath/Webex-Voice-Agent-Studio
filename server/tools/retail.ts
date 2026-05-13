@@ -94,7 +94,7 @@ export const retailTools = [
     type: "function" as const,
     name: "retail_reserve_item",
     description:
-      "Reserve an available product for the customer at the selected store and caller-confirmed pickup day/time. Do not call until the caller has provided or confirmed the pickup preference.",
+      "Reserve an available product for the customer at the selected store and caller-confirmed pickup date and pickup time. Do not call until the caller has provided or confirmed both the pickup date/day and a specific pickup time.",
     parameters: {
       type: "object",
       properties: {
@@ -112,7 +112,11 @@ export const retailTools = [
         },
         pickupTime: {
           type: "string",
-          description: "Pickup day and time requested or confirmed by the customer in this call.",
+          description: "Specific pickup time requested or confirmed by the customer in this call, such as 1 PM or 14:30. Do not include a default time.",
+        },
+        pickupDate: {
+          type: "string",
+          description: "Pickup date or day requested or confirmed by the customer in this call, such as Friday or May 15. Do not include a default date.",
         },
         customerName: {
           type: "string",
@@ -123,7 +127,7 @@ export const retailTools = [
           description: "Customer phone number in E.164 format.",
         },
       },
-      required: ["store", "pickupTime"],
+      required: ["store", "pickupDate", "pickupTime"],
     },
   },
   {
@@ -319,17 +323,77 @@ export async function lookup_inventory(args: Record<string, any>): Promise<ToolR
   };
 }
 
+function hasPickupDateSignal(value: string): boolean {
+  const text = value.toLowerCase();
+  return (
+    /\b(today|tomorrow|tonight|monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun)\b/.test(text) ||
+    /\b(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)\b\s+\d{1,2}\b/.test(text) ||
+    /\b\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?\b/.test(text)
+  );
+}
+
+function hasPickupTimeSignal(value: string): boolean {
+  const text = value.toLowerCase();
+  return (
+    /\b\d{1,2}(?::\d{2})?\s*(?:a\.?m\.?|p\.?m\.?)\b/.test(text) ||
+    /\b(?:[01]?\d|2[0-3]):[0-5]\d\b/.test(text) ||
+    /\b(noon|midday|midnight)\b/.test(text)
+  );
+}
+
+function extractPickupDateFromCombined(value: string): string {
+  const text = value.trim();
+  const match =
+    text.match(/\b(today|tomorrow|tonight|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i) ||
+    text.match(/\b(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)\b\s+\d{1,2}\b/i) ||
+    text.match(/\b\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?\b/);
+  return match?.[0] || "";
+}
+
+function extractPickupTimeFromCombined(value: string): string {
+  const text = value.trim();
+  const match =
+    text.match(/\b\d{1,2}(?::\d{2})?\s*(?:a\.?m\.?|p\.?m\.?)\b/i) ||
+    text.match(/\b(?:[01]?\d|2[0-3]):[0-5]\d\b/) ||
+    text.match(/\b(noon|midday|midnight)\b/i);
+  return match?.[0] || "";
+}
+
 export async function reserve_item(args: Record<string, any>): Promise<ToolResult> {
   const store = String(args.store || RETAIL_STORE_ASSISTANT_USE_CASE.associatePlaybook.reservedStore).trim();
-  const pickupTime = String(args.pickupTime || "").trim();
+  const rawPickupDate = String(args.pickupDate || "").trim();
+  const rawPickupTime = String(args.pickupTime || "").trim();
+  const combinedPickup = [rawPickupDate, rawPickupTime].filter(Boolean).join(" ").trim();
+  const hasPickupDate = hasPickupDateSignal(combinedPickup);
+  const hasPickupTime = hasPickupTimeSignal(combinedPickup);
+  const pickupDate = rawPickupDate && hasPickupDateSignal(rawPickupDate)
+    ? rawPickupDate
+    : extractPickupDateFromCombined(combinedPickup);
+  const pickupClockTime = rawPickupTime && hasPickupTimeSignal(rawPickupTime)
+    ? rawPickupTime
+    : extractPickupTimeFromCombined(combinedPickup);
+  const pickupTime = [pickupDate, pickupClockTime].filter(Boolean).join(" at ").trim() || combinedPickup;
   const product = String(args.product || args.sku || RETAIL_STORE_ASSISTANT_USE_CASE.associatePlaybook.reservedItem).trim();
   const customerName = String(args.customerName || RETAIL_STORE_ASSISTANT_USE_CASE.customer.name).trim();
 
-  if (!pickupTime) {
+  if (!hasPickupDate || !hasPickupTime) {
+    const missing = !hasPickupDate && !hasPickupTime
+      ? "pickup date and pickup time"
+      : !hasPickupDate
+        ? "pickup date"
+        : "pickup time";
     return {
       success: false,
-      error: "Ask the caller for their preferred pickup day and time before creating the reservation.",
-      data: { product, store, customerName, pickupTimeRequired: true },
+      error: `Ask the caller for their preferred ${missing} before creating the reservation.`,
+      data: {
+        product,
+        store,
+        customerName,
+        pickupDate: rawPickupDate,
+        pickupTime: rawPickupTime,
+        pickupDateRequired: !hasPickupDate,
+        pickupTimeRequired: !hasPickupTime,
+      },
     };
   }
 
@@ -338,7 +402,7 @@ export async function reserve_item(args: Record<string, any>): Promise<ToolResul
     return {
       success: false,
       error: `${product || "That item"} is not available for reservation at ${store}.`,
-      data: { product, store, pickupTime, customerName },
+      data: { product, store, pickupDate, pickupTime, customerName },
     };
   }
 
@@ -347,6 +411,7 @@ export async function reserve_item(args: Record<string, any>): Promise<ToolResul
     customerName,
     item,
     store,
+    pickupDate,
     pickupTime,
     status: "confirmed",
   };
@@ -374,7 +439,7 @@ export async function recommend_accessory(args: Record<string, any>): Promise<To
   return {
     success: true,
     result: accessory
-      ? `Recommend ${accessory.name} because ${recommendation.reason}. Source: ${recommendation.source}. Suggested wording: ${recommendation.suggestedWording}`
+      ? `Recommended add-on: ${accessory.name}. ${recommendation.reason}`
       : "No accessory recommendation is available for this product from the current accessory inventory.",
     data: {
       product,
@@ -608,7 +673,7 @@ async function generateAccessoryRecommendation(
               synthesizedHistorySignals: [
                 "Prior conversations can be summarized as practical shopping behavior, not a fixed gift preference.",
                 "Order activity suggests John prefers add-ons that make same-day pickup complete.",
-                "Store visit notes say John usually picks up after work and values quick handoff at the counter.",
+                "Store visit notes say John values quick handoff at the counter once a pickup time is selected.",
                 "Past SMS engagement shows John responds well to concise, useful add-on suggestions.",
               ],
             },
