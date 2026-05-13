@@ -94,7 +94,7 @@ export const retailTools = [
     type: "function" as const,
     name: "retail_reserve_item",
     description:
-      "Reserve an available product for the customer at the selected store and pickup time.",
+      "Reserve an available product for the customer at the selected store and caller-confirmed pickup day/time. Do not call until the caller has provided or confirmed the pickup preference.",
     parameters: {
       type: "object",
       properties: {
@@ -112,7 +112,7 @@ export const retailTools = [
         },
         pickupTime: {
           type: "string",
-          description: "Pickup time requested by the customer.",
+          description: "Pickup day and time requested or confirmed by the customer in this call.",
         },
         customerName: {
           type: "string",
@@ -321,9 +321,17 @@ export async function lookup_inventory(args: Record<string, any>): Promise<ToolR
 
 export async function reserve_item(args: Record<string, any>): Promise<ToolResult> {
   const store = String(args.store || RETAIL_STORE_ASSISTANT_USE_CASE.associatePlaybook.reservedStore).trim();
-  const pickupTime = String(args.pickupTime || RETAIL_STORE_ASSISTANT_USE_CASE.associatePlaybook.pickupTime).trim();
+  const pickupTime = String(args.pickupTime || "").trim();
   const product = String(args.product || args.sku || RETAIL_STORE_ASSISTANT_USE_CASE.associatePlaybook.reservedItem).trim();
   const customerName = String(args.customerName || RETAIL_STORE_ASSISTANT_USE_CASE.customer.name).trim();
+
+  if (!pickupTime) {
+    return {
+      success: false,
+      error: "Ask the caller for their preferred pickup day and time before creating the reservation.",
+      data: { product, store, customerName, pickupTimeRequired: true },
+    };
+  }
 
   const item = findInventoryItem(product, store);
   if (!item || item.status === "out_of_stock" || item.quantity <= 0) {

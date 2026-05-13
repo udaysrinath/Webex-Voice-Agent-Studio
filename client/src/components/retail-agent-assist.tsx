@@ -188,12 +188,16 @@ export function updateRetailAssistState(current: RetailAssistState, event: any):
     case "toolCallStarted": {
       const toolName = String(event.toolName || "tool");
       if (toolName === "twilio_sms" || toolName === "twilio_sms_caller_summary") return current;
+      const toolEvent: RetailToolEvent = {
+        id: `${toolName}-${timestamp}`,
+        toolName,
+        status: "running",
+        args: event.args,
+        timestamp,
+      };
       return {
         ...current,
-        toolEvents: [
-          { id: `${toolName}-${timestamp}`, toolName, status: "running", args: event.args, timestamp },
-          ...current.toolEvents,
-        ].slice(0, 12),
+        toolEvents: [toolEvent, ...current.toolEvents].slice(0, 12),
       };
     }
     case "toolCallCompleted": {
@@ -455,20 +459,20 @@ function VerificationAssistCard({ state }: { state: RetailAssistState }) {
   );
 }
 
-export function RetailProgressTimeline({ state }: { state: RetailAssistState }) {
+export function RetailProgressTimeline({ className, state }: { className?: string; state: RetailAssistState }) {
   const events = [...state.toolEvents].reverse();
 
   return (
-    <Card className="border-white/10 bg-card/50 p-4">
+    <Card className={cn("border-white/10 bg-card/50 p-4", className)}>
       <PanelHeader
         icon={<Radio className="h-4 w-4" />}
         title="Progress Timeline"
-        subtitle="Tool calls will appear here as the agent runs them"
+        subtitle="Follow the steps the assistant has completed for this customer"
       />
       <div className="mt-4 space-y-0">
         {events.length === 0 ? (
           <div className="rounded-md border border-dashed border-white/10 bg-white/[0.02] p-4 text-sm text-muted-foreground">
-            No tool calls yet. The timeline will populate as the agent invokes tools.
+            Customer lookup, inventory checks, reservations, and follow-up steps will appear here as the call progresses.
           </div>
         ) : (
           events.map((event, index) => (

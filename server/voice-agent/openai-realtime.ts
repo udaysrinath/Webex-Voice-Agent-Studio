@@ -209,12 +209,14 @@ export class OpenAIRealtimeClient extends EventEmitter {
     this.send(response ? { type: "response.create", response } : { type: "response.create" });
   }
 
-  sendFunctionOutput(callId: string, output: string): void {
+  sendFunctionOutput(callId: string, output: string, createResponse = true): void {
     this.send({
       type: "conversation.item.create",
       item: { type: "function_call_output", call_id: callId, output },
     });
-    this.send({ type: "response.create" });
+    if (createResponse) {
+      this.send({ type: "response.create" });
+    }
   }
 
   private send(event: object): void {

@@ -279,58 +279,58 @@ export default function PstnCall() {
           </div>
         </Card>
 
-        <section className="grid min-h-[720px] overflow-hidden rounded-lg border border-white/10 bg-card/40 lg:grid-cols-[minmax(0,1fr)_360px]">
-          <div className="min-w-0">
-          <div className="flex items-center justify-between border-b border-white/10 px-5 py-4">
-            <div className="flex items-center gap-3">
-              <div className="relative flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 border border-primary/20">
-                {(monitorState === "waiting" || monitorState === "in-call") && (
-                  <span className="absolute inset-0 rounded-full bg-primary/20 animate-ping" />
-                )}
-                {monitorState === "connecting" ? (
-                  <Loader2 className="relative z-10 w-4 h-4 animate-spin text-primary" />
-                ) : (
-                  <Radio className="relative z-10 w-4 h-4 text-primary" />
-                )}
-              </div>
-              <div>
-                <h2 className="text-base font-semibold">Live PSTN Transcript</h2>
-                <p className="text-xs text-muted-foreground">{statusLabel}</p>
-              </div>
-            </div>
-            <Badge variant="outline" className="border-white/10 text-muted-foreground">
-              Browser monitor
-            </Badge>
-          </div>
-
-          <div ref={transcriptRef} className="h-[650px] overflow-y-auto p-5 space-y-4">
-            {isLoading && (
-              <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Loading PSTN monitor...
-              </div>
-            )}
-
-            {!isLoading && transcript.length === 0 && (
-              <div className="flex h-full flex-col items-center justify-center gap-3 text-center text-muted-foreground">
-                <div className="flex h-16 w-16 items-center justify-center rounded-full bg-primary/10 border border-primary/20">
-                  <Mic className="h-8 w-8 text-primary/70" />
+        <section className="grid min-h-[720px] overflow-hidden rounded-lg border border-white/10 bg-card/40 lg:h-[calc(100vh-280px)] lg:grid-cols-[minmax(0,1fr)_360px]">
+          <div className="flex min-h-0 min-w-0 flex-col">
+            <div className="flex shrink-0 items-center justify-between border-b border-white/10 px-5 py-4">
+              <div className="flex items-center gap-3">
+                <div className="relative flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 border border-primary/20">
+                  {(monitorState === "waiting" || monitorState === "in-call") && (
+                    <span className="absolute inset-0 rounded-full bg-primary/20 animate-ping" />
+                  )}
+                  {monitorState === "connecting" ? (
+                    <Loader2 className="relative z-10 w-4 h-4 animate-spin text-primary" />
+                  ) : (
+                    <Radio className="relative z-10 w-4 h-4 text-primary" />
+                  )}
                 </div>
-                <p className="max-w-sm text-sm">
-                  Waiting for a PSTN call on {agent?.name || "this agent"}. Customer memory and inventory will appear here only after the agent confirms the caller.
-                </p>
+                <div>
+                  <h2 className="text-base font-semibold">Live PSTN Transcript</h2>
+                  <p className="text-xs text-muted-foreground">{statusLabel}</p>
+                </div>
               </div>
-            )}
+              <Badge variant="outline" className="border-white/10 text-muted-foreground">
+                Browser monitor
+              </Badge>
+            </div>
 
-            {transcript.map((entry, index) => (
-              <TranscriptBubble key={`${entry.timestamp}-${index}`} entry={entry} agentName={agent?.name || "Agent"} />
-            ))}
+            <div ref={transcriptRef} className="min-h-0 flex-1 overflow-y-auto p-5 space-y-4">
+              {isLoading && (
+                <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Loading PSTN monitor...
+                </div>
+              )}
 
-            <RetailInlineAssist state={assistState} />
+              {!isLoading && transcript.length === 0 && (
+                <div className="flex h-full flex-col items-center justify-center gap-3 text-center text-muted-foreground">
+                  <div className="flex h-16 w-16 items-center justify-center rounded-full bg-primary/10 border border-primary/20">
+                    <Mic className="h-8 w-8 text-primary/70" />
+                  </div>
+                  <p className="max-w-sm text-sm">
+                    Waiting for a PSTN call on {agent?.name || "this agent"}. Customer memory and inventory will appear here only after the agent confirms the caller.
+                  </p>
+                </div>
+              )}
+
+              {transcript.map((entry, index) => (
+                <TranscriptBubble key={`${entry.timestamp}-${index}`} entry={entry} agentName={agent?.name || "Agent"} />
+              ))}
+
+              <RetailInlineAssist state={assistState} />
+            </div>
           </div>
-          </div>
-          <aside className="border-t border-white/10 p-4 lg:border-l lg:border-t-0">
-            <RetailProgressTimeline state={assistState} />
+          <aside className="min-h-0 border-t border-white/10 p-4 lg:border-l lg:border-t-0 lg:overflow-hidden">
+            <RetailProgressTimeline state={assistState} className="h-full overflow-y-auto" />
           </aside>
         </section>
       </main>
