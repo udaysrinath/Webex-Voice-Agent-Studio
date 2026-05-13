@@ -60,6 +60,7 @@ interface TwilioMonitorMessage {
   success?: boolean;
   result?: string;
   error?: string;
+  durationMs?: number;
   timestamp?: number;
 }
 

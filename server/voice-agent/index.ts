@@ -5,7 +5,7 @@ import * as path from "path";
 import OpenAI from "openai";
 import { OpenAIRealtimeClient, RealtimeSessionConfig } from "./openai-realtime";
 import { storage } from "../storage";
-import { realtimeTools, executeTool } from "../tools";
+import { realtimeTools, executeTool, type ToolExecutionResult } from "../tools";
 import { buildRetailRuntimePrompt } from "@shared/prompt-builder";
 import { RETAIL_STORE_ASSISTANT_USE_CASE, isRetailStoreUseCasePrompt } from "@shared/use-cases";
 
@@ -74,7 +74,7 @@ type TwilioMonitorEvent =
   | { type: "callEnded"; agentId: string; timestamp: number }
   | { type: "smsSent"; agentId: string; to: string; timestamp: number }
   | { type: "toolCallStarted"; agentId: string; toolName: string; args?: Record<string, any>; timestamp: number }
-  | { type: "toolCallCompleted"; agentId: string; toolName: string; success: boolean; result?: string; error?: string; data?: unknown; timestamp: number }
+  | { type: "toolCallCompleted"; agentId: string; toolName: string; success: boolean; result?: string; error?: string; data?: unknown; durationMs?: number; timestamp: number }
   | { type: "identityVerificationSent" | "identityVerified" | "customerContextLoaded" | "inventoryUpdated" | "recommendationCreated" | "reservationCreated" | "associateHandoffCreated"; agentId: string; data: unknown; timestamp: number }
   | { type: "userTranscript" | "assistantTranscript"; agentId: string; text: string; rawText?: string; correctedText?: string; corrected?: boolean; timestamp: number };
 
@@ -465,13 +465,14 @@ function publicSmsFailureMessage(reservation?: RetailReservationDetails | null):
 }
 
 function sanitizeSmsToolResult(
-  result: { success: boolean; result?: string; error?: string; data?: unknown },
+  result: ToolExecutionResult,
   reservation?: RetailReservationDetails | null
-): { success: boolean; result?: string; error?: string; data?: unknown } {
+): ToolExecutionResult {
   if (result.success) return result;
   return {
     success: false,
     error: publicSmsFailureMessage(reservation),
+    durationMs: result.durationMs,
     data: {
       smsUnavailable: true,
       reservation: reservation
@@ -1236,6 +1237,7 @@ ${startupRetailContext}`;
               result: result.result,
               error: result.error,
               data: result.data,
+              durationMs: result.durationMs,
               timestamp: Date.now(),
             });
             const retailEventType = getRetailToolEventType(name);
@@ -1379,6 +1381,7 @@ ${startupRetailContext}`;
         success: result.success,
         result: result.success ? "Store Manager Summary sent to Webex." : undefined,
         error: result.error,
+        durationMs: result.durationMs,
         timestamp: Date.now(),
       });
       if (result.success) {
@@ -1423,6 +1426,7 @@ ${startupRetailContext}`;
       success: result.success,
       result: result.success ? "Order Confirmation SMS sent to the customer." : undefined,
       error: result.error,
+      durationMs: result.durationMs,
       timestamp: Date.now(),
     });
     if (result.success) {
@@ -1522,7 +1526,7 @@ ${startupRetailContext}`;
     args: Record<string, any>,
     callerPhone: string,
     agentId: string
-  ): Promise<{ success: boolean; result?: string; error?: string; data?: unknown }> {
+  ): Promise<ToolExecutionResult> {
     if (!callerPhone) {
       return { success: false, error: "Caller phone number is unavailable" };
     }
@@ -1674,6 +1678,7 @@ ${startupRetailContext}`;
       result: userLookup.result,
       error: userLookup.error,
       data: userLookup.data,
+      durationMs: userLookup.durationMs,
       timestamp: Date.now(),
     });
 
@@ -1701,6 +1706,7 @@ ${startupRetailContext}`;
       result: historyLookup.result,
       error: historyLookup.error,
       data: historyLookup.data,
+      durationMs: historyLookup.durationMs,
       timestamp: Date.now(),
     });
 
@@ -1723,6 +1729,7 @@ ${startupRetailContext}`;
       result: customerContext.result,
       error: customerContext.error,
       data: customerContext.data,
+      durationMs: customerContext.durationMs,
       timestamp: Date.now(),
     });
     if (customerContext.success && customerContext.data !== undefined) {
@@ -2139,6 +2146,7 @@ ${startupRetailContext}`;
               result: result.result,
               error: result.error,
               data: result.data,
+              durationMs: result.durationMs,
               timestamp: Date.now(),
             });
             const retailEventType = getRetailToolEventType(name);
@@ -2300,6 +2308,7 @@ ${startupRetailContext}`;
         success: result.success,
         result: result.success ? "Store Manager Summary sent to Webex." : undefined,
         error: result.error,
+        durationMs: result.durationMs,
         timestamp: Date.now(),
       });
       if (result.success) {
@@ -2341,6 +2350,7 @@ ${startupRetailContext}`;
       success: result.success,
       result: result.success ? "Order Confirmation SMS sent to the customer." : undefined,
       error: result.error,
+      durationMs: result.durationMs,
       timestamp: Date.now(),
     });
     if (result.success) {
@@ -2460,6 +2470,7 @@ ${startupRetailContext}`;
       result: userLookup.result,
       error: userLookup.error,
       data: userLookup.data,
+      durationMs: userLookup.durationMs,
       timestamp: Date.now(),
     });
 
@@ -2484,6 +2495,7 @@ ${startupRetailContext}`;
       result: historyLookup.result,
       error: historyLookup.error,
       data: historyLookup.data,
+      durationMs: historyLookup.durationMs,
       timestamp: Date.now(),
     });
 
@@ -2502,6 +2514,7 @@ ${startupRetailContext}`;
       result: customerContext.result,
       error: customerContext.error,
       data: customerContext.data,
+      durationMs: customerContext.durationMs,
       timestamp: Date.now(),
     });
     if (customerContext.success && customerContext.data !== undefined) {

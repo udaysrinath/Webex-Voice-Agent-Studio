@@ -42,6 +42,7 @@ export interface RetailToolEvent {
   result?: string;
   args?: Record<string, unknown>;
   data?: unknown;
+  durationMs?: number;
   timestamp: number;
 }
 
@@ -216,9 +217,11 @@ export function updateRetailAssistState(current: RetailAssistState, event: any):
               status: event.success ? "done" as const : "error" as const,
               result: event.result || event.error,
               data: event.data,
+              durationMs: event.durationMs,
               timestamp,
             }),
             data: event.data,
+            durationMs: event.durationMs,
             timestamp,
           };
         }
@@ -239,9 +242,11 @@ export function updateRetailAssistState(current: RetailAssistState, event: any):
                   status: event.success ? "done" as const : "error" as const,
                   result: event.result || event.error,
                   data: event.data,
+                  durationMs: event.durationMs,
                   timestamp,
                 }),
                 data: event.data,
+                durationMs: event.durationMs,
                 timestamp,
               },
               ...current.toolEvents,
@@ -856,25 +861,26 @@ function formatToolName(name: string): string {
 
 function getTimelineEventDetail(event: RetailToolEvent): string {
   const data = (event.data || {}) as any;
+  const detailSuffix = formatDurationSuffix(event.durationMs);
   if (event.toolName === "retail_user_lookup") {
     if (event.status === "running") return "Looking up the returning customer profile.";
-    if (event.status === "done") return "Customer profile loaded.";
+    if (event.status === "done") return `Customer profile loaded.${detailSuffix}`;
   }
   if (event.toolName === "retail_user_history_lookup") {
     if (event.status === "running") return "Checking previous conversations and order history.";
-    if (event.status === "done") return "Previous conversations and order history loaded.";
+    if (event.status === "done") return `Previous conversations and order history loaded.${detailSuffix}`;
   }
   if (event.toolName === "retail_get_customer_context") {
     if (event.status === "running") return "Preparing customer context for the assistant.";
-    if (event.status === "done") return "Customer context is ready.";
+    if (event.status === "done") return `Customer context is ready.${detailSuffix}`;
   }
   if (event.toolName === "retail_lookup_inventory") {
     if (event.status === "running") return "Checking availability across stores.";
     if (event.status === "done") {
       const available = Array.isArray(data.available) ? data.available[0] : undefined;
       return available?.store
-        ? `Inventory checked. ${available.name || "The item"} is available at ${available.store}.`
-        : "Inventory checked across stores.";
+        ? `Inventory checked. ${available.name || "The item"} is available at ${available.store}.${detailSuffix}`
+        : `Inventory checked across stores.${detailSuffix}`;
     }
   }
   if (event.toolName === "retail_reserve_item") {
@@ -884,26 +890,26 @@ function getTimelineEventDetail(event: RetailToolEvent): string {
       const store = data.store ? ` at ${data.store}` : "";
       const pickup = data.pickupTime ? ` for ${data.pickupTime}` : "";
       const reference = data.reservationId ? ` Reference ${data.reservationId}.` : "";
-      return `${itemName} reserved${store}${pickup}.${reference}`;
+      return `${itemName} reserved${store}${pickup}.${reference}${detailSuffix}`;
     }
   }
   if (event.toolName === "retail_recommend_accessory") {
     if (event.status === "running") return "Finding a relevant add-on for the reserved item.";
     if (event.status === "done") {
       const recommendation = data.recommendation?.name || "A matching add-on";
-      return `${recommendation} selected as a relevant add-on.`;
+      return `${recommendation} selected as a relevant add-on.${detailSuffix}`;
     }
   }
   if (event.toolName === "retail_order_confirmation") {
     if (event.status === "running") return "Preparing the customer confirmation.";
-    if (event.status === "done") return "Customer confirmation handled.";
+    if (event.status === "done") return `Customer confirmation handled.${detailSuffix}`;
   }
   if (event.toolName === "retail_store_manager_summary") {
     if (event.status === "running") return "Preparing the store manager handoff.";
-    if (event.status === "done") return "Store manager handoff sent.";
+    if (event.status === "done") return `Store manager handoff sent.${detailSuffix}`;
   }
   if (event.toolName === "voice_end_call") {
-    if (event.status === "done") return "Call ended after the customer was finished.";
+    if (event.status === "done") return `Call ended after the customer was finished.${detailSuffix}`;
   }
   if (event.status === "error" && event.result) return event.result;
   if (event.result) return event.result;
@@ -911,6 +917,12 @@ function getTimelineEventDetail(event: RetailToolEvent): string {
   if (event.status === "error") return "This step needs attention.";
   if (event.status === "done") return "Step completed.";
   return "Waiting.";
+}
+
+function formatDurationSuffix(durationMs: number | undefined): string {
+  if (!Number.isFinite(durationMs)) return "";
+  if ((durationMs as number) < 1000) return ` (${Math.max(0, Math.round(durationMs as number))}ms)`;
+  return ` (${((durationMs as number) / 1000).toFixed(1)}s)`;
 }
 
 function formatTimelineTime(timestamp: number): string {
