@@ -583,7 +583,7 @@ async function generateAccessoryRecommendation(
         {
           role: "system",
           content:
-            "Generate one personalized accessory recommendation for a real-time consumer electronics retail agent. Return strict JSON only. Use real accessory naming compatible with the reserved product. Prefer a recommendation that ties to customer memory, prior orders, past conversations, transaction behavior, pickup habits, or what the customer said in the current call. You may synthesize a plausible personal insight from the provided customer memory and current request, but keep it caller-safe and natural. Do not use fictional demo brands such as AeroTab, NovaBook, PulseWatch, Orbit Phone, PageLite, SonicWave, PlayBox, HomeMesh, EchoNest, ViewMax, SkyLite, or VistaCam. If no natural personalized accessory exists, return name as an empty string.",
+            "Generate one personalized accessory recommendation for a real-time consumer electronics retail agent. Return strict JSON only. Use real accessory naming compatible with the reserved product. Personalize primarily from the current call and reservation context. You may synthesize a plausible past shopping signal from the current request, but do not repeatedly use static profile facts. Do not mention a daughter, birthday, purple preference, or gift context unless the currentConversation or originalCustomerRequest explicitly mentions it. Do not use fictional demo brands such as AeroTab, NovaBook, PulseWatch, Orbit Phone, PageLite, SonicWave, PlayBox, HomeMesh, EchoNest, ViewMax, SkyLite, or VistaCam. If no natural personalized accessory exists, return name as an empty string.",
         },
         {
           role: "user",
@@ -595,13 +595,11 @@ async function generateAccessoryRecommendation(
             customerMemory: {
               name: customer.name,
               loyaltyTier: customer.loyaltyTier,
-              preferences: customer.preferences,
-              pastChats: customer.pastChats,
               preferredPickupTime: customer.preferredPickupTime,
               relationshipContext: customer.relationshipContext,
               synthesizedHistorySignals: [
-                "Prior conversations show John compares pickup options before committing.",
-                "Order activity suggests John prefers practical add-ons that make same-day pickup complete.",
+                "Prior conversations can be summarized as practical shopping behavior, not a fixed gift preference.",
+                "Order activity suggests John prefers add-ons that make same-day pickup complete.",
                 "Store visit notes say John usually picks up after work and values quick handoff at the counter.",
                 "Past SMS engagement shows John responds well to concise, useful add-on suggestions.",
               ],
@@ -611,9 +609,9 @@ async function generateAccessoryRecommendation(
               name: "specific accessory product name, or empty string",
               price: "USD price like $49",
               quantity: "integer from 1 to 8",
-              reason: "one concise reason that combines product fit with a customer-specific memory or current-call detail",
-              source: "current conversation plus product fit | prior conversations plus product fit | order history plus product fit | pickup behavior plus product fit | customer history plus product fit | none",
-              personalizationSignal: "the specific memory/current-call detail used, phrased safely for internal display",
+              reason: "one concise reason that combines product fit with a current-call detail, pickup behavior, or plausible prior shopping pattern",
+              source: "current conversation plus product fit | pickup behavior plus product fit | order history plus product fit | synthesized shopping pattern plus product fit | none",
+              personalizationSignal: "the specific current-call detail or synthesized shopping pattern used, phrased safely for internal display",
               suggestedWording:
                 "one short natural sentence the assistant can say. It should briefly say why this is personal, without sounding invasive. If original request differs from reserved product, start with 'For the [reserved product] we reserved...' and do not imply the accessory fits the original requested product.",
             },

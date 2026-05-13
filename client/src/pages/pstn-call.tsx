@@ -64,8 +64,9 @@ export default function PstnCall() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const transcriptRef = useRef<HTMLDivElement>(null);
-  const agentId = Number(new URLSearchParams(search).get("agentId"));
-  const hasAgentId = Number.isFinite(agentId) && agentId > 0;
+  const requestedAgentId = Number(new URLSearchParams(search).get("agentId"));
+  const hasAgentId = Number.isFinite(requestedAgentId) && requestedAgentId > 0;
+  const agentId = hasAgentId ? 1 : requestedAgentId;
   const [monitorState, setMonitorState] = useState<MonitorState>("connecting");
   const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
   const [assistState, setAssistState] = useState(createRetailAssistState);
@@ -93,6 +94,12 @@ export default function PstnCall() {
     : undefined;
 
   useEffect(() => {
+    if (hasAgentId && requestedAgentId !== 1) {
+      setLocation("/pstn-call?agentId=1", { replace: true });
+    }
+  }, [hasAgentId, requestedAgentId, setLocation]);
+
+  useEffect(() => {
     if (!hasAgentId) {
       setMonitorState("error");
       return;
@@ -113,7 +120,10 @@ export default function PstnCall() {
 
       if (msg.type === "callStarted") {
         setMonitorState("in-call");
-        setAssistState(createRetailAssistState());
+        setAssistState((current) => ({
+          ...createRetailAssistState(),
+          toolEvents: current.toolEvents,
+        }));
         appendTranscript("system", "PSTN call connected.");
         return;
       }

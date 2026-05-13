@@ -343,7 +343,7 @@ export default function Home() {
                           </span>
                         </Button>
                       </Link>
-                      <Link href={`/pstn-call?agentId=${agent.id}`} className="w-full">
+                      <Link href="/pstn-call?agentId=1" className="w-full">
                         <Button
                           variant="outline"
                           className="min-h-[82px] w-full justify-start gap-3 border-green-500/30 px-3 py-3 text-left text-green-300"

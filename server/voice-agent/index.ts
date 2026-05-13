@@ -751,18 +751,35 @@ function handleTwilioSession(ws: WebSocket): void {
           : "Unknown";
         latestReservation = null;
         latestRecommendedUpsell = "";
-        startupRetailContext = await runStartupRetailLookups();
         const canSendSmsToCaller = callerPhone !== "Unknown" && isTwilioSmsConfigured();
 
         if (agentId && agentId !== "default") {
-          const agent = await storage.getAgent(parseInt(agentId));
+          let resolvedAgentId = agentId;
+          let agent = await storage.getAgent(1);
+          if (agent) {
+            resolvedAgentId = "1";
+            monitorAgentId = "1";
+          } else {
+            agent = await storage.getAgent(parseInt(agentId));
+          }
           if (agent) {
             agentName = agent.name;
             instructions = agent.systemPrompt || instructions;
             voice = mapVoice(agent.voiceModel);
             language = agent.language || language;
+            monitorAgentId = resolvedAgentId;
           }
         }
+
+        sendTwilioMonitorEvent(monitorAgentId, {
+          type: "callStarted",
+          agentId: monitorAgentId,
+          callSid,
+          streamSid: streamSid || undefined,
+          timestamp: Date.now(),
+        });
+
+        startupRetailContext = await runStartupRetailLookups();
 
         instructions = buildRuntimeInstructions(instructions, agentName);
         instructions = buildTwilioCallInstructions(instructions, callerPhone, canSendSmsToCaller);
@@ -801,13 +818,6 @@ ${startupRetailContext}`;
           tools,
         });
 
-        sendTwilioMonitorEvent(monitorAgentId, {
-          type: "callStarted",
-          agentId: monitorAgentId,
-          callSid,
-          streamSid: streamSid || undefined,
-          timestamp: Date.now(),
-        });
         openai.on("audio", (base64: string, itemId: string) => {
           if (suppressAssistantOutput) return;
           lastItemId = itemId;

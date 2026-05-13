@@ -1,4 +1,4 @@
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, sql } from "drizzle-orm";
 import {
   type User,
   type InsertUser,
@@ -85,7 +85,12 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createAgent(insertAgent: InsertAgent): Promise<Agent> {
-    const [agent] = await db.insert(agents).values(insertAgent).returning();
+    const existingAgents = await db.select({ id: agents.id }).from(agents).limit(1);
+    const values = existingAgents.length === 0
+      ? ({ ...insertAgent, id: 1 } as InsertAgent & { id: number })
+      : insertAgent;
+    const [agent] = await db.insert(agents).values(values).returning();
+    await resetAgentsIdSequence();
     return agent;
   }
 
@@ -111,6 +116,9 @@ export class DatabaseStorage implements IStorage {
     await db.delete(evaluations).where(eq(evaluations.agentId, id));
     await db.delete(knowledgeBaseItems).where(eq(knowledgeBaseItems.agentId, id));
     const result = await db.delete(agents).where(eq(agents.id, id)).returning();
+    if (result.length > 0) {
+      await resetAgentsIdSequence();
+    }
     return result.length > 0;
   }
 
@@ -211,3 +219,13 @@ export class DatabaseStorage implements IStorage {
 }
 
 export const storage = new DatabaseStorage();
+
+async function resetAgentsIdSequence(): Promise<void> {
+  await db.execute(sql`
+    SELECT setval(
+      pg_get_serial_sequence('agents', 'id'),
+      COALESCE((SELECT MAX(id) FROM agents), 1),
+      EXISTS(SELECT 1 FROM agents)
+    )
+  `);
+}

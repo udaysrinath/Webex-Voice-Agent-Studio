@@ -1540,9 +1540,21 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
     return host ? `${proto || "https"}://${host}` : null;
   }
 
-  function getTwilioAgentId(req: ExpressRequest): string {
+  async function getTwilioAgentId(req: ExpressRequest): Promise<string> {
     const queryAgentId = Array.isArray(req.query?.agentId) ? req.query.agentId[0] : req.query?.agentId;
-    return String(req.body?.agentId || queryAgentId || "default");
+    const requestedAgentId = String(req.body?.agentId || queryAgentId || "default").trim();
+    if (!requestedAgentId || requestedAgentId === "default") return "default";
+
+    const numericAgentId = Number.parseInt(requestedAgentId, 10);
+    if (!Number.isFinite(numericAgentId)) return requestedAgentId;
+
+    const defaultAgent = await storage.getAgent(1);
+    if (defaultAgent) return "1";
+
+    const requestedAgent = await storage.getAgent(numericAgentId);
+    if (requestedAgent) return String(requestedAgent.id);
+
+    return requestedAgentId;
   }
 
   function getTwilioCallerPhone(req: ExpressRequest): string | null {
@@ -1574,7 +1586,7 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
       const wsUrl = baseUrl.replace(/^https?/, "wss") + "/ws/twilio-stream";
       const connect = twiml.connect();
       const stream = connect.stream({ url: wsUrl });
-      stream.parameter({ name: "agentId", value: getTwilioAgentId(req) });
+      stream.parameter({ name: "agentId", value: await getTwilioAgentId(req) });
       const callerPhone = getTwilioCallerPhone(req);
       if (callerPhone) {
         stream.parameter({ name: "callerPhone", value: callerPhone });
