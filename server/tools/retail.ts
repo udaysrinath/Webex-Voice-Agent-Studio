@@ -661,7 +661,7 @@ async function generateGiftAccessoryRecommendation(
   const customer = RETAIL_STORE_ASSISTANT_USE_CASE.customer;
 
   try {
-    const completion = await client.chat.completions.create({
+    const completion = await withTimeout(client.chat.completions.create({
       model,
       temperature: 0.55,
       max_tokens: 520,
@@ -705,7 +705,7 @@ async function generateGiftAccessoryRecommendation(
           }),
         },
       ],
-    });
+    }), RETAIL_DYNAMIC_LOOKUP_TIMEOUT_MS, `Dynamic accessory recommendation timed out after ${RETAIL_DYNAMIC_LOOKUP_TIMEOUT_MS}ms`);
 
     const raw = completion.choices[0]?.message?.content || "{}";
     const parsed = JSON.parse(raw);
