@@ -300,7 +300,8 @@ export async function lookup_inventory(args: Record<string, any>): Promise<ToolR
       const skuLower = item.sku.toLowerCase();
       const catLower = item.category.toLowerCase();
 
-      if (nameLower.includes(query) || catLower.includes(query) || skuLower.includes(query) || query.includes(nameLower)) {
+      const fastPathRegex = new RegExp(`\\b${query.replace(/[^a-z0-9\s]/g, " ").trim().replace(/\s+/g, "\\b.*\\b")}\\b`);
+      if (nameLower.includes(query) || fastPathRegex.test(catLower) || skuLower.includes(query) || query.includes(nameLower)) {
         return true;
       }
 
@@ -312,11 +313,14 @@ export async function lookup_inventory(args: Record<string, any>): Promise<ToolR
         .filter((w) => w.length >= 3 && !/^(\d+(st|nd|rd|th|gb|tb|mm|inch)?|generation|model|new|the|and|for|with)$/.test(w));
 
       if (queryWords.length >= 2) {
-        const significantMatches = queryWords.filter((w) => nameLower.includes(w) || skuLower.includes(w) || catLower.includes(w));
+        const significantMatches = queryWords.filter((w) => {
+          const regex = new RegExp(`\\b${w}\\b`);
+          return regex.test(nameLower) || regex.test(skuLower) || regex.test(catLower);
+        });
         return significantMatches.length >= Math.min(2, queryWords.length);
       }
 
-      return queryWords.length === 1 && (nameLower.includes(queryWords[0]) || skuLower.includes(queryWords[0]));
+      return queryWords.length === 1 && (new RegExp(`\\b${queryWords[0]}\\b`).test(nameLower) || new RegExp(`\\b${queryWords[0]}\\b`).test(skuLower));
     });
 
     if (items.length > 0) {
@@ -941,15 +945,23 @@ function normalizeRecommendationReason(text: string): string {
   return normalized ? normalized.charAt(0).toLowerCase() + normalized.slice(1) : normalized;
 }
 
+function normStr(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+}
+
 function findInventoryItem(productOrSku: string, store: string): RetailInventoryItem | undefined {
   const query = productOrSku.toLowerCase();
+  const queryNorm = normStr(productOrSku);
   const normalizedStore = store.toLowerCase();
   return [...Array.from(generatedInventory.values()), ...RETAIL_STORE_ASSISTANT_USE_CASE.inventory].find((item) => {
+    const nameLower = item.name.toLowerCase();
+    const nameNorm = normStr(item.name);
+    const skuLower = item.sku.toLowerCase();
     const matchesProduct =
-      item.sku.toLowerCase() === query ||
-      item.name.toLowerCase().includes(query) ||
-      query.includes(item.name.toLowerCase()) ||
-      query.includes(item.category.toLowerCase());
+      skuLower === query ||
+      nameLower === query ||
+      nameNorm === queryNorm ||
+      nameNorm.includes(queryNorm);
     return matchesProduct && item.store.toLowerCase().includes(normalizedStore);
   });
 }
