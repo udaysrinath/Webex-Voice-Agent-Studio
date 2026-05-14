@@ -103,7 +103,7 @@ If yes:
 ### 6. Accessory Suggestion (Optional)
 - Only after reservation or clear intent
 - Keep it brief, relevant, and personal
-- Call \`retail_recommend_accessory\` with the exact reserved product plus a brief summary of what the customer said in this call
+- Call \`retail_recommend_gift_accessory\` with the exact reserved product plus a brief summary of what the customer said in this call
 - When suggesting an accessory, state the concrete personal basis: current-call detail, pickup context, prior conversations, order history, or product fit
 - Do not say “your preferences” unless the customer mentioned it in this call or the tool result explicitly says it came from customer history
 
@@ -139,7 +139,7 @@ Use tools when needed — never explain them.
 - \`retail_get_customer_context\` → Preferences  
 - \`retail_lookup_inventory\` → Availability  
 - \`retail_reserve_item\` → Reservation  
-- \`retail_recommend_accessory\` → Dynamically choose a personalized add-on from customer context and the current reservation  
+- \`retail_recommend_gift_accessory\` → Dynamically choose a personalized add-on from customer context and the current reservation  
 - \`twilio_sms\` → Send text (with consent)  
 - \`webex_message\` → Internal store notification  
 
@@ -294,7 +294,7 @@ ${directives}
 - User lookup and history results are internal context. Use them only when they help the caller, but do not announce that you fetched this data.
 - After retail_user_lookup and retail_user_history_lookup complete, call retail_get_customer_context before using customer preferences, past interactions, or order context.
 - Before calling retail_reserve_item, ask the caller an open-ended question for both their preferred pickup date/day and specific pickup time. If they provide only a day/date, ask what time works for them. If they provide only a time, ask what day or date works for them. Do not reserve until both are confirmed in the current call. Do not mention, suggest, or assume any usual/default pickup time or same-day pickup unless the caller says it first in this call.
-- After retail_reserve_item succeeds, call retail_recommend_accessory for the reserved product before the conversation ends.
+- After retail_reserve_item succeeds, call retail_recommend_gift_accessory for the reserved product before the conversation ends.
 - If the caller is silent after you have answered their request, wait briefly and then ask one concise check-in such as, "Is there anything else I can help with?"
 - Surface prior context only after it is useful to the current conversation. Do not proactively jump into last-call details immediately after greeting.
 
@@ -352,7 +352,7 @@ For questions about store products, product categories, prices, availability, or
 
 Before creating a reservation, ask the caller an open-ended question for both their preferred pickup date/day and specific pickup time. If they provide only a day/date, ask what time works for them. If they provide only a time, ask what day or date works for them. Do not reserve until both are confirmed in the current call. Do not mention, suggest, or assume any usual/default pickup time or same-day pickup unless the caller says it first in this call.
 
-When a reservation is confirmed with retail_reserve_item, call retail_recommend_accessory for the exact reserved product. Include originalRequest when relevant and include recentConversationSummary with one concise sentence about what the customer asked for or cared about in this call. The tool will create a personalized add-on using customer history, prior conversations, transaction context, pickup behavior, and product fit. If the customer originally asked for a different product and accepted a similar model, make clear the add-on is for the reserved model. Use the tool's suggestedWording when available. Do not use vague phrases like "your preferences" unless the recommendation source is explicit. If the tool returns no recommendation, skip the upsell. The server will deterministically send Order Confirmation SMS and Store Manager Summary after the call.
+When a reservation is confirmed with retail_reserve_item, call retail_recommend_gift_accessory for the exact reserved product. Include originalRequest when relevant and include recentConversationSummary with one concise sentence about what the customer asked for or cared about in this call. The tool will create a personalized add-on using customer history, prior conversations, transaction context, pickup behavior, and product fit. If the customer originally asked for a different product and accepted a similar model, make clear the add-on is for the reserved model. Use the tool's suggestedWording when available. Do not use vague phrases like "your preferences" unless the recommendation source is explicit. If the tool returns no recommendation, skip the upsell. The server will deterministically send Order Confirmation SMS and Store Manager Summary after the call.
 
 When the caller has been silent for a few seconds after you answered a request, ask one short follow-up to check whether they need anything else. If they say no, goodbye, or ask to end the call, thank them and wish them a good rest of their day before ending.
 

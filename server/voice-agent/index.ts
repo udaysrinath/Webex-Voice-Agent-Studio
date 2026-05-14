@@ -312,7 +312,7 @@ Never end the call because an item is unavailable, unsupported, or not in invent
 ${callerIdentityInstructions}
 Use preloaded returning-caller context only when it helps the caller's request. Do not recite history immediately after greeting.
 Before calling retail_reserve_item, ask the caller an open-ended question for both their preferred pickup date/day and specific pickup time. If they only provide a day/date, ask what time works for them. If they only provide a time, ask what day or date works for them. Do not reserve until both are confirmed in the current call. Do not mention, suggest, or assume any usual/default pickup time or same-day pickup unless the caller says it first in this call.
-After retail_reserve_item succeeds, call retail_recommend_accessory for the reserved product before the call ends.
+After retail_reserve_item succeeds, call retail_recommend_gift_accessory for the reserved product before the call ends.
 If SMS sending fails, do not mention provider, regional, permission, API, or configuration errors. Say SMS is having issues right now and provide the reservation or order reference verbally.
 If the caller is silent for a few seconds after a request is answered, ask one short follow-up to check whether there is anything else you can help with.
 
@@ -338,7 +338,7 @@ Do not repeat the opening greeting after the first assistant turn.
 ${browserIdentityInstructions}
 Use preloaded returning-caller context only when it helps the caller's request. Do not recite history immediately after greeting.
 Before calling retail_reserve_item, ask the caller an open-ended question for both their preferred pickup date/day and specific pickup time. If they only provide a day/date, ask what time works for them. If they only provide a time, ask what day or date works for them. Do not reserve until both are confirmed in the current call. Do not mention, suggest, or assume any usual/default pickup time or same-day pickup unless the caller says it first in this call.
-After retail_reserve_item succeeds, call retail_recommend_accessory for the reserved product before the call ends.
+After retail_reserve_item succeeds, call retail_recommend_gift_accessory for the reserved product before the call ends.
 For product, store, price, and inventory questions, answer normally.
 If SMS sending fails, do not mention provider, regional, permission, API, or configuration errors. Say SMS is having issues right now and provide the reservation or order reference verbally.
 If the user is silent for a few seconds after a request is answered, ask one short follow-up to check whether there is anything else you can help with.
@@ -365,7 +365,7 @@ function getRetailToolEventType(
       return "customerContextLoaded";
     case "retail_lookup_inventory":
       return "inventoryUpdated";
-    case "retail_recommend_accessory":
+    case "retail_recommend_gift_accessory":
       return "recommendationCreated";
     case "retail_reserve_item":
       return "reservationCreated";
@@ -1225,7 +1225,7 @@ ${startupRetailContext}`;
                 });
               }
             }
-            if (result.success && name === "retail_recommend_accessory") {
+            if (result.success && name === "retail_recommend_gift_accessory") {
               latestRecommendedUpsell = getRecommendedUpsell(result.data);
             }
             sendTwilioMonitorEvent(monitorAgentId, {
@@ -2129,7 +2129,7 @@ ${startupRetailContext}`;
                 });
               }
             }
-            if (result.success && name === "retail_recommend_accessory") {
+            if (result.success && name === "retail_recommend_gift_accessory") {
               latestRecommendedUpsell = getRecommendedUpsell(result.data);
             }
             sendEvent({

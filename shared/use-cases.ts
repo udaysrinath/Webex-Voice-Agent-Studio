@@ -394,7 +394,7 @@ export const RETAIL_STORE_ASSISTANT_USE_CASE: VoiceUseCase = {
       description: "Reserve an available product for a customer-confirmed pickup date and time.",
     },
     {
-      name: "retail_recommend_accessory",
+      name: "retail_recommend_gift_accessory",
       description: "Dynamically choose a personalized accessory from current reservation, customer memory, and current-call context.",
     },
   ],
@@ -471,7 +471,7 @@ export const RETAIL_STORE_ASSISTANT_USE_CASE: VoiceUseCase = {
     "When John asks for the tablet, explain that the current location is out of stock and offer to reserve it at Palo Alto or notify him when it returns.",
     "Use cross-store intelligence: do not stop at local retrieval when a nearby fulfillment option is available.",
     "When John accepts, ask an open-ended question for both his preferred pickup date/day and specific pickup time before reserving. If he provides only the day/date, ask what time works for him. If he provides only a time, ask what day or date works for him. Do not reserve until both are confirmed in the current call. Do not mention, suggest, or assume any usual/default pickup time or same-day pickup unless he says it first in this call.",
-    "After retail_reserve_item succeeds, call retail_recommend_accessory with the exact reserved product and a brief current-call summary. Offer the returned accessory only if the tool selects one, using the personalized reason from prior conversations, order history, pickup context, or current-call details.",
+    "After retail_reserve_item succeeds, call retail_recommend_gift_accessory with the exact reserved product and a brief current-call summary. Offer the returned accessory only if the tool selects one, using the personalized reason from prior conversations, order history, pickup context, or current-call details.",
     "Near the end, ask if John wants a concise summary texted to his number. Send it only after explicit consent.",
     "After the call, send the store manager a Webex pickup handoff with customer name, intent, item, pickup time, and recommended upsell.",
   ],

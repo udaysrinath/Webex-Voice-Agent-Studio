@@ -259,7 +259,7 @@ export function getRetailAssistEventTypeForTool(toolName: string): string | null
       return "customerContextLoaded";
     case "retail_lookup_inventory":
       return "inventoryUpdated";
-    case "retail_recommend_accessory":
+    case "retail_recommend_gift_accessory":
       return "recommendationCreated";
     case "retail_reserve_item":
       return "reservationCreated";
@@ -887,7 +887,7 @@ function getTimelineEventDetail(event: RetailToolEvent): string {
       return `${itemName} reserved${store}${pickup}.${reference}`;
     }
   }
-  if (event.toolName === "retail_recommend_accessory") {
+  if (event.toolName === "retail_recommend_gift_accessory") {
     if (event.status === "running") return "Finding a relevant add-on for the reserved item.";
     if (event.status === "done") {
       const recommendation = data.recommendation?.name || "A matching add-on";

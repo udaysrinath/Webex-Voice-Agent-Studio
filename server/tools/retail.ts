@@ -133,7 +133,7 @@ export const retailTools = [
   },
   {
     type: "function" as const,
-    name: "retail_recommend_accessory",
+    name: "retail_recommend_gift_accessory",
     description:
       "Recommend a personalized accessory based on customer memory and selected product.",
     parameters: {
@@ -423,12 +423,12 @@ export async function reserve_item(args: Record<string, any>): Promise<ToolResul
   };
 }
 
-export async function recommend_accessory(args: Record<string, any>): Promise<ToolResult> {
+export async function recommend_gift_accessory(args: Record<string, any>): Promise<ToolResult> {
   const product = String(args.product || "").trim();
   const originalRequest = String(args.originalRequest || "").trim();
   const store = String(args.store || "").trim();
   const recentConversationSummary = String(args.recentConversationSummary || "").trim();
-  const recommendation = await generateAccessoryRecommendation({
+  const recommendation = await generateGiftAccessoryRecommendation({
     product,
     originalRequest,
     store,
@@ -649,7 +649,7 @@ interface AccessoryRecommendation {
   generatedBy: string;
 }
 
-async function generateAccessoryRecommendation(
+async function generateGiftAccessoryRecommendation(
   input: AccessoryRecommendationInput
 ): Promise<AccessoryRecommendation | null> {
   if (!process.env.OPENAI_API_KEY || !input.product) {
@@ -670,7 +670,7 @@ async function generateAccessoryRecommendation(
         {
           role: "system",
           content:
-            "Generate one personalized accessory recommendation for a real-time consumer electronics retail agent. Return strict JSON only. Use real accessory naming compatible with the reserved product. Personalize primarily from the current call and reservation context. You may synthesize a plausible past shopping signal from the current request, but do not repeatedly use static profile facts. Do not mention a daughter, birthday, purple preference, or gift context unless the currentConversation or originalCustomerRequest explicitly mentions it. Do not use fictional demo brands such as AeroTab, NovaBook, PulseWatch, Orbit Phone, PageLite, SonicWave, PlayBox, HomeMesh, EchoNest, ViewMax, SkyLite, or VistaCam. If no natural personalized accessory exists, return name as an empty string.",
+            "Generate one personalized accessory recommendation for a real-time consumer electronics retail agent. Return strict JSON only. Use real accessory naming compatible with the reserved product. The assistant MUST naturally bring up that in a previous conversation, the customer mentioned this purchase is a birthday gift for their daughter, who likes purple. Suggest a purple accessory (like a purple case) compatible with the reserved product, and mention that it can be reserved together with it. Be natural, conversational, and avoid sounding rigidly scripted. Do not use fictional demo brands such as AeroTab, NovaBook, PulseWatch, Orbit Phone, PageLite, SonicWave, PlayBox, HomeMesh, EchoNest, ViewMax, SkyLite, or VistaCam. If no natural personalized accessory exists, return name as an empty string.",
         },
         {
           role: "user",
@@ -685,9 +685,9 @@ async function generateAccessoryRecommendation(
               preferredPickupTime: customer.preferredPickupTime,
               relationshipContext: customer.relationshipContext,
               synthesizedHistorySignals: [
-                "Prior conversations can be summarized as practical shopping behavior, not a fixed gift preference.",
+                "Customer previously mentioned the purchase is a birthday gift for their daughter.",
+                "Daughter likes purple accessories.",
                 "Order activity suggests John prefers add-ons that make same-day pickup complete.",
-                "Store visit notes say John values quick handoff at the counter once a pickup time is selected.",
                 "Past SMS engagement shows John responds well to concise, useful add-on suggestions.",
               ],
             },
@@ -700,7 +700,7 @@ async function generateAccessoryRecommendation(
               source: "current conversation plus product fit | pickup behavior plus product fit | order history plus product fit | synthesized shopping pattern plus product fit | none",
               personalizationSignal: "the specific current-call detail or synthesized shopping pattern used, phrased safely for internal display",
               suggestedWording:
-                "one short natural sentence the assistant can say. It should briefly say why this is personal, without sounding invasive. If original request differs from reserved product, start with 'For the [reserved product] we reserved...' and do not imply the accessory fits the original requested product.",
+                "One natural, conversational sentence the assistant can say. It should mention the daughter's birthday and her preference for purple, and offer a matching purple accessory that's in stock. If original request differs from reserved product, start with 'For the [reserved product] we reserved...' and do not imply the accessory fits the original requested product.",
             },
           }),
         },
