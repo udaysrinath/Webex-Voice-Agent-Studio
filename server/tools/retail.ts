@@ -130,7 +130,7 @@ export const retailTools = [
           description: "Customer phone number in E.164 format.",
         },
       },
-      required: ["store", "pickupDate", "pickupTime"],
+      required: ["product", "store", "pickupDate", "pickupTime"],
     },
   },
   {
@@ -458,8 +458,16 @@ export async function reserve_item(args: Record<string, any>): Promise<ToolResul
     ? rawPickupTime
     : extractPickupTimeFromCombined(combinedPickup);
   const pickupTime = [pickupDate, pickupClockTime].filter(Boolean).join(" at ").trim() || combinedPickup;
-  const product = String(args.product || args.sku || RETAIL_STORE_ASSISTANT_USE_CASE.associatePlaybook.reservedItem).trim();
+  const product = String(args.product || args.sku || "").trim();
   const customerName = String(args.customerName || RETAIL_STORE_ASSISTANT_USE_CASE.customer.name).trim();
+
+  if (!product) {
+    return {
+      success: false,
+      error: "You must specify the product to reserve.",
+      data: { store, pickupDate, pickupTime, customerName },
+    };
+  }
 
   if (!hasPickupDate || !hasPickupTime) {
     const missing = !hasPickupDate && !hasPickupTime
