@@ -191,18 +191,14 @@ export interface WebexProfileUpdate {
   webexSpaceId?: string;
 }
 
-export interface WebexDemoSessionRequest {
-  webexEmail: string;
+export interface DemoCustomerSessionRequest {
+  customerEmail: string;
 }
 
-export interface WebexDemoSessionResult {
+export interface DemoCustomerSessionResult {
   success: boolean;
-  roomId: string;
-  roomTitle: string;
-  webexEmail: string;
-  createdRoom: boolean;
-  membershipStatus: "added" | "already_member";
-  messageSent: boolean;
+  customerEmail: string;
+  emailConfigured: boolean;
 }
 
 export const webexApi = {
@@ -271,9 +267,9 @@ export const webexApi = {
   },
 };
 
-export const webexDemoApi = {
-  setupSession: async (data: WebexDemoSessionRequest): Promise<WebexDemoSessionResult> => {
-    const res = await fetch(`${API_BASE}/demo/webex-session`, {
+export const demoCustomerApi = {
+  setupSession: async (data: DemoCustomerSessionRequest): Promise<DemoCustomerSessionResult> => {
+    const res = await fetch(`${API_BASE}/demo/customer-session`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(data),
@@ -287,7 +283,7 @@ export const webexDemoApi = {
       } catch {
         error = { error: body };
       }
-      throw new Error(error.error || "Failed to set up Webex demo session");
+      throw new Error(error.error || "Failed to set up customer confirmation");
     }
 
     return res.json();

@@ -30,6 +30,17 @@ assert.equal(
 
 assert.equal(
   resolveReservationDeliveryChannel({
+    env: {
+      CUSTOMER_CONFIRMATION_EMAIL: "customer@example.com",
+      DEMO_CONFIRMATION_EMAIL_WEBHOOK_URL: "https://email.example.test/send",
+    },
+    smsConfigured: true,
+  }),
+  "sms"
+);
+
+assert.equal(
+  resolveReservationDeliveryChannel({
     requestedChannel: "email",
     env: {
       CUSTOMER_CONFIRMATION_EMAIL: "customer@example.com",

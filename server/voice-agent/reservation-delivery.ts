@@ -24,6 +24,12 @@ interface ReservationDeliveryResult {
 type FetchImpl = (url: string, init?: RequestInit) => Promise<Response>;
 const DEFAULT_EMAIL_TIMEOUT_MS = 8000;
 
+interface ReservationDeliveryRuntimeProfile {
+  customerEmail?: string;
+}
+
+const runtimeProfile: ReservationDeliveryRuntimeProfile = {};
+
 const EMAIL_TO_ENV_KEYS = [
   "CUSTOMER_CONFIRMATION_EMAIL",
   "DEMO_CUSTOMER_EMAIL",
@@ -43,9 +49,28 @@ function firstConfiguredValue(env: ReservationDeliveryEnv, keys: string[]): stri
   return "";
 }
 
+function normalizeEmail(email?: string): string | undefined {
+  const trimmed = email?.trim().toLowerCase();
+  return trimmed || undefined;
+}
+
+export function getReservationDeliveryProfile(): ReservationDeliveryRuntimeProfile {
+  return { ...runtimeProfile };
+}
+
+export function updateReservationDeliveryProfile(
+  update: ReservationDeliveryRuntimeProfile
+): ReservationDeliveryRuntimeProfile {
+  if (update.customerEmail !== undefined) {
+    runtimeProfile.customerEmail = normalizeEmail(update.customerEmail);
+  }
+  return getReservationDeliveryProfile();
+}
+
 export function getReservationConfirmationEmailTo(
   env: ReservationDeliveryEnv = process.env
 ): string {
+  if (runtimeProfile.customerEmail) return runtimeProfile.customerEmail;
   return firstConfiguredValue(env, EMAIL_TO_ENV_KEYS);
 }
 
@@ -86,7 +111,6 @@ export function resolveReservationDeliveryChannel(options: {
   if (requested === "fake" || requested === "mock") return "fake";
   if (requested) return "fake";
 
-  if (isReservationEmailConfigured(env)) return "email";
   if (options.smsConfigured) return "sms";
   return "fake";
 }
