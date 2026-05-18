@@ -5,12 +5,13 @@ import {
   type RetailInventoryItem,
 } from "@shared/use-cases";
 import OpenAI from "openai";
+import { createRetailToolSession, type RetailToolSession, type ToolExecutionContext } from "./tool-context";
 
 type ToolResult = { success: boolean; result?: string; error?: string; data?: unknown };
 
-const generatedInventory = new Map<string, RetailInventoryItem>();
 const ENABLE_RETAIL_TIMEOUT = process.env.ENABLE_RETAIL_TIMEOUT === "true";
 const RETAIL_DYNAMIC_LOOKUP_TIMEOUT_MS = ENABLE_RETAIL_TIMEOUT ? 3500 : 0;
+const defaultRetailSession = createRetailToolSession();
 
 export const retailTools = [
   {
@@ -277,7 +278,7 @@ export async function get_customer_context(args: Record<string, any>): Promise<T
   };
 }
 
-export async function lookup_inventory(args: Record<string, any>): Promise<ToolResult> {
+export async function lookup_inventory(args: Record<string, any>, context: ToolExecutionContext = {}): Promise<ToolResult> {
   const product = String(args.product || "").trim();
   const query = product.toLowerCase();
   const preferredStore = String(args.preferredStore || "").trim();
@@ -367,32 +368,35 @@ export async function lookup_inventory(args: Record<string, any>): Promise<ToolR
   }
 
   // Static disabled — fall back to dynamic OpenAI lookup
-  const dynamicLookup = await generateInventoryLookup({ product, preferredStore });
-    if (dynamicLookup) {
-      dynamicLookup.items.forEach((item) => generatedInventory.set(item.sku, item));
+  const provider = getInventoryProvider();
+  const dynamicLookup = await provider.lookup({ product, preferredStore });
+  if (dynamicLookup) {
+    createInventoryService(context).record(dynamicLookup.items);
 
-      return {
-        success: true,
-        result: [
-          dynamicLookup.unavailable[0]
-            ? `${dynamicLookup.unavailable[0].name} is out of stock at ${dynamicLookup.unavailable[0].store}.`
-            : null,
-          dynamicLookup.recommendation
-            ? `${dynamicLookup.recommendation.name} is ${getRetailInventoryStatusLabel(dynamicLookup.recommendation.status).toLowerCase()} at ${dynamicLookup.recommendation.store}.`
-            : null,
-        ]
-          .filter(Boolean)
-          .join(" "),
-        data: {
-          query,
-          items: dynamicLookup.items,
-          available: dynamicLookup.available,
-          unavailable: dynamicLookup.unavailable,
-          recommendation: dynamicLookup.recommendation,
-          generatedBy: dynamicLookup.generatedBy,
-        },
-      };
-    }
+    return {
+      success: true,
+      result: [
+        dynamicLookup.unavailable[0]
+          ? `${dynamicLookup.unavailable[0].name} is out of stock at ${dynamicLookup.unavailable[0].store}.`
+          : null,
+        dynamicLookup.recommendation
+          ? `${dynamicLookup.recommendation.name} is ${getRetailInventoryStatusLabel(dynamicLookup.recommendation.status).toLowerCase()} at ${dynamicLookup.recommendation.store}.`
+          : null,
+      ]
+        .filter(Boolean)
+        .join(" "),
+      data: {
+        query,
+        items: dynamicLookup.items,
+        available: dynamicLookup.available,
+        unavailable: dynamicLookup.unavailable,
+        recommendation: dynamicLookup.recommendation,
+        generatedBy: dynamicLookup.generatedBy,
+        provider: provider.name,
+        lookupStatus: "ok",
+      },
+    };
+  }
 
   return {
     success: true,
@@ -404,6 +408,8 @@ export async function lookup_inventory(args: Record<string, any>): Promise<ToolR
       unavailable: [],
       recommendation: null,
       noMatch: true,
+      provider: provider.name,
+      lookupStatus: "degraded",
     },
   };
 }
@@ -444,7 +450,7 @@ function extractPickupTimeFromCombined(value: string): string {
   return match?.[0] || "";
 }
 
-export async function reserve_item(args: Record<string, any>): Promise<ToolResult> {
+export async function reserve_item(args: Record<string, any>, context: ToolExecutionContext = {}): Promise<ToolResult> {
   const store = String(args.store || RETAIL_STORE_ASSISTANT_USE_CASE.associatePlaybook.reservedStore).trim();
   const rawPickupDate = String(args.pickupDate || "").trim();
   const rawPickupTime = String(args.pickupTime || "").trim();
@@ -490,7 +496,7 @@ export async function reserve_item(args: Record<string, any>): Promise<ToolResul
     };
   }
 
-  const item = findInventoryItem(product, store);
+  const item = createInventoryService(context).find(product, store);
   if (!item || item.status === "out_of_stock" || item.quantity <= 0) {
     return {
       success: false,
@@ -519,11 +525,30 @@ export async function reserve_item(args: Record<string, any>): Promise<ToolResul
   };
 }
 
-export async function recommend_gift_accessory(args: Record<string, any>): Promise<ToolResult> {
+export async function recommend_gift_accessory(args: Record<string, any>, context: ToolExecutionContext = {}): Promise<ToolResult> {
   const product = String(args.product || "").trim();
   const originalRequest = String(args.originalRequest || "").trim();
   const store = String(args.store || "").trim();
   const recentConversationSummary = String(args.recentConversationSummary || "").trim();
+
+  if (!product) {
+    return {
+      success: true,
+      result: "No accessory recommendation is available without a selected product.",
+      data: {
+        product,
+        originalRequest,
+        store,
+        recentConversationSummary,
+        recommendation: null,
+        rationale: "No product context was provided for accessory selection.",
+        rationaleSource: "none",
+        personalizationSignal: "",
+        suggestedWording: "",
+        generatedBy: "none",
+      },
+    };
+  }
 
   const ENABLE_STATIC_INVENTORY = process.env.ENABLE_STATIC_INVENTORY !== "false";
 
@@ -564,7 +589,7 @@ export async function recommend_gift_accessory(args: Record<string, any>): Promi
   }
 
   const accessory = recommendation?.item;
-  if (accessory) generatedInventory.set(accessory.sku, accessory);
+  if (accessory) createInventoryService(context).record([accessory]);
 
   return {
     success: true,
@@ -616,6 +641,68 @@ function shouldLogRetailOpenAi(): boolean {
 }
 
 const inventoryLookupCache = new Map<string, InventoryLookupResult>();
+
+interface InventoryProvider {
+  name: string;
+  lookup(input: InventoryLookupInput): Promise<InventoryLookupResult | null>;
+}
+
+class DynamicInventoryProvider implements InventoryProvider {
+  name = "dynamic-openai";
+
+  lookup(input: InventoryLookupInput): Promise<InventoryLookupResult | null> {
+    return generateInventoryLookup(input);
+  }
+}
+
+const inventoryProvider: InventoryProvider = new DynamicInventoryProvider();
+
+function getInventoryProvider(): InventoryProvider {
+  return inventoryProvider;
+}
+
+function normStr(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+}
+
+class InventoryService {
+  constructor(private readonly session: RetailToolSession) {}
+
+  record(items: RetailInventoryItem[]): void {
+    items.forEach((item) => this.session.generatedInventory.set(item.sku, item));
+  }
+
+  find(productOrSku: string, store: string): RetailInventoryItem | undefined {
+    const query = productOrSku.toLowerCase();
+    const queryNorm = normStr(productOrSku);
+    const normalizedStore = store.toLowerCase();
+    return this.allInventory().find((item) => {
+      const nameLower = item.name.toLowerCase();
+      const nameNorm = normStr(item.name);
+      const skuLower = item.sku.toLowerCase();
+      const matchesProduct =
+        skuLower === query ||
+        nameLower === query ||
+        nameNorm === queryNorm ||
+        nameNorm.includes(queryNorm);
+      return matchesProduct && item.store.toLowerCase().includes(normalizedStore);
+    });
+  }
+
+  findAvailableBySku(sku: string): RetailInventoryItem | undefined {
+    return this.allInventory().find(
+      (item) => item.sku === sku && item.status !== "out_of_stock" && item.quantity > 0
+    );
+  }
+
+  private allInventory(): RetailInventoryItem[] {
+    return [...Array.from(this.session.generatedInventory.values()), ...RETAIL_STORE_ASSISTANT_USE_CASE.inventory];
+  }
+}
+
+function createInventoryService(context: ToolExecutionContext): InventoryService {
+  return new InventoryService(context.retail || defaultRetailSession);
+}
 
 async function generateInventoryLookup(input: InventoryLookupInput): Promise<InventoryLookupResult | null> {
   const cacheKey = `${input.product.toLowerCase()}:${input.preferredStore.toLowerCase()}`;
@@ -955,31 +1042,4 @@ function normalizeRecommendationSentence(text: string): string {
 function normalizeRecommendationReason(text: string): string {
   const normalized = normalizeRecommendationSentence(text);
   return normalized ? normalized.charAt(0).toLowerCase() + normalized.slice(1) : normalized;
-}
-
-function normStr(s: string): string {
-  return s.toLowerCase().replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
-}
-
-function findInventoryItem(productOrSku: string, store: string): RetailInventoryItem | undefined {
-  const query = productOrSku.toLowerCase();
-  const queryNorm = normStr(productOrSku);
-  const normalizedStore = store.toLowerCase();
-  return [...Array.from(generatedInventory.values()), ...RETAIL_STORE_ASSISTANT_USE_CASE.inventory].find((item) => {
-    const nameLower = item.name.toLowerCase();
-    const nameNorm = normStr(item.name);
-    const skuLower = item.sku.toLowerCase();
-    const matchesProduct =
-      skuLower === query ||
-      nameLower === query ||
-      nameNorm === queryNorm ||
-      nameNorm.includes(queryNorm);
-    return matchesProduct && item.store.toLowerCase().includes(normalizedStore);
-  });
-}
-
-function findAvailableInventoryItemBySku(sku: string): RetailInventoryItem | undefined {
-  return [...Array.from(generatedInventory.values()), ...RETAIL_STORE_ASSISTANT_USE_CASE.inventory].find(
-    (item) => item.sku === sku && item.status !== "out_of_stock" && item.quantity > 0
-  );
 }
