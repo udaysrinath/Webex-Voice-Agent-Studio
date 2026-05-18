@@ -36,6 +36,7 @@ interface TwilioMonitorMessage {
   type:
     | "connected"
     | "callStarted"
+    | "callStateChanged"
     | "callEnded"
     | "smsSent"
     | "userTranscript"
@@ -55,6 +56,9 @@ interface TwilioMonitorMessage {
   corrected?: boolean;
   to?: string;
   callerPhone?: string;
+  state?: "starting" | "active" | "waiting_for_tool" | "wrap_up" | "post_call" | "ended";
+  previousState?: "starting" | "active" | "waiting_for_tool" | "wrap_up" | "post_call" | "ended";
+  reason?: string;
   toolName?: string;
   data?: unknown;
   success?: boolean;
