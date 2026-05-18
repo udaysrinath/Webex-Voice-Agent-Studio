@@ -9,7 +9,7 @@ import { storage } from "../storage";
 import { realtimeTools, executeTool, type ToolExecutionResult } from "../tools";
 import { buildRetailRuntimePrompt } from "@shared/prompt-builder";
 import { RETAIL_STORE_ASSISTANT_USE_CASE, isRetailStoreUseCasePrompt } from "@shared/use-cases";
-import { buildDemoWebexMessageArgs } from "./webex-routing";
+import { buildConfiguredWebexMessageArgs } from "./webex-routing";
 import {
   buildFakeReservationConfirmationResult,
   resolveReservationDeliveryChannel,
@@ -315,7 +315,7 @@ Never end the call because an item is unavailable, unsupported, or not in invent
 ${callerIdentityInstructions}
 Use preloaded returning-caller context only when it helps the caller's request. Do not recite history immediately after greeting.
 Before calling retail_reserve_item, ask the caller an open-ended question for both their preferred pickup date/day and specific pickup time. If they only provide a day/date, ask what time works for them. If they only provide a time, ask what day or date works for them. Do not reserve until both are confirmed in the current call. Do not mention, suggest, or assume any usual/default pickup time or same-day pickup unless the caller says it first in this call.
-After retail_reserve_item succeeds, your next spoken response must confirm the reservation, say that a customer confirmation will be prepared after the call, and give the reservation reference out loud. Do not mention Webex as the customer confirmation destination.
+After retail_reserve_item succeeds, your next spoken response must confirm the reservation, say that a customer confirmation will be prepared after the call, and give the reservation reference out loud. Do not mention internal delivery destinations to the customer.
 After retail_reserve_item succeeds, call retail_recommend_gift_accessory for the reserved product before the call ends.
 If confirmation delivery fails, do not mention provider, permission, API, or configuration errors. Say the confirmation is having issues right now and provide the reservation reference verbally.
 If the caller is silent for a few seconds after a request is answered, ask one short follow-up to check whether there is anything else you can help with.
@@ -342,7 +342,7 @@ Do not repeat the opening greeting after the first assistant turn.
 ${browserIdentityInstructions}
 Use preloaded returning-caller context only when it helps the caller's request. Do not recite history immediately after greeting.
 Before calling retail_reserve_item, ask the caller an open-ended question for both their preferred pickup date/day and specific pickup time. If they only provide a day/date, ask what time works for them. If they only provide a time, ask what day or date works for them. Do not reserve until both are confirmed in the current call. Do not mention, suggest, or assume any usual/default pickup time or same-day pickup unless the caller says it first in this call.
-After retail_reserve_item succeeds, your next spoken response must confirm the reservation, say that a customer confirmation will be prepared after the call, and give the reservation reference out loud. Do not mention Webex as the customer confirmation destination.
+After retail_reserve_item succeeds, your next spoken response must confirm the reservation, say that a customer confirmation will be prepared after the call, and give the reservation reference out loud. Do not mention internal delivery destinations to the customer.
 After retail_reserve_item succeeds, call retail_recommend_gift_accessory for the reserved product before the call ends.
 For product, store, price, and inventory questions, answer normally.
 If confirmation delivery fails, do not mention provider, permission, API, or configuration errors. Say the confirmation is having issues right now and provide the reservation reference verbally.
@@ -1369,7 +1369,7 @@ ${startupRetailContext}`;
         transcript,
       });
 
-      const result = await executeTool("webex_message", buildDemoWebexMessageArgs(message));
+      const result = await executeTool("webex_message", buildConfiguredWebexMessageArgs(message));
       sendTwilioMonitorEvent(monitorAgentId, {
         type: "toolCallCompleted",
         agentId: monitorAgentId,
@@ -2368,7 +2368,7 @@ ${startupRetailContext}`;
         transcript,
       });
 
-      const result = await executeTool("webex_message", buildDemoWebexMessageArgs(message));
+      const result = await executeTool("webex_message", buildConfiguredWebexMessageArgs(message));
       sendEvent({
         type: "toolCallCompleted",
         toolName: "retail_store_manager_summary",

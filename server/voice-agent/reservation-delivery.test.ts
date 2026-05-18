@@ -18,8 +18,11 @@ const reservation: RetailReservationForDelivery = {
 
 assert.equal(
   resolveReservationDeliveryChannel({
-    requestedChannel: "webex",
-    env: {},
+    requestedChannel: "unknown",
+    env: {
+      CUSTOMER_CONFIRMATION_EMAIL: "customer@example.com",
+      DEMO_CONFIRMATION_EMAIL_WEBHOOK_URL: "https://email.example.test/send",
+    },
     smsConfigured: false,
   }),
   "fake"

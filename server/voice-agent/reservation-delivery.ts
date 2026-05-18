@@ -83,7 +83,8 @@ export function resolveReservationDeliveryChannel(options: {
 
   if (requested === "sms") return options.smsConfigured ? "sms" : "fake";
   if (requested === "email") return isReservationEmailConfigured(env) ? "email" : "fake";
-  if (requested === "fake" || requested === "mock" || requested === "webex") return "fake";
+  if (requested === "fake" || requested === "mock") return "fake";
+  if (requested) return "fake";
 
   if (isReservationEmailConfigured(env)) return "email";
   if (options.smsConfigured) return "sms";
