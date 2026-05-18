@@ -379,6 +379,86 @@ export const twilioApi = {
   },
 };
 
+export interface DemoRuntimeConfig {
+  webexSpaceId: string;
+  source: "runtime" | "profile" | "unset";
+  updatedAt: number | null;
+}
+
+export interface DemoPreflightCheck {
+  id: string;
+  label: string;
+  ok: boolean;
+  detail: string;
+}
+
+export interface DemoPreflight {
+  ready: boolean;
+  config: DemoRuntimeConfig;
+  checks: DemoPreflightCheck[];
+}
+
+export interface DemoScenarioResult {
+  id: string;
+  label: string;
+  passed: boolean;
+  expected: string;
+  actual: string;
+  durationMs: number;
+  toolName?: string;
+  error?: string;
+}
+
+export interface DemoScenarioRun {
+  ranAt: number;
+  passed: boolean;
+  summary: {
+    total: number;
+    passed: number;
+    failed: number;
+  };
+  results: DemoScenarioResult[];
+}
+
+export const demoApi = {
+  getConfig: async (): Promise<DemoRuntimeConfig> => {
+    const res = await fetch(`${API_BASE}/demo/config`);
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  },
+
+  updateConfig: async (data: { webexSpaceId?: string }): Promise<DemoRuntimeConfig> => {
+    const res = await fetch(`${API_BASE}/demo/config`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      const error = await res.json();
+      throw new Error(error.error || "Failed to save demo config");
+    }
+    const payload = await res.json();
+    return payload.config;
+  },
+
+  getPreflight: async (): Promise<DemoPreflight> => {
+    const res = await fetch(`${API_BASE}/demo/preflight`);
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  },
+
+  runScenarios: async (): Promise<DemoScenarioRun> => {
+    const res = await fetch(`${API_BASE}/demo/scenarios/run`, {
+      method: "POST",
+    });
+    if (!res.ok) {
+      const error = await res.json();
+      throw new Error(error.error || "Failed to run demo scenarios");
+    }
+    return res.json();
+  },
+};
+
 export const ocrApi = {
   extractText: async (imageDataUrl: string): Promise<{ text: string }> => {
     const res = await fetch(`${API_BASE}/ocr`, {
