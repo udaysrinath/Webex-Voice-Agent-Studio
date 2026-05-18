@@ -11,7 +11,8 @@ const reservation = await reserve_item({
 });
 
 assert.equal(reservation.success, true);
-assert.match(reservation.result || "", /Webex demo space/i);
+assert.match(reservation.result || "", /confirmation/i);
+assert.match(reservation.result || "", /handled after the call/i);
 assert.match(reservation.result || "", /RSV-430-JOHN/);
 
-console.log("retail reservation Webex confirmation regression passed");
+console.log("retail reservation confirmation regression passed");

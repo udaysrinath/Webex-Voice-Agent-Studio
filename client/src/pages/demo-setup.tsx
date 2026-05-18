@@ -6,9 +6,8 @@ import {
   CheckCircle2,
   Loader2,
   Mail,
-  MessageSquare,
 } from "lucide-react";
-import { webexDemoApi, type WebexDemoSessionResult } from "@/lib/api";
+import { demoCustomerApi, type DemoCustomerSessionResult } from "@/lib/api";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -17,21 +16,21 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
 export default function DemoSetup() {
-  const [webexEmail, setWebexEmail] = useState("");
+  const [customerEmail, setCustomerEmail] = useState("");
 
   const setupMutation = useMutation({
-    mutationFn: webexDemoApi.setupSession,
+    mutationFn: demoCustomerApi.setupSession,
   });
 
   function handleSubmit(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault();
     setupMutation.mutate({
-      webexEmail,
+      customerEmail,
     });
   }
 
   const result = setupMutation.data;
-  const isDisabled = setupMutation.isPending || !webexEmail.trim();
+  const isDisabled = setupMutation.isPending || !customerEmail.trim();
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -44,14 +43,14 @@ export default function DemoSetup() {
               </Link>
             </Button>
             <div className="flex h-11 w-11 items-center justify-center rounded-lg border border-primary/20 bg-primary/10">
-              <MessageSquare className="h-5 w-5 text-primary" />
+              <Mail className="h-5 w-5 text-primary" />
             </div>
             <div>
-              <h1 className="text-xl font-semibold">Webex Demo Setup</h1>
-              <p className="text-sm text-muted-foreground">Cisco Live voice agent session target</p>
+              <h1 className="text-xl font-semibold">Customer Demo Setup</h1>
+              <p className="text-sm text-muted-foreground">Cisco Live customer contact target</p>
             </div>
           </div>
-          <Badge variant="outline">Webex email</Badge>
+          <Badge variant="outline">Customer email</Badge>
         </div>
       </div>
 
@@ -59,26 +58,26 @@ export default function DemoSetup() {
         <Card className="border-white/10 bg-card/50 p-6">
           <form className="space-y-5" onSubmit={handleSubmit}>
             <div>
-              <h2 className="text-lg font-semibold">Connect Webex Recipient</h2>
+              <h2 className="text-lg font-semibold">Set Customer Email</h2>
               <p className="mt-1 text-sm text-muted-foreground">
-                The server-owned Webex token creates the room from this email and posts confirmations there.
+                This configures the customer email used when email delivery is selected. Spoken confirmation wording defaults to SMS.
               </p>
             </div>
 
             <div className="max-w-xl">
               <div className="space-y-2">
-                <Label htmlFor="webex-email">Webex email</Label>
+                <Label htmlFor="customer-email">Customer email</Label>
                 <div className="relative">
                   <Mail className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                   <Input
-                    id="webex-email"
+                    id="customer-email"
                     type="email"
-                    value={webexEmail}
-                    onChange={(event) => setWebexEmail(event.target.value)}
+                    value={customerEmail}
+                    onChange={(event) => setCustomerEmail(event.target.value)}
                     className="pl-9"
-                    placeholder="person@example.com"
+                    placeholder="customer@example.com"
                     autoComplete="email"
-                    data-testid="input-webex-email"
+                    data-testid="input-customer-email"
                   />
                 </div>
               </div>
@@ -86,23 +85,23 @@ export default function DemoSetup() {
 
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <p className="text-sm text-muted-foreground">
-                No tester access token is needed.
+                The manager Webex room is fixed by server configuration.
               </p>
-              <Button type="submit" disabled={isDisabled} data-testid="button-create-webex-session">
+              <Button type="submit" disabled={isDisabled} data-testid="button-create-customer-session">
                 {setupMutation.isPending ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
-                  <MessageSquare className="h-4 w-4" />
+                  <Mail className="h-4 w-4" />
                 )}
-                Connect Webex Room
+                Save Customer Email
               </Button>
             </div>
           </form>
         </Card>
 
         {setupMutation.isError && (
-          <Alert variant="destructive" data-testid="alert-webex-session-error">
-            <AlertTitle>Webex setup failed</AlertTitle>
+          <Alert variant="destructive" data-testid="alert-customer-session-error">
+            <AlertTitle>Customer setup failed</AlertTitle>
             <AlertDescription>{setupMutation.error.message}</AlertDescription>
           </Alert>
         )}
@@ -113,43 +112,34 @@ export default function DemoSetup() {
   );
 }
 
-function SetupResult({ result }: { result: WebexDemoSessionResult }) {
+function SetupResult({ result }: { result: DemoCustomerSessionResult }) {
   return (
-    <Card className="border-emerald-500/30 bg-emerald-500/5 p-6" data-testid="card-webex-session-result">
+    <Card className="border-emerald-500/30 bg-emerald-500/5 p-6" data-testid="card-customer-session-result">
       <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
         <div className="flex gap-3">
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-emerald-500/30 bg-emerald-500/10">
             <CheckCircle2 className="h-5 w-5 text-emerald-300" />
           </div>
           <div>
-            <h2 className="text-lg font-semibold">Demo room connected</h2>
+            <h2 className="text-lg font-semibold">Customer email saved</h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              {result.createdRoom ? "Created" : "Reused"} room and{" "}
-              {result.membershipStatus === "added" ? "added" : "confirmed"} {result.webexEmail}.
+              {result.customerEmail} is saved for the customer confirmation flow.
             </p>
           </div>
         </div>
         <Badge className="w-fit bg-emerald-500/20 text-emerald-100" variant="outline">
-          Active target
+          Customer target
         </Badge>
       </div>
 
       <dl className="mt-5 grid gap-4 text-sm md:grid-cols-2">
         <div>
-          <dt className="text-muted-foreground">Room title</dt>
-          <dd className="mt-1 break-words font-medium">{result.roomTitle}</dd>
+          <dt className="text-muted-foreground">Customer email</dt>
+          <dd className="mt-1 break-words font-medium">{result.customerEmail}</dd>
         </div>
         <div>
-          <dt className="text-muted-foreground">Room ID</dt>
-          <dd className="mt-1 break-all font-mono text-xs">{result.roomId}</dd>
-        </div>
-        <div>
-          <dt className="text-muted-foreground">Webex recipient</dt>
-          <dd className="mt-1 font-medium">{result.webexEmail}</dd>
-        </div>
-        <div>
-          <dt className="text-muted-foreground">Smoke message</dt>
-          <dd className="mt-1 font-medium">{result.messageSent ? "Sent" : "Not sent"}</dd>
+          <dt className="text-muted-foreground">Email webhook</dt>
+          <dd className="mt-1 font-medium">{result.emailConfigured ? "Configured" : "Not configured"}</dd>
         </div>
       </dl>
     </Card>

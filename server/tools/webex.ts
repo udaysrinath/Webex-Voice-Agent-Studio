@@ -37,7 +37,8 @@ export async function message(args: Record<string, any>): Promise<{ success: boo
 
   const { message: rawMessage } = args;
   const messageContent = sanitizeText(rawMessage);
-  const roomId = webexProfile.webexSpaceId;
+  const requestedRoomId = typeof args.roomId === "string" ? args.roomId.trim() : "";
+  const roomId = requestedRoomId || webexProfile.webexSpaceId;
 
   if (!roomId) {
     return { 

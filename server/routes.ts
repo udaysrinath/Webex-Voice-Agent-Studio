@@ -14,7 +14,7 @@ import { chatTools, executeTool, realtimeTools } from "./tools";
 import { buildRetailRuntimePrompt } from "@shared/prompt-builder";
 import { VOICE_USE_CASES, isRetailStoreUseCasePrompt } from "@shared/use-cases";
 import { getWebexProfile, updateWebexProfile } from "./webex-profile";
-import { setupWebexDemoSession, WebexDemoSetupError } from "./webex-demo-setup";
+import { setupDemoCustomerSession } from "./demo-customer-setup";
 
 const upload = multer({ 
   dest: os.tmpdir(),
@@ -832,8 +832,8 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
     webexSpaceId: z.string().optional(),
   });
 
-  const webexDemoSessionSchema = z.object({
-    webexEmail: z.string().trim().email().max(254),
+  const demoCustomerSessionSchema = z.object({
+    customerEmail: z.string().trim().email().max(254),
   });
 
   app.get("/api/webex/profile", async (_req, res) => {
@@ -861,19 +861,16 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
     }
   });
 
-  app.post("/api/demo/webex-session", async (req, res) => {
+  app.post("/api/demo/customer-session", async (req, res) => {
     try {
-      const data = webexDemoSessionSchema.parse(req.body || {});
-      const result = await setupWebexDemoSession(data);
+      const data = demoCustomerSessionSchema.parse(req.body || {});
+      const result = setupDemoCustomerSession(data);
       res.json(result);
     } catch (error: any) {
       if (error.name === "ZodError") {
         return res.status(400).json({ error: fromError(error).toString() });
       }
-      if (error instanceof WebexDemoSetupError) {
-        return res.status(error.statusCode).json({ error: error.message });
-      }
-      res.status(500).json({ error: error.message || "Failed to set up Webex demo session" });
+      res.status(500).json({ error: error.message || "Failed to set up customer confirmation" });
     }
   });
 
