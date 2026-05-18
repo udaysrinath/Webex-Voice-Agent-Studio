@@ -1,4 +1,5 @@
 export type ReservationDeliveryChannel = "email" | "sms" | "fake";
+export type ReservationSpokenDeliveryRoute = "email" | "sms";
 
 export interface RetailReservationForDelivery {
   customerName: string;
@@ -113,6 +114,15 @@ export function resolveReservationDeliveryChannel(options: {
 
   if (options.smsConfigured) return "sms";
   return "fake";
+}
+
+export function getReservationDeliverySpokenInstruction(
+  route: ReservationSpokenDeliveryRoute
+): string {
+  if (route === "sms") {
+    return "After retail_reserve_item succeeds, your next spoken response must confirm the reservation, say that the confirmation will be sent by text message, and give the reservation reference out loud.";
+  }
+  return "After retail_reserve_item succeeds, your next spoken response must confirm the reservation, say that the confirmation will be sent by email, and give the reservation reference out loud.";
 }
 
 export function formatReservationConfirmationText(

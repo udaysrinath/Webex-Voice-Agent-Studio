@@ -12,9 +12,11 @@ import { RETAIL_STORE_ASSISTANT_USE_CASE, isRetailStoreUseCasePrompt } from "@sh
 import { buildConfiguredWebexMessageArgs } from "./webex-routing";
 import {
   buildFakeReservationConfirmationResult,
+  getReservationDeliverySpokenInstruction,
   resolveReservationDeliveryChannel,
   sendReservationConfirmationEmail,
   type ReservationDeliveryChannel,
+  type ReservationSpokenDeliveryRoute,
 } from "./reservation-delivery";
 
 const SPURIOUS_SHORT_TRANSCRIPTS = new Set(["bye", "goodbye"]);
@@ -118,6 +120,12 @@ function getDemoConfirmationChannel(): ReservationDeliveryChannel {
     env: process.env,
     smsConfigured: canUseDemoSms(),
   });
+}
+
+function getDemoConfirmationSpokenRoute(): ReservationSpokenDeliveryRoute {
+  return process.env.DEMO_CONFIRMATION_CHANNEL?.trim().toLowerCase() === "email"
+    ? "email"
+    : "sms";
 }
 
 interface CallTranscriptEntry {
@@ -298,9 +306,12 @@ function buildTwilioCallInstructions(
   canSendCallerSummarySms: boolean,
   returningCallerName?: string
 ): string {
+  const confirmationSpokenRoute = getDemoConfirmationSpokenRoute();
   const summaryInstructions = canSendCallerSummarySms
     ? `Before the call ends, when the caller's main need appears handled or they indicate they are done, ask once: "Would you like me to text a brief summary of our discussion to this number?" If and only if the caller clearly agrees, call twilio_sms_caller_summary with a concise summary and next steps. Do not ask the caller to repeat their phone number. Do not send a summary without explicit consent.`
-    : `Do not offer SMS or text-message delivery in this demo. If the caller asks for SMS or a text message, explain that the reservation reference will be provided verbally and any configured customer confirmation is handled after the call.`;
+    : confirmationSpokenRoute === "sms"
+      ? `Do not offer an optional call-summary text message in this demo. Reservation confirmations use the configured SMS route after a reservation is created.`
+      : `Do not offer SMS or text-message delivery in this demo. Reservation confirmations use the configured email route after a reservation is created.`;
   const callerIdentityInstructions = returningCallerName
     ? `The PSTN caller ID matched returning customer ${returningCallerName}. Treat this caller as ${returningCallerName} for this demo call. You may greet them by first name once in the opening greeting. Do not ask for phone verification.`
     : `The caller starts unidentified. Do not greet by customer name until customer-specific lookup/context tools complete.`;
@@ -315,7 +326,7 @@ Never end the call because an item is unavailable, unsupported, or not in invent
 ${callerIdentityInstructions}
 Use preloaded returning-caller context only when it helps the caller's request. Do not recite history immediately after greeting.
 Before calling retail_reserve_item, ask the caller an open-ended question for both their preferred pickup date/day and specific pickup time. If they only provide a day/date, ask what time works for them. If they only provide a time, ask what day or date works for them. Do not reserve until both are confirmed in the current call. Do not mention, suggest, or assume any usual/default pickup time or same-day pickup unless the caller says it first in this call.
-After retail_reserve_item succeeds, your next spoken response must confirm the reservation, say that a customer confirmation will be prepared after the call, and give the reservation reference out loud. Do not mention internal delivery destinations to the customer.
+${getReservationDeliverySpokenInstruction(confirmationSpokenRoute)}
 After retail_reserve_item succeeds, call retail_recommend_gift_accessory for the reserved product before the call ends.
 If confirmation delivery fails, do not mention provider, permission, API, or configuration errors. Say the confirmation is having issues right now and provide the reservation reference verbally.
 If the caller is silent for a few seconds after a request is answered, ask one short follow-up to check whether there is anything else you can help with.
@@ -330,6 +341,7 @@ CRITICAL CALL CONTEXT:
 }
 
 function buildBrowserCallInstructions(baseInstructions: string, returningCallerName?: string): string {
+  const confirmationSpokenRoute = getDemoConfirmationSpokenRoute();
   const browserIdentityInstructions = returningCallerName
     ? `This browser demo session is for returning customer ${returningCallerName}. Treat this caller as ${returningCallerName}. You may greet them by first name once in the opening greeting. Do not ask for phone verification.`
     : `The browser caller starts unidentified. Do not greet by customer name until customer-specific lookup/context tools complete.`;
@@ -342,7 +354,7 @@ Do not repeat the opening greeting after the first assistant turn.
 ${browserIdentityInstructions}
 Use preloaded returning-caller context only when it helps the caller's request. Do not recite history immediately after greeting.
 Before calling retail_reserve_item, ask the caller an open-ended question for both their preferred pickup date/day and specific pickup time. If they only provide a day/date, ask what time works for them. If they only provide a time, ask what day or date works for them. Do not reserve until both are confirmed in the current call. Do not mention, suggest, or assume any usual/default pickup time or same-day pickup unless the caller says it first in this call.
-After retail_reserve_item succeeds, your next spoken response must confirm the reservation, say that a customer confirmation will be prepared after the call, and give the reservation reference out loud. Do not mention internal delivery destinations to the customer.
+${getReservationDeliverySpokenInstruction(confirmationSpokenRoute)}
 After retail_reserve_item succeeds, call retail_recommend_gift_accessory for the reserved product before the call ends.
 For product, store, price, and inventory questions, answer normally.
 If confirmation delivery fails, do not mention provider, permission, API, or configuration errors. Say the confirmation is having issues right now and provide the reservation reference verbally.

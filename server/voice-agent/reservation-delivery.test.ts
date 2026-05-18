@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 
 import {
   buildFakeReservationConfirmationResult,
+  getReservationDeliverySpokenInstruction,
   resolveReservationDeliveryChannel,
   sendReservationConfirmationEmail,
   type RetailReservationForDelivery,
@@ -68,6 +69,9 @@ assert.equal(
   }),
   "fake"
 );
+
+assert.match(getReservationDeliverySpokenInstruction("sms"), /text message/i);
+assert.match(getReservationDeliverySpokenInstruction("email"), /email/i);
 
 const fakeResult = buildFakeReservationConfirmationResult(reservation);
 assert.equal(fakeResult.success, true);
