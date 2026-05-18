@@ -508,14 +508,14 @@ export async function reserve_item(args: Record<string, any>): Promise<ToolResul
     pickupTime,
     status: "confirmed",
     confirmationDelivery: {
-      channel: "webex",
+      channel: "customer",
       status: "will_send_after_call",
-      message: `A confirmation will be sent to the Webex demo space. Reservation reference RSV-430-JOHN.`,
+      message: `A customer confirmation will be prepared after the call. Reservation reference RSV-430-JOHN.`,
     },
   };
   return {
     success: true,
-    result: `${item.name} is reserved for ${customerName} at ${store} for ${pickupTime}. A confirmation will be sent to the Webex demo space. Reservation reference RSV-430-JOHN.`,
+    result: `${item.name} is reserved for ${customerName} at ${store} for ${pickupTime}. A customer confirmation will be prepared after the call. Reservation reference RSV-430-JOHN.`,
     data: reservation,
   };
 }

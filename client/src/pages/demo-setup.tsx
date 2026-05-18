@@ -61,7 +61,7 @@ export default function DemoSetup() {
             <div>
               <h2 className="text-lg font-semibold">Connect Webex Recipient</h2>
               <p className="mt-1 text-sm text-muted-foreground">
-                The server-owned Webex token creates the room from this email and posts confirmations there.
+                The server-owned Webex token creates the room from this email and posts the setup smoke message there.
               </p>
             </div>
 
