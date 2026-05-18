@@ -4,9 +4,12 @@ import * as fs from "fs";
 import * as path from "path";
 import OpenAI from "openai";
 import { OpenAIRealtimeClient, RealtimeSessionConfig } from "./openai-realtime";
+import { CallSession, type CallLifecycleState } from "./call-session";
 import { mapRealtimeVoice } from "./voice";
 import { storage } from "../storage";
 import { realtimeTools, executeTool, type ToolExecutionResult } from "../tools";
+import { createRetailToolSession, type ToolExecutionContext } from "../tools/tool-context";
+import { getDemoRuntimeConfigSnapshot } from "../demo-config";
 import { buildRetailRuntimePrompt } from "@shared/prompt-builder";
 import { RETAIL_STORE_ASSISTANT_USE_CASE, isRetailStoreUseCasePrompt } from "@shared/use-cases";
 
@@ -39,6 +42,13 @@ const RETAIL_VOICE_PRODUCT_TERMS = new Set([
   "tablet",
 ]);
 
+function createCallToolContext(): ToolExecutionContext {
+  return {
+    retail: createRetailToolSession(),
+    demo: getDemoRuntimeConfigSnapshot(),
+  };
+}
+
 interface BrowserTranscriptGuardContext {
   acceptedUserTranscriptCount: number;
   browserPlaybackActive: boolean;
@@ -54,6 +64,7 @@ interface BrowserTranscriptGuardContext {
 type TwilioMonitorEvent =
   | { type: "connected"; agentId: string }
   | { type: "callStarted"; agentId: string; callSid?: string; streamSid?: string; callerPhone?: string; timestamp: number }
+  | { type: "callStateChanged"; agentId: string; state: CallLifecycleState; previousState?: CallLifecycleState; reason: string; timestamp: number }
   | { type: "callEnded"; agentId: string; timestamp: number }
   | { type: "smsSent"; agentId: string; to: string; timestamp: number }
   | { type: "toolCallStarted"; agentId: string; toolName: string; args?: Record<string, any>; timestamp: number }
@@ -878,6 +889,7 @@ function handleTwilioSession(ws: WebSocket): void {
   let suppressNextTwilioResponseTimer: ReturnType<typeof setTimeout> | null = null;
   let assistantTranscriptGuard = "";
   let callEndedSent = false;
+  let callSession = new CallSession("twilio");
   let pendingEndCall = false;
   let endingCall = false;
   let endCallTimer: ReturnType<typeof setTimeout> | null = null;
@@ -899,6 +911,7 @@ function handleTwilioSession(ws: WebSocket): void {
   let idleFollowUpTimer: ReturnType<typeof setTimeout> | null = null;
   let idleFollowUpSent = false;
   let assistantTurnCount = 0;
+  let toolContext: ToolExecutionContext = createCallToolContext();
   const transcriptEntries: CallTranscriptEntry[] = [];
 
   ws.on("message", async (raw) => {
@@ -913,6 +926,15 @@ function handleTwilioSession(ws: WebSocket): void {
         callStartedAt = Date.now();
         callSid = msg.start.callSid;
         activeCallSid = typeof callSid === "string" ? callSid : null;
+        callSession = new CallSession("twilio", String(callSid || msg.start.streamSid || Date.now()));
+        pendingEndCall = false;
+        endingCall = false;
+        callEndedSent = false;
+        if (endCallTimer) {
+          clearTimeout(endCallTimer);
+          endCallTimer = null;
+        }
+        toolContext = createCallToolContext();
 
         let instructions = "You are a helpful voice assistant. Keep responses concise and conversational.";
         let voice = "alloy";
@@ -959,6 +981,7 @@ function handleTwilioSession(ws: WebSocket): void {
           callerPhone: callerPhone !== "Unknown" ? callerPhone : undefined,
           timestamp: Date.now(),
         });
+        emitTwilioCallStateChange(callSession.activate("Call started"));
 
         startupRetailContext = callerPhone !== "Unknown" ? await runStartupRetailLookups() : "";
         const returningCallerName = startupRetailContext ? "John" : undefined;
@@ -1193,9 +1216,10 @@ ${startupRetailContext}`;
               args,
               timestamp: Date.now(),
             });
+            emitTwilioCallStateChange(callSession.beginTool(name));
             const rawResult = name === TWILIO_CALLER_SUMMARY_TOOL.name
               ? await sendCallerSummarySms(args, callerPhone, monitorAgentId)
-              : await executeTool(name, args);
+              : await executeTool(name, args, toolContext);
             const result = name === "twilio_sms"
               ? sanitizeSmsToolResult(rawResult, latestReservation)
               : rawResult;
@@ -1225,6 +1249,7 @@ ${startupRetailContext}`;
               durationMs: result.durationMs,
               timestamp: Date.now(),
             });
+            emitTwilioCallStateChange(callSession.finishTool(name));
             const retailEventType = getRetailToolEventType(name);
             if (retailEventType && result.success && result.data !== undefined) {
               sendTwilioMonitorEvent(monitorAgentId, {
@@ -1235,14 +1260,15 @@ ${startupRetailContext}`;
               });
             }
             console.log(`[VoiceAgent/Twilio] Function result:`, result);
-            if (pendingEndCall || endingCall || suppressAssistantOutput) {
+            if (!callSession.canAcceptToolOutput() || pendingEndCall || endingCall || suppressAssistantOutput) {
               console.warn(`[VoiceAgent/Twilio] Skipping stale function output for ${name}`);
               return;
             }
             openai?.sendFunctionOutput(callId, JSON.stringify(result));
           } catch (e: any) {
             console.error(`[VoiceAgent/Twilio] Function execution failed:`, e);
-            if (pendingEndCall || endingCall || suppressAssistantOutput) return;
+            emitTwilioCallStateChange(callSession.finishTool(name));
+            if (!callSession.canAcceptToolOutput() || pendingEndCall || endingCall || suppressAssistantOutput) return;
             openai?.sendFunctionOutput(callId, JSON.stringify({ success: false, error: e.message }));
           }
         });
@@ -1312,16 +1338,35 @@ ${startupRetailContext}`;
   function sendCallEnded(): void {
     if (callEndedSent) return;
     callEndedSent = true;
+    emitTwilioCallStateChange(callSession.startPostCall("Post-call work started"));
     const endedAt = Date.now();
-    void (async () => {
+    sendTwilioMonitorEvent(monitorAgentId, {
+      type: "callEnded",
+      agentId: monitorAgentId,
+      timestamp: Date.now(),
+    });
+    void runTwilioPostCallJobs(endedAt);
+  }
+
+  async function runTwilioPostCallJobs(endedAt: number): Promise<void> {
+    try {
       await sendOrderConfirmationSms();
       await sendStoreManagerSummary(endedAt);
-      sendTwilioMonitorEvent(monitorAgentId, {
-        type: "callEnded",
-        agentId: monitorAgentId,
-        timestamp: Date.now(),
-      });
-    })();
+    } finally {
+      emitTwilioCallStateChange(callSession.end("Post-call work completed"));
+    }
+  }
+
+  function emitTwilioCallStateChange(change: ReturnType<CallSession["activate"]>): void {
+    if (!change) return;
+    sendTwilioMonitorEvent(monitorAgentId, {
+      type: "callStateChanged",
+      agentId: monitorAgentId,
+      state: change.state,
+      previousState: change.previousState,
+      reason: change.reason,
+      timestamp: change.timestamp,
+    });
   }
 
   async function sendStoreManagerSummary(endedAt: number): Promise<void> {
@@ -1358,7 +1403,7 @@ ${startupRetailContext}`;
         transcript,
       });
 
-      const result = await executeTool("webex_message", { message });
+      const result = await executeTool("webex_message", { message }, toolContext);
       sendTwilioMonitorEvent(monitorAgentId, {
         type: "toolCallCompleted",
         agentId: monitorAgentId,
@@ -1402,7 +1447,7 @@ ${startupRetailContext}`;
     const body = truncateForSms(
       `Here is your order confirmation: ${latestReservation.itemName} is confirmed for pickup at ${latestReservation.store} at ${latestReservation.pickupTime}. Reservation ${latestReservation.reservationId}.`
     );
-    const rawResult = await executeTool("twilio_sms", { to, body });
+    const rawResult = await executeTool("twilio_sms", { to, body }, toolContext);
     const result = sanitizeSmsToolResult(rawResult, latestReservation);
     sendTwilioMonitorEvent(monitorAgentId, {
       type: "toolCallCompleted",
@@ -1445,7 +1490,7 @@ ${startupRetailContext}`;
 
   function runTwilioEndCallTool(reason: string, source: "tool" | "intent"): { success: boolean; result: string; data: { reason: string } } {
     const result = createEndCallResult(reason);
-    if (pendingEndCall || endingCall) return result;
+    if (callSession.isEndingOrEnded() || pendingEndCall || endingCall) return result;
     sendTwilioMonitorEvent(monitorAgentId, {
       type: "toolCallStarted",
       agentId: monitorAgentId,
@@ -1468,6 +1513,7 @@ ${startupRetailContext}`;
 
   function scheduleTwilioEndCall(reason: string, delayMs: number): void {
     pendingEndCall = true;
+    emitTwilioCallStateChange(callSession.startWrapUp(reason));
     if (endCallTimer) return;
     endCallTimer = setTimeout(() => {
       completeTwilioEndCall(reason).catch((error) => {
@@ -1477,7 +1523,7 @@ ${startupRetailContext}`;
   }
 
   async function completeTwilioEndCall(reason: string): Promise<void> {
-    if (endingCall) return;
+    if (endingCall || callSession.lifecycleState === "ended") return;
     endingCall = true;
     pendingEndCall = false;
     if (endCallTimer) {
@@ -1522,7 +1568,7 @@ ${startupRetailContext}`;
     }
 
     const body = truncateForSms(`Summary of our call: ${summary}`);
-    const rawResult = await executeTool("twilio_sms", { to: callerPhone, body });
+    const rawResult = await executeTool("twilio_sms", { to: callerPhone, body }, toolContext);
     const result = sanitizeSmsToolResult(rawResult, latestReservation);
     if (result.success) {
       sendTwilioMonitorEvent(agentId, {
@@ -1559,6 +1605,7 @@ ${startupRetailContext}`;
     clearTwilioIdleFollowUp();
     if (
       assistantTurnCount <= 1 ||
+      !callSession.canPromptCaller() ||
       pendingEndCall ||
       endingCall ||
       idleFollowUpSent ||
@@ -1569,6 +1616,7 @@ ${startupRetailContext}`;
       if (
         !openai ||
         twilioResponseActive ||
+        !callSession.canPromptCaller() ||
         pendingEndCall ||
         endingCall ||
         idleFollowUpSent ||
@@ -1596,9 +1644,10 @@ ${startupRetailContext}`;
   }
 
   function requestTwilioGracefulEndCall(reason: string, source: "tool" | "intent" = "intent"): void {
-    if (pendingEndCall || endingCall) return;
+    if (callSession.isEndingOrEnded() || pendingEndCall || endingCall) return;
     clearTwilioIdleFollowUp();
     pendingEndCall = true;
+    emitTwilioCallStateChange(callSession.startWrapUp(reason));
     sendTwilioMonitorEvent(monitorAgentId, {
       type: "toolCallStarted",
       agentId: monitorAgentId,
@@ -1639,9 +1688,9 @@ ${startupRetailContext}`;
   }
 
   function maybeCompleteTwilioPendingEndCall(reason: string): void {
-    if (!pendingEndCall || endingCall || twilioResponseActive || markQueue.length > 0) return;
+    if (callSession.lifecycleState === "ended" || !pendingEndCall || endingCall || twilioResponseActive || markQueue.length > 0) return;
     setTimeout(() => {
-      if (!pendingEndCall || endingCall || twilioResponseActive || markQueue.length > 0) return;
+      if (callSession.lifecycleState === "ended" || !pendingEndCall || endingCall || twilioResponseActive || markQueue.length > 0) return;
       completeTwilioEndCall(reason).catch((error) => {
         console.error("[VoiceAgent/Twilio] End-call completion failed:", error);
       });
@@ -1657,7 +1706,7 @@ ${startupRetailContext}`;
       args: lookupArgs,
       timestamp: Date.now(),
     });
-    const userLookup = await executeTool("retail_user_lookup", lookupArgs);
+    const userLookup = await executeTool("retail_user_lookup", lookupArgs, toolContext);
     sendTwilioMonitorEvent(monitorAgentId, {
       type: "toolCallCompleted",
       agentId: monitorAgentId,
@@ -1685,7 +1734,7 @@ ${startupRetailContext}`;
       args: historyArgs,
       timestamp: Date.now(),
     });
-    const historyLookup = await executeTool("retail_user_history_lookup", historyArgs);
+    const historyLookup = await executeTool("retail_user_history_lookup", historyArgs, toolContext);
     sendTwilioMonitorEvent(monitorAgentId, {
       type: "toolCallCompleted",
       agentId: monitorAgentId,
@@ -1708,7 +1757,7 @@ ${startupRetailContext}`;
       args: contextArgs,
       timestamp: Date.now(),
     });
-    const customerContext = await executeTool("retail_get_customer_context", contextArgs);
+    const customerContext = await executeTool("retail_get_customer_context", contextArgs, toolContext);
     sendTwilioMonitorEvent(monitorAgentId, {
       type: "toolCallCompleted",
       agentId: monitorAgentId,
@@ -1764,12 +1813,14 @@ function handleBrowserSession(ws: WebSocket): void {
   let assistantTranscriptGuard = "";
   let browserCallStartedAt: number | null = null;
   let browserCallEndedSent = false;
+  let browserCallSession = new CallSession("browser");
   let latestReservation: RetailReservationDetails | null = null;
   let latestRecommendedUpsell = "";
   let startupRetailContext = "";
   let idleFollowUpTimer: ReturnType<typeof setTimeout> | null = null;
   let idleFollowUpSent = false;
   let assistantTurnCount = 0;
+  let browserToolContext: ToolExecutionContext = createCallToolContext();
   const transcriptEntries: CallTranscriptEntry[] = [];
 
   ws.on("message", async (raw, isBinary) => {
@@ -1795,6 +1846,14 @@ function handleBrowserSession(ws: WebSocket): void {
         lastUserTranscript = "";
         browserCallStartedAt = Date.now();
         browserCallEndedSent = false;
+        browserCallSession = new CallSession("browser");
+        pendingEndCall = false;
+        endingCall = false;
+        if (endCallTimer) {
+          clearTimeout(endCallTimer);
+          endCallTimer = null;
+        }
+        browserToolContext = createCallToolContext();
         latestReservation = null;
         latestRecommendedUpsell = "";
         startupRetailContext = "";
@@ -2109,7 +2168,8 @@ ${startupRetailContext}`;
               args,
               timestamp: Date.now(),
             });
-            const rawResult = await executeTool(name, args);
+            sendBrowserCallStateChanged(browserCallSession.beginTool(name));
+            const rawResult = await executeTool(name, args, browserToolContext);
             const result = name === "twilio_sms"
               ? sanitizeSmsToolResult(rawResult, latestReservation)
               : rawResult;
@@ -2137,6 +2197,7 @@ ${startupRetailContext}`;
               durationMs: result.durationMs,
               timestamp: Date.now(),
             });
+            sendBrowserCallStateChanged(browserCallSession.finishTool(name));
             const retailEventType = getRetailToolEventType(name);
             if (retailEventType && result.success && result.data !== undefined) {
               sendEvent({
@@ -2146,20 +2207,22 @@ ${startupRetailContext}`;
               });
             }
             console.log(`[VoiceAgent/Browser] Function result:`, result);
-            if (pendingEndCall || endingCall || suppressAssistantOutput) {
+            if (!browserCallSession.canAcceptToolOutput() || pendingEndCall || endingCall || suppressAssistantOutput) {
               console.warn(`[VoiceAgent/Browser] Skipping stale function output for ${name}`);
               return;
             }
             openai?.sendFunctionOutput(callId, JSON.stringify(result));
           } catch (e: any) {
             console.error(`[VoiceAgent/Browser] Function execution failed:`, e);
-            if (pendingEndCall || endingCall || suppressAssistantOutput) return;
+            sendBrowserCallStateChanged(browserCallSession.finishTool(name));
+            if (!browserCallSession.canAcceptToolOutput() || pendingEndCall || endingCall || suppressAssistantOutput) return;
             openai?.sendFunctionOutput(callId, JSON.stringify({ success: false, error: e.message }));
           }
         });
 
         openai.connect();
         sendEvent({ type: "connected" });
+        sendBrowserCallStateChanged(browserCallSession.activate("Browser voice session started"));
       } else if (msg.type === "stop") {
         clearBrowserIdleFollowUp();
         void sendBrowserCallEnded("Browser voice session stopped");
@@ -2199,7 +2262,7 @@ ${startupRetailContext}`;
 
   function runBrowserEndCallTool(reason: string, source: "tool" | "intent"): { success: boolean; result: string; data: { reason: string } } {
     const result = createEndCallResult(reason);
-    if (pendingEndCall || endingCall) return result;
+    if (browserCallSession.isEndingOrEnded() || pendingEndCall || endingCall) return result;
     sendEvent({
       type: "toolCallStarted",
       toolName: VOICE_END_CALL_TOOL.name,
@@ -2220,6 +2283,7 @@ ${startupRetailContext}`;
 
   function scheduleBrowserEndCall(reason: string, delayMs: number): void {
     pendingEndCall = true;
+    sendBrowserCallStateChanged(browserCallSession.startWrapUp(reason));
     if (endCallTimer) return;
     endCallTimer = setTimeout(() => {
       void completeBrowserEndCall(reason);
@@ -2227,7 +2291,7 @@ ${startupRetailContext}`;
   }
 
   async function completeBrowserEndCall(reason: string): Promise<void> {
-    if (endingCall) return;
+    if (endingCall || browserCallSession.lifecycleState === "ended") return;
     endingCall = true;
     pendingEndCall = false;
     if (endCallTimer) {
@@ -2238,22 +2302,31 @@ ${startupRetailContext}`;
     await sendBrowserCallEnded(reason);
     openai?.close();
     openai = null;
-    setTimeout(() => {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.close();
-      }
-    }, 50);
   }
 
   async function sendBrowserCallEnded(reason: string): Promise<void> {
     if (browserCallEndedSent) return;
     browserCallEndedSent = true;
+    sendBrowserCallStateChanged(browserCallSession.startPostCall("Browser post-call work started"));
     const endedAt = Date.now();
-    await Promise.all([
-      sendBrowserOrderConfirmationSms(),
-      sendBrowserStoreManagerSummary(endedAt),
-    ]);
     sendEvent({ type: "callEnded", reason, timestamp: Date.now() });
+    void runBrowserPostCallJobs(endedAt, reason);
+  }
+
+  async function runBrowserPostCallJobs(endedAt: number, reason: string): Promise<void> {
+    try {
+      await Promise.all([
+        sendBrowserOrderConfirmationSms(),
+        sendBrowserStoreManagerSummary(endedAt),
+      ]);
+    } finally {
+      sendBrowserCallStateChanged(browserCallSession.end(reason));
+      setTimeout(() => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.close();
+        }
+      }, 250);
+    }
   }
 
   async function sendBrowserStoreManagerSummary(endedAt: number): Promise<void> {
@@ -2289,7 +2362,7 @@ ${startupRetailContext}`;
         transcript,
       });
 
-      const result = await executeTool("webex_message", { message });
+      const result = await executeTool("webex_message", { message }, browserToolContext);
       sendEvent({
         type: "toolCallCompleted",
         toolName: "retail_store_manager_summary",
@@ -2330,7 +2403,7 @@ ${startupRetailContext}`;
     const body = truncateForSms(
       `Here is your order confirmation: ${latestReservation.itemName} is confirmed for pickup at ${latestReservation.store} at ${latestReservation.pickupTime}. Reservation ${latestReservation.reservationId}.`
     );
-    const rawResult = await executeTool("twilio_sms", { to, body });
+    const rawResult = await executeTool("twilio_sms", { to, body }, browserToolContext);
     const result = sanitizeSmsToolResult(rawResult, latestReservation);
     sendEvent({
       type: "toolCallCompleted",
@@ -2360,6 +2433,7 @@ ${startupRetailContext}`;
     clearBrowserIdleFollowUp();
     if (
       assistantTurnCount <= 1 ||
+      !browserCallSession.canPromptCaller() ||
       pendingEndCall ||
       endingCall ||
       idleFollowUpSent ||
@@ -2370,6 +2444,7 @@ ${startupRetailContext}`;
       if (
         !openai ||
         responseActive ||
+        !browserCallSession.canPromptCaller() ||
         pendingEndCall ||
         endingCall ||
         idleFollowUpSent ||
@@ -2397,9 +2472,10 @@ ${startupRetailContext}`;
   }
 
   function requestBrowserGracefulEndCall(reason: string, source: "tool" | "intent" = "intent"): void {
-    if (pendingEndCall || endingCall) return;
+    if (browserCallSession.isEndingOrEnded() || pendingEndCall || endingCall) return;
     clearBrowserIdleFollowUp();
     pendingEndCall = true;
+    sendBrowserCallStateChanged(browserCallSession.startWrapUp(reason));
     sendEvent({
       type: "toolCallStarted",
       toolName: VOICE_END_CALL_TOOL.name,
@@ -2438,9 +2514,9 @@ ${startupRetailContext}`;
   }
 
   function maybeCompleteBrowserPendingEndCall(reason: string): void {
-    if (!pendingEndCall || endingCall || responseActive || browserPlaybackActive) return;
+    if (browserCallSession.lifecycleState === "ended" || !pendingEndCall || endingCall || responseActive || browserPlaybackActive) return;
     setTimeout(() => {
-      if (!pendingEndCall || endingCall || responseActive || browserPlaybackActive) return;
+      if (browserCallSession.lifecycleState === "ended" || !pendingEndCall || endingCall || responseActive || browserPlaybackActive) return;
       void completeBrowserEndCall(reason);
     }, 700);
   }
@@ -2453,7 +2529,7 @@ ${startupRetailContext}`;
       args: lookupArgs,
       timestamp: Date.now(),
     });
-    const userLookup = await executeTool("retail_user_lookup", lookupArgs);
+    const userLookup = await executeTool("retail_user_lookup", lookupArgs, browserToolContext);
     sendEvent({
       type: "toolCallCompleted",
       toolName: "retail_user_lookup",
@@ -2478,7 +2554,7 @@ ${startupRetailContext}`;
       args: historyArgs,
       timestamp: Date.now(),
     });
-    const historyLookup = await executeTool("retail_user_history_lookup", historyArgs);
+    const historyLookup = await executeTool("retail_user_history_lookup", historyArgs, browserToolContext);
     sendEvent({
       type: "toolCallCompleted",
       toolName: "retail_user_history_lookup",
@@ -2497,7 +2573,7 @@ ${startupRetailContext}`;
       args: contextArgs,
       timestamp: Date.now(),
     });
-    const customerContext = await executeTool("retail_get_customer_context", contextArgs);
+    const customerContext = await executeTool("retail_get_customer_context", contextArgs, browserToolContext);
     sendEvent({
       type: "toolCallCompleted",
       toolName: "retail_get_customer_context",
@@ -2566,6 +2642,17 @@ ${startupRetailContext}`;
       Math.min(Math.round(playbackElapsedMs), Math.round(currentAssistantAudioSentMs))
     );
     openai?.truncateResponse(currentAssistantItemId, audioEndMs);
+  }
+
+  function sendBrowserCallStateChanged(change: ReturnType<CallSession["activate"]>): void {
+    if (!change) return;
+    sendEvent({
+      type: "callStateChanged",
+      state: change.state,
+      previousState: change.previousState,
+      reason: change.reason,
+      timestamp: change.timestamp,
+    });
   }
 
   function sendEvent(event: object): void {

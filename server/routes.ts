@@ -14,6 +14,8 @@ import { chatTools, executeTool, realtimeTools } from "./tools";
 import { buildRetailRuntimePrompt } from "@shared/prompt-builder";
 import { VOICE_USE_CASES, isRetailStoreUseCasePrompt } from "@shared/use-cases";
 import { getWebexProfile, updateWebexProfile } from "./webex-profile";
+import { getDemoPreflight, getDemoRuntimeConfigSnapshot, updateDemoRuntimeConfig } from "./demo-config";
+import { runDemoScenarios } from "./demo-scenarios";
 
 const upload = multer({ 
   dest: os.tmpdir(),
@@ -188,6 +190,45 @@ export async function registerRoutes(app: Express): Promise<Server> {
       llmModels,
       voices,
     });
+  });
+
+  const demoConfigSchema = z.object({
+    webexSpaceId: z.string().max(512).optional(),
+  });
+
+  app.get("/api/demo/config", (_req, res) => {
+    res.json(getDemoRuntimeConfigSnapshot());
+  });
+
+  app.put("/api/demo/config", (req, res) => {
+    try {
+      const data = demoConfigSchema.parse(req.body || {});
+      res.json({
+        success: true,
+        config: updateDemoRuntimeConfig(data),
+      });
+    } catch (error: any) {
+      if (error.name === "ZodError") {
+        return res.status(400).json({ error: fromError(error).toString() });
+      }
+      res.status(500).json({ error: error.message || "Failed to save demo config" });
+    }
+  });
+
+  app.get("/api/demo/preflight", async (req, res) => {
+    try {
+      res.json(await getDemoPreflight(req));
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to run demo preflight" });
+    }
+  });
+
+  app.post("/api/demo/scenarios/run", async (_req, res) => {
+    try {
+      res.json(await runDemoScenarios());
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to run demo scenarios" });
+    }
   });
 
   app.get("/api/use-cases/:id/tools", (req, res) => {
@@ -485,10 +526,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       let content = "";
       if (ext === ".pdf") {
-        const { default: pdfParse } = await import("pdf-parse");
+        const { PDFParse } = await import("pdf-parse");
         const dataBuffer = fs.readFileSync(tempFilePath);
-        const pdfData = await pdfParse(dataBuffer);
-        content = pdfData.text.trim().slice(0, 50000);
+        const parser = new PDFParse({ data: dataBuffer });
+        try {
+          const pdfData = await parser.getText();
+          content = pdfData.text.trim().slice(0, 50000);
+        } finally {
+          await parser.destroy();
+        }
       } else {
         content = fs.readFileSync(tempFilePath, "utf-8").trim().slice(0, 50000);
       }

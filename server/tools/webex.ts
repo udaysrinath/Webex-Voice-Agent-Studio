@@ -1,4 +1,5 @@
 import { getWebexProfile } from "../webex-profile";
+import type { ToolExecutionContext } from "./tool-context";
 
 export const webexTools = [
   {
@@ -28,7 +29,10 @@ export function sanitizeText(text: string): string {
     .replace(/\u00A0/g, ' ');
 }
 
-export async function message(args: Record<string, any>): Promise<{ success: boolean; result?: string; error?: string }> {
+export async function message(
+  args: Record<string, any>,
+  context: ToolExecutionContext = {}
+): Promise<{ success: boolean; result?: string; error?: string }> {
   const webexProfile = getWebexProfile();
   const token = webexProfile.bearerToken;
   if (!token) {
@@ -37,7 +41,7 @@ export async function message(args: Record<string, any>): Promise<{ success: boo
 
   const { message: rawMessage } = args;
   const messageContent = sanitizeText(rawMessage);
-  const roomId = webexProfile.webexSpaceId;
+  const roomId = context.demo?.webexSpaceId || webexProfile.webexSpaceId;
 
   if (!roomId) {
     return { 
