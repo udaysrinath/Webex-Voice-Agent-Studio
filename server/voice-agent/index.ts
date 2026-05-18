@@ -312,6 +312,7 @@ Never end the call because an item is unavailable, unsupported, or not in invent
 ${callerIdentityInstructions}
 Use preloaded returning-caller context only when it helps the caller's request. Do not recite history immediately after greeting.
 Before calling retail_reserve_item, ask the caller an open-ended question for both their preferred pickup date/day and specific pickup time. If they only provide a day/date, ask what time works for them. If they only provide a time, ask what day or date works for them. Do not reserve until both are confirmed in the current call. Do not mention, suggest, or assume any usual/default pickup time or same-day pickup unless the caller says it first in this call.
+After retail_reserve_item succeeds, your next spoken response must confirm the reservation, say that a confirmation text will be sent to the phone number on this call, and give the reservation reference out loud. This order confirmation text is part of the reservation flow and is separate from the optional call-summary text.
 After retail_reserve_item succeeds, call retail_recommend_gift_accessory for the reserved product before the call ends.
 If SMS sending fails, do not mention provider, regional, permission, API, or configuration errors. Say SMS is having issues right now and provide the reservation or order reference verbally.
 If the caller is silent for a few seconds after a request is answered, ask one short follow-up to check whether there is anything else you can help with.
@@ -338,6 +339,7 @@ Do not repeat the opening greeting after the first assistant turn.
 ${browserIdentityInstructions}
 Use preloaded returning-caller context only when it helps the caller's request. Do not recite history immediately after greeting.
 Before calling retail_reserve_item, ask the caller an open-ended question for both their preferred pickup date/day and specific pickup time. If they only provide a day/date, ask what time works for them. If they only provide a time, ask what day or date works for them. Do not reserve until both are confirmed in the current call. Do not mention, suggest, or assume any usual/default pickup time or same-day pickup unless the caller says it first in this call.
+After retail_reserve_item succeeds, your next spoken response must confirm the reservation, say that a confirmation text will be sent, and give the reservation reference out loud. This order confirmation text is part of the reservation flow and is separate from the optional call-summary text.
 After retail_reserve_item succeeds, call retail_recommend_gift_accessory for the reserved product before the call ends.
 For product, store, price, and inventory questions, answer normally.
 If SMS sending fails, do not mention provider, regional, permission, API, or configuration errors. Say SMS is having issues right now and provide the reservation or order reference verbally.
