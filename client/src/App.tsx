@@ -8,6 +8,7 @@ import Home from "@/pages/home";
 import Build from "@/pages/build";
 import Evaluate from "@/pages/evaluate";
 import PstnCall from "@/pages/pstn-call";
+import Preflight from "@/pages/preflight";
 import { UserProfile } from "@/components/user-profile";
 
 function Router() {
@@ -17,6 +18,7 @@ function Router() {
       <Route path="/build" component={Build} />
       <Route path="/evaluate" component={Evaluate} />
       <Route path="/pstn-call" component={PstnCall} />
+      <Route path="/preflight" component={Preflight} />
       <Route component={NotFound} />
     </Switch>
   );

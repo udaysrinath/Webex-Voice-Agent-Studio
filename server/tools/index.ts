@@ -1,6 +1,7 @@
 import * as webex from "./webex";
 import * as twilio from "./twilio";
 import * as retail from "./retail";
+import type { ToolExecutionContext } from "./tool-context";
 
 export type ToolExecutionResult = {
   success: boolean;
@@ -37,7 +38,8 @@ const providers: Record<string, any> = {
 
 export async function executeTool(
   name: string,
-  args: Record<string, any>
+  args: Record<string, any>,
+  context: ToolExecutionContext = {}
 ): Promise<ToolExecutionResult> {
   const startedAt = Date.now();
   // Split tool name based on the convention: {provider}_{function}
@@ -58,7 +60,7 @@ export async function executeTool(
 
   try {
     const result = await withTimeout(
-      Promise.resolve(fn(args)),
+      Promise.resolve(fn(args, context)),
       getToolTimeoutMs(name),
       `Tool ${name} timed out`
     );
