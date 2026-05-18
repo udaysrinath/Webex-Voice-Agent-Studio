@@ -190,6 +190,7 @@ Replit stores env vars as **Secrets** (encrypted, not in source control):
 | `TWILIO_AUTH_TOKEN` | For SMS/Voice | Twilio Auth Token |
 | `TWILIO_PHONE_NUMBER` | For SMS/Voice | e.g. `+15551234567` |
 | `APP_BASE_URL` | For SMS/Voice | Public URL for Twilio webhooks |
+| `TWILIO_PRECONNECT_GREETING` | Optional | Pre-stream Twilio greeting text. Requires `TWILIO_PRECONNECT_GREETING_ENABLED=true`; disabled by default to avoid mixing Twilio TTS with the Realtime agent voice |
 | `TWILIO_VOICE_GREETING` | Optional | Custom voice greeting message |
 | `TWILIO_VOICE_FAREWELL` | Optional | Custom post-recording farewell |
 | `ANAM_API_KEY` | For avatar | Anam.ai streaming |

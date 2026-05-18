@@ -1579,7 +1579,10 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
       }
 
       const greeting = process.env.TWILIO_PRECONNECT_GREETING;
-      if (greeting) {
+      const preconnectGreetingEnabled = /^(1|true|yes|on)$/i.test(
+        String(process.env.TWILIO_PRECONNECT_GREETING_ENABLED || "").trim()
+      );
+      if (greeting && preconnectGreetingEnabled) {
         twiml.say({ voice: "Polly.Joanna" }, greeting);
       }
 

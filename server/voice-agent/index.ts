@@ -4,28 +4,11 @@ import * as fs from "fs";
 import * as path from "path";
 import OpenAI from "openai";
 import { OpenAIRealtimeClient, RealtimeSessionConfig } from "./openai-realtime";
+import { mapRealtimeVoice } from "./voice";
 import { storage } from "../storage";
 import { realtimeTools, executeTool, type ToolExecutionResult } from "../tools";
 import { buildRetailRuntimePrompt } from "@shared/prompt-builder";
 import { RETAIL_STORE_ASSISTANT_USE_CASE, isRetailStoreUseCasePrompt } from "@shared/use-cases";
-
-const OPENAI_REALTIME_VOICE_MAP: Record<string, string> = {
-  alloy: "alloy",
-  echo: "echo",
-  shimmer: "shimmer",
-  "aura-asteria-en": "alloy",
-  "aura-luna-en": "shimmer",
-  "aura-stella-en": "shimmer",
-  "aura-orion-en": "echo",
-  "aura-arcas-en": "ash",
-  "aura-perseus-en": "echo",
-};
-
-function mapVoice(voice: string): string {
-  const valid = ["alloy", "ash", "ballad", "coral", "echo", "sage", "shimmer", "verse"];
-  if (valid.includes(voice)) return voice;
-  return OPENAI_REALTIME_VOICE_MAP[voice] || "alloy";
-}
 
 const SPURIOUS_SHORT_TRANSCRIPTS = new Set(["bye", "goodbye"]);
 const BROWSER_AUDIO_ECHO_GUARD_MS = 350;
@@ -960,7 +943,7 @@ function handleTwilioSession(ws: WebSocket): void {
           if (agent) {
             agentName = agent.name;
             instructions = agent.systemPrompt || instructions;
-            voice = mapVoice(agent.voiceModel);
+            voice = mapRealtimeVoice(agent.voiceModel);
             language = agent.language || language;
             monitorAgentId = resolvedAgentId;
           }
@@ -1823,7 +1806,7 @@ function handleBrowserSession(ws: WebSocket): void {
           if (agent) {
             agentName = agent.name;
             instructions = agent.systemPrompt || instructions;
-            voice = mapVoice(agent.voiceModel);
+            voice = mapRealtimeVoice(agent.voiceModel);
             language = agent.language || language;
           }
         }
