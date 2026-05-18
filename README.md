@@ -183,7 +183,7 @@ Replit stores env vars as **Secrets** (encrypted, not in source control):
 | `DATABASE_URL` | **Yes** | Neon PostgreSQL connection string |
 | `OPENAI_API_KEY` | Strongly recommended | TTS, chat, prompt generation |
 | `WEBEX_ACCESS_TOKEN` | For Webex features | Server-owned bot or personal access token |
-| `WEBEX_SPACE_ID` | Optional Webex fallback | Default room used before `/demo-setup` selects a tester room |
+| `WEBEX_SPACE_ID` | Webex room for demo | Configured manager room used for store-manager summaries |
 | `DEEPGRAM_API_KEY` | For voice input | Speech-to-text |
 | `DEEPGRAM_PROJECT_ID` | For voice input | Deepgram project |
 | `TWILIO_ACCOUNT_SID` | For Voice | Twilio Account SID |
@@ -191,7 +191,11 @@ Replit stores env vars as **Secrets** (encrypted, not in source control):
 | `TWILIO_PHONE_NUMBER` | For Voice | e.g. `+15551234567` |
 | `APP_BASE_URL` | For Voice | Public URL for Twilio webhooks |
 | `DEMO_ENABLE_SMS` | Optional | Defaults to `false`; keep disabled unless the environment is approved for SMS compliance |
-| `DEMO_CONFIRMATION_CHANNEL` | Optional | Defaults to `webex`; reservation confirmations go to Webex for the Cisco Live demo |
+| `DEMO_CONFIRMATION_CHANNEL` | Optional | `sms` or `email`; defaults to SMS. Spoken demo wording says SMS unless this is set to `email` |
+| `CUSTOMER_CONFIRMATION_EMAIL` | For email confirmations | Optional default customer email used when `DEMO_CONFIRMATION_CHANNEL=email`; `/demo-setup` can set this at runtime |
+| `DEMO_CONFIRMATION_EMAIL_WEBHOOK_URL` | For email confirmations | HTTPS endpoint that accepts the reservation email payload |
+| `DEMO_CONFIRMATION_EMAIL_FROM` | Optional email sender | Included in the email webhook payload when set |
+| `DEMO_CONFIRMATION_EMAIL_TIMEOUT_MS` | Optional | Defaults to `8000`; caps email webhook latency |
 | `TWILIO_PRECONNECT_GREETING` | Optional | Pre-stream Twilio greeting text. Requires `TWILIO_PRECONNECT_GREETING_ENABLED=true`; disabled by default to avoid mixing Twilio TTS with the Realtime agent voice |
 | `TWILIO_VOICE_GREETING` | Optional | Custom voice greeting message |
 | `TWILIO_VOICE_FAREWELL` | Optional | Custom post-recording farewell |
@@ -316,7 +320,7 @@ The app uses a static bearer token for Webex API access. No OAuth flow — confi
 2. Log in with your Webex account
 3. Copy the displayed personal access token
 4. Set as `WEBEX_ACCESS_TOKEN`
-5. Optionally set `WEBEX_SPACE_ID` as the default outbound message space
+5. Set `WEBEX_SPACE_ID` to the manager-facing Webex space
 
 Good for quick testing. Token expires after 12 hours.
 
@@ -327,16 +331,28 @@ Good for quick testing. Token expires after 12 hours.
 3. Fill in name, username, icon, description
 4. Copy the **Bot Access Token** (shown once — save immediately)
 5. Set as `WEBEX_ACCESS_TOKEN`
-6. Optionally set `WEBEX_SPACE_ID` to a fallback store-manager space
+6. Set `WEBEX_SPACE_ID` to the manager-facing Webex space
 7. Add the bot to any existing Webex spaces you want the agent to access
 
 Bot tokens never expire. The bot can only see rooms it has been invited to.
 
-### Demo Room Setup
+### Demo Customer Setup
 
-For demo testers, do not distribute Webex access tokens. Configure `WEBEX_ACCESS_TOKEN` once on the server, then open `/demo-setup` and enter the tester's Webex email.
+For demo testers, do not distribute Webex access tokens. Configure `WEBEX_ACCESS_TOKEN` and `WEBEX_SPACE_ID` once on the server for the predefined manager room.
 
-The setup page creates or reuses a room named `Cisco Live Voice Agent Demo - <webex-email>`, adds that Webex user, posts a smoke message, and makes that room the active target for reservation confirmations.
+The setup page configures only the customer email used when email confirmation delivery is selected. It does not create Webex rooms, add users to Webex rooms, or change the configured manager space. The spoken demo wording defaults to SMS.
+
+Post-call store-manager summaries use `WEBEX_SPACE_ID`. Customer reservation confirmations are sent through the selected customer channel: SMS by default, or email when explicitly selected.
+
+### Reservation Confirmation Delivery
+
+Customer-facing reservation confirmations are separate from the manager-facing Webex summary:
+
+- Spoken confirmation wording says text message by default. It says email only when `DEMO_CONFIRMATION_CHANNEL=email`.
+- Actual SMS sends only when `DEMO_CONFIRMATION_CHANNEL=sms`, `DEMO_ENABLE_SMS=true`, and Twilio SMS credentials are configured.
+- Actual email sends only when `DEMO_CONFIRMATION_CHANNEL=email`, `CUSTOMER_CONFIRMATION_EMAIL` is set or configured from `/demo-setup`, and `DEMO_CONFIRMATION_EMAIL_WEBHOOK_URL` is set.
+
+If the selected channel is not enabled or configured, the post-call job records a failed delivery instead of rerouting it to Webex or marking it as delivered.
 
 ### What It Enables
 

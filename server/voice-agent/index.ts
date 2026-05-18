@@ -9,6 +9,14 @@ import { storage } from "../storage";
 import { realtimeTools, executeTool, type ToolExecutionResult } from "../tools";
 import { buildRetailRuntimePrompt } from "@shared/prompt-builder";
 import { RETAIL_STORE_ASSISTANT_USE_CASE, isRetailStoreUseCasePrompt } from "@shared/use-cases";
+import { buildConfiguredWebexMessageArgs } from "./webex-routing";
+import {
+  getReservationDeliverySpokenInstruction,
+  resolveReservationDeliveryChannel,
+  sendReservationConfirmationEmail,
+  type ReservationDeliveryChannel,
+  type ReservationSpokenDeliveryRoute,
+} from "./reservation-delivery";
 
 const SPURIOUS_SHORT_TRANSCRIPTS = new Set(["bye", "goodbye"]);
 const BROWSER_AUDIO_ECHO_GUARD_MS = 350;
@@ -105,8 +113,14 @@ function canUseDemoSms(): boolean {
   return DEMO_ENABLE_SMS && isTwilioSmsConfigured();
 }
 
-function getDemoConfirmationChannel(): "webex" | "sms" {
-  return process.env.DEMO_CONFIRMATION_CHANNEL === "sms" && canUseDemoSms() ? "sms" : "webex";
+function getDemoConfirmationChannel(): ReservationDeliveryChannel {
+  return resolveReservationDeliveryChannel(process.env.DEMO_CONFIRMATION_CHANNEL);
+}
+
+function getDemoConfirmationSpokenRoute(): ReservationSpokenDeliveryRoute {
+  return process.env.DEMO_CONFIRMATION_CHANNEL?.trim().toLowerCase() === "email"
+    ? "email"
+    : "sms";
 }
 
 interface CallTranscriptEntry {
@@ -201,17 +215,6 @@ function getRecommendedUpsell(data: unknown): string {
   return String(value.recommendation?.name || value.recommendedUpsell || "").trim();
 }
 
-function formatReservationConfirmationMessage(reservation: RetailReservationDetails): string {
-  return [
-    "## Reservation confirmed",
-    "",
-    `**Customer:** ${reservation.customerName}`,
-    `**Item:** ${reservation.itemName}`,
-    `**Pickup:** ${reservation.store}, ${reservation.pickupTime}`,
-    `**Reference:** ${reservation.reservationId}`,
-  ].join("\n");
-}
-
 function formatJsonForInstructions(value: unknown): string {
   return JSON.stringify(value, null, 2);
 }
@@ -298,9 +301,12 @@ function buildTwilioCallInstructions(
   canSendCallerSummarySms: boolean,
   returningCallerName?: string
 ): string {
+  const confirmationSpokenRoute = getDemoConfirmationSpokenRoute();
   const summaryInstructions = canSendCallerSummarySms
     ? `Before the call ends, when the caller's main need appears handled or they indicate they are done, ask once: "Would you like me to text a brief summary of our discussion to this number?" If and only if the caller clearly agrees, call twilio_sms_caller_summary with a concise summary and next steps. Do not ask the caller to repeat their phone number. Do not send a summary without explicit consent.`
-    : `Do not offer SMS or text-message delivery in this demo. If the caller asks for SMS or a text message, explain that this demo sends confirmations to the Webex space instead.`;
+    : confirmationSpokenRoute === "sms"
+      ? `Do not offer an optional call-summary text message in this demo. For reservation confirmations, use the text-message confirmation wording after a reservation is created.`
+      : `Do not offer SMS or text-message delivery in this demo. For reservation confirmations, use the email confirmation wording after a reservation is created.`;
   const callerIdentityInstructions = returningCallerName
     ? `The PSTN caller ID matched returning customer ${returningCallerName}. Treat this caller as ${returningCallerName} for this demo call. You may greet them by first name once in the opening greeting. Do not ask for phone verification.`
     : `The caller starts unidentified. Do not greet by customer name until customer-specific lookup/context tools complete.`;
@@ -315,7 +321,7 @@ Never end the call because an item is unavailable, unsupported, or not in invent
 ${callerIdentityInstructions}
 Use preloaded returning-caller context only when it helps the caller's request. Do not recite history immediately after greeting.
 Before calling retail_reserve_item, ask the caller an open-ended question for both their preferred pickup date/day and specific pickup time. If they only provide a day/date, ask what time works for them. If they only provide a time, ask what day or date works for them. Do not reserve until both are confirmed in the current call. Do not mention, suggest, or assume any usual/default pickup time or same-day pickup unless the caller says it first in this call.
-After retail_reserve_item succeeds, your next spoken response must confirm the reservation, say that the confirmation will be sent to the Webex demo space, and give the reservation reference out loud. This Webex confirmation is part of the reservation flow.
+${getReservationDeliverySpokenInstruction(confirmationSpokenRoute)}
 After retail_reserve_item succeeds, call retail_recommend_gift_accessory for the reserved product before the call ends.
 If confirmation delivery fails, do not mention provider, permission, API, or configuration errors. Say the confirmation is having issues right now and provide the reservation reference verbally.
 If the caller is silent for a few seconds after a request is answered, ask one short follow-up to check whether there is anything else you can help with.
@@ -325,11 +331,12 @@ ${baseInstructions}
 CRITICAL CALL CONTEXT:
 - The caller is calling from ${callerPhone || "an unavailable phone number"}.
 - ${callerIdentityInstructions}
-- After the call, the server deterministically sends the reservation confirmation and Store Manager Summary to Webex when a reservation exists.
+- After the call, the server deterministically sends or simulates the customer reservation confirmation and sends the Store Manager Summary to Webex when a reservation exists.
 - ${summaryInstructions}`;
 }
 
 function buildBrowserCallInstructions(baseInstructions: string, returningCallerName?: string): string {
+  const confirmationSpokenRoute = getDemoConfirmationSpokenRoute();
   const browserIdentityInstructions = returningCallerName
     ? `This browser demo session is for returning customer ${returningCallerName}. Treat this caller as ${returningCallerName}. You may greet them by first name once in the opening greeting. Do not ask for phone verification.`
     : `The browser caller starts unidentified. Do not greet by customer name until customer-specific lookup/context tools complete.`;
@@ -342,7 +349,7 @@ Do not repeat the opening greeting after the first assistant turn.
 ${browserIdentityInstructions}
 Use preloaded returning-caller context only when it helps the caller's request. Do not recite history immediately after greeting.
 Before calling retail_reserve_item, ask the caller an open-ended question for both their preferred pickup date/day and specific pickup time. If they only provide a day/date, ask what time works for them. If they only provide a time, ask what day or date works for them. Do not reserve until both are confirmed in the current call. Do not mention, suggest, or assume any usual/default pickup time or same-day pickup unless the caller says it first in this call.
-After retail_reserve_item succeeds, your next spoken response must confirm the reservation, say that the confirmation will be sent to the Webex demo space, and give the reservation reference out loud. This Webex confirmation is part of the reservation flow.
+${getReservationDeliverySpokenInstruction(confirmationSpokenRoute)}
 After retail_reserve_item succeeds, call retail_recommend_gift_accessory for the reserved product before the call ends.
 For product, store, price, and inventory questions, answer normally.
 If confirmation delivery fails, do not mention provider, permission, API, or configuration errors. Say the confirmation is having issues right now and provide the reservation reference verbally.
@@ -1369,7 +1376,7 @@ ${startupRetailContext}`;
         transcript,
       });
 
-      const result = await executeTool("webex_message", { message });
+      const result = await executeTool("webex_message", buildConfiguredWebexMessageArgs(message));
       sendTwilioMonitorEvent(monitorAgentId, {
         type: "toolCallCompleted",
         agentId: monitorAgentId,
@@ -1399,14 +1406,18 @@ ${startupRetailContext}`;
   }
 
   async function sendOrderConfirmation(): Promise<void> {
-    if (getDemoConfirmationChannel() === "sms") {
+    const channel = getDemoConfirmationChannel();
+    if (channel === "sms") {
       await sendOrderConfirmationSms();
       return;
     }
-    await sendOrderConfirmationWebex();
+    if (channel === "email") {
+      await sendOrderConfirmationEmail();
+      return;
+    }
   }
 
-  async function sendOrderConfirmationWebex(): Promise<void> {
+  async function sendOrderConfirmationEmail(): Promise<void> {
     if (!latestReservation) return;
     sendTwilioMonitorEvent(monitorAgentId, {
       type: "toolCallStarted",
@@ -1414,26 +1425,26 @@ ${startupRetailContext}`;
       toolName: "retail_order_confirmation",
       args: {
         reservationId: latestReservation.reservationId,
+        channel: "email",
       },
       timestamp: Date.now(),
     });
-    const result = await executeTool("webex_message", {
-      message: formatReservationConfirmationMessage(latestReservation),
-    });
+    const result = await sendReservationConfirmationEmail(latestReservation);
     sendTwilioMonitorEvent(monitorAgentId, {
       type: "toolCallCompleted",
       agentId: monitorAgentId,
       toolName: "retail_order_confirmation",
       success: result.success,
-      result: result.success ? "Reservation confirmation sent to Webex." : undefined,
+      result: result.success ? result.result : undefined,
       error: result.error,
+      data: result.data,
       durationMs: result.durationMs,
       timestamp: Date.now(),
     });
     if (result.success) {
-      console.log("[VoiceAgent/Twilio] Post-call Webex confirmation sent", { callSid });
+      console.log("[VoiceAgent/Twilio] Post-call customer email confirmation sent", { callSid });
     } else {
-      console.error("[VoiceAgent/Twilio] Post-call Webex confirmation failed:", result.error);
+      console.error("[VoiceAgent/Twilio] Post-call customer email confirmation failed:", result.error);
     }
   }
 
@@ -1445,9 +1456,26 @@ ${startupRetailContext}`;
       toolName: "retail_order_confirmation",
       args: {
         reservationId: latestReservation.reservationId,
+        channel: "sms",
       },
       timestamp: Date.now(),
     });
+    if (!canUseDemoSms()) {
+      sendTwilioMonitorEvent(monitorAgentId, {
+        type: "toolCallCompleted",
+        agentId: monitorAgentId,
+        toolName: "retail_order_confirmation",
+        success: false,
+        error: "SMS delivery is not enabled or configured for this environment.",
+        durationMs: 0,
+        timestamp: Date.now(),
+      });
+      console.error(
+        "[VoiceAgent/Twilio] Post-call customer SMS skipped: SMS is not enabled or configured",
+        { callSid }
+      );
+      return;
+    }
     const to = callerPhone !== "Unknown" ? callerPhone : RETAIL_STORE_ASSISTANT_USE_CASE.customer.phone;
     const body = truncateForSms(
       `Here is your order confirmation: ${latestReservation.itemName} is confirmed for pickup at ${latestReservation.store} at ${latestReservation.pickupTime}. Reservation ${latestReservation.reservationId}.`
@@ -2334,7 +2362,7 @@ ${startupRetailContext}`;
         transcript,
       });
 
-      const result = await executeTool("webex_message", { message });
+      const result = await executeTool("webex_message", buildConfiguredWebexMessageArgs(message));
       sendEvent({
         type: "toolCallCompleted",
         toolName: "retail_store_manager_summary",
@@ -2362,39 +2390,43 @@ ${startupRetailContext}`;
   }
 
   async function sendBrowserOrderConfirmation(): Promise<void> {
-    if (getDemoConfirmationChannel() === "sms") {
+    const channel = getDemoConfirmationChannel();
+    if (channel === "sms") {
       await sendBrowserOrderConfirmationSms();
       return;
     }
-    await sendBrowserOrderConfirmationWebex();
+    if (channel === "email") {
+      await sendBrowserOrderConfirmationEmail();
+      return;
+    }
   }
 
-  async function sendBrowserOrderConfirmationWebex(): Promise<void> {
+  async function sendBrowserOrderConfirmationEmail(): Promise<void> {
     if (!latestReservation) return;
     sendEvent({
       type: "toolCallStarted",
       toolName: "retail_order_confirmation",
       args: {
         reservationId: latestReservation.reservationId,
+        channel: "email",
       },
       timestamp: Date.now(),
     });
-    const result = await executeTool("webex_message", {
-      message: formatReservationConfirmationMessage(latestReservation),
-    });
+    const result = await sendReservationConfirmationEmail(latestReservation);
     sendEvent({
       type: "toolCallCompleted",
       toolName: "retail_order_confirmation",
       success: result.success,
-      result: result.success ? "Reservation confirmation sent to Webex." : undefined,
+      result: result.success ? result.result : undefined,
       error: result.error,
+      data: result.data,
       durationMs: result.durationMs,
       timestamp: Date.now(),
     });
     if (result.success) {
-      console.log("[VoiceAgent/Browser] Post-call Webex confirmation sent");
+      console.log("[VoiceAgent/Browser] Post-call customer email confirmation sent");
     } else {
-      console.error("[VoiceAgent/Browser] Post-call Webex confirmation failed:", result.error);
+      console.error("[VoiceAgent/Browser] Post-call customer email confirmation failed:", result.error);
     }
   }
 
@@ -2405,9 +2437,24 @@ ${startupRetailContext}`;
       toolName: "retail_order_confirmation",
       args: {
         reservationId: latestReservation.reservationId,
+        channel: "sms",
       },
       timestamp: Date.now(),
     });
+    if (!canUseDemoSms()) {
+      sendEvent({
+        type: "toolCallCompleted",
+        toolName: "retail_order_confirmation",
+        success: false,
+        error: "SMS delivery is not enabled or configured for this environment.",
+        durationMs: 0,
+        timestamp: Date.now(),
+      });
+      console.error(
+        "[VoiceAgent/Browser] Post-call customer SMS skipped: SMS is not enabled or configured"
+      );
+      return;
+    }
     const to = RETAIL_STORE_ASSISTANT_USE_CASE.customer.phone;
     const body = truncateForSms(
       `Here is your order confirmation: ${latestReservation.itemName} is confirmed for pickup at ${latestReservation.store} at ${latestReservation.pickupTime}. Reservation ${latestReservation.reservationId}.`
