@@ -7,6 +7,7 @@ import {
   CheckCircle2,
   Clipboard,
   Loader2,
+  MessageSquare,
   Mic,
   PhoneCall,
   Radio,
@@ -241,7 +242,13 @@ export default function PstnCall() {
               </p>
             </div>
           </div>
-          <Badge className={getMonitorBadgeClass(monitorState)}>{statusLabel}</Badge>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={() => setLocation("/demo-setup")}>
+              <MessageSquare className="h-4 w-4" />
+              Webex setup
+            </Button>
+            <Badge className={getMonitorBadgeClass(monitorState)}>{statusLabel}</Badge>
+          </div>
         </div>
       </div>
 

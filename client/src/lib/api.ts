@@ -191,6 +191,20 @@ export interface WebexProfileUpdate {
   webexSpaceId?: string;
 }
 
+export interface WebexDemoSessionRequest {
+  webexEmail: string;
+}
+
+export interface WebexDemoSessionResult {
+  success: boolean;
+  roomId: string;
+  roomTitle: string;
+  webexEmail: string;
+  createdRoom: boolean;
+  membershipStatus: "added" | "already_member";
+  messageSent: boolean;
+}
+
 export const webexApi = {
   getStats: async (): Promise<WebexStats> => {
     const res = await fetch(`${API_BASE}/webex/stats`);
@@ -253,6 +267,29 @@ export const webexApi = {
       const error = await res.json();
       throw new Error(error.error || "Failed to save Webex profile");
     }
+    return res.json();
+  },
+};
+
+export const webexDemoApi = {
+  setupSession: async (data: WebexDemoSessionRequest): Promise<WebexDemoSessionResult> => {
+    const res = await fetch(`${API_BASE}/demo/webex-session`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    });
+
+    if (!res.ok) {
+      const body = await res.text();
+      let error: { error?: string } = {};
+      try {
+        error = body ? JSON.parse(body) : {};
+      } catch {
+        error = { error: body };
+      }
+      throw new Error(error.error || "Failed to set up Webex demo session");
+    }
+
     return res.json();
   },
 };

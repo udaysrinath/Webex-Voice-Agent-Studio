@@ -182,8 +182,8 @@ Replit stores env vars as **Secrets** (encrypted, not in source control):
 |-----|----------|---------|
 | `DATABASE_URL` | **Yes** | Neon PostgreSQL connection string |
 | `OPENAI_API_KEY` | Strongly recommended | TTS, chat, prompt generation |
-| `WEBEX_ACCESS_TOKEN` | For Webex features | Bot or personal access token |
-| `WEBEX_SPACE_ID` | For Webex messages | Default space used when no UI override is saved |
+| `WEBEX_ACCESS_TOKEN` | For Webex features | Server-owned bot or personal access token |
+| `WEBEX_SPACE_ID` | Optional Webex fallback | Default room used before `/demo-setup` selects a tester room |
 | `DEEPGRAM_API_KEY` | For voice input | Speech-to-text |
 | `DEEPGRAM_PROJECT_ID` | For voice input | Deepgram project |
 | `TWILIO_ACCOUNT_SID` | For Voice | Twilio Account SID |
@@ -327,10 +327,16 @@ Good for quick testing. Token expires after 12 hours.
 3. Fill in name, username, icon, description
 4. Copy the **Bot Access Token** (shown once — save immediately)
 5. Set as `WEBEX_ACCESS_TOKEN`
-6. Set `WEBEX_SPACE_ID` to the default store-manager space if you want post-call messages to work without configuring the UI profile
-7. Add the bot to any Webex spaces you want the agent to access
+6. Optionally set `WEBEX_SPACE_ID` to a fallback store-manager space
+7. Add the bot to any existing Webex spaces you want the agent to access
 
 Bot tokens never expire. The bot can only see rooms it has been invited to.
+
+### Demo Room Setup
+
+For demo testers, do not distribute Webex access tokens. Configure `WEBEX_ACCESS_TOKEN` once on the server, then open `/demo-setup` and enter the tester's Webex email.
+
+The setup page creates or reuses a room named `Cisco Live Voice Agent Demo - <webex-email>`, adds that Webex user, posts a smoke message, and makes that room the active target for reservation confirmations.
 
 ### What It Enables
 
