@@ -6,7 +6,6 @@ import {
   CheckCircle2,
   Loader2,
   Mail,
-  MessageCircle,
 } from "lucide-react";
 import { demoCustomerApi, type DemoCustomerSessionResult } from "@/lib/api";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -89,12 +88,6 @@ export default function DemoSetup() {
                 The manager Webex room is fixed by server configuration.
               </p>
               <div className="flex flex-col gap-2 sm:flex-row">
-                <Button asChild type="button" variant="outline">
-                  <Link href="/whatsapp-opt-in">
-                    <MessageCircle className="h-4 w-4" />
-                    WhatsApp Opt-In
-                  </Link>
-                </Button>
                 <Button type="submit" disabled={isDisabled} data-testid="button-create-customer-session">
                   {setupMutation.isPending ? (
                     <Loader2 className="h-4 w-4 animate-spin" />

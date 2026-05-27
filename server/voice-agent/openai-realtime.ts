@@ -42,6 +42,9 @@ export class OpenAIRealtimeClient extends EventEmitter {
   private apiKey: string;
   private config: RealtimeSessionConfig;
   private emittedAssistantTranscriptInResponse = false;
+  private responseActive = false;
+  private responseCreateInFlight = false;
+  private pendingResponseCreates: Array<Record<string, unknown> | undefined> = [];
 
   constructor(apiKey: string, config: RealtimeSessionConfig) {
     super();
@@ -122,6 +125,8 @@ export class OpenAIRealtimeClient extends EventEmitter {
         this.emit("sessionReady", event);
         break;
       case "response.created":
+        this.responseActive = true;
+        this.responseCreateInFlight = false;
         this.emittedAssistantTranscriptInResponse = false;
         this.emit("responseStarted", event.response);
         break;
@@ -182,15 +187,21 @@ export class OpenAIRealtimeClient extends EventEmitter {
         });
         break;
       case "response.done":
+        this.responseActive = false;
+        this.responseCreateInFlight = false;
         if (isCancelledRealtimeResponse(event.response)) {
           this.emit("responseCancelled", event.response);
         } else {
           this.emit("responseDone", event.response);
         }
+        this.flushPendingResponseCreate();
         break;
       case "response.cancelled":
       case "response.canceled":
+        this.responseActive = false;
+        this.responseCreateInFlight = false;
         this.emit("responseCancelled");
+        this.flushPendingResponseCreate();
         break;
       case "error":
         if (isBenignRealtimeError(event.error)) return;
@@ -217,7 +228,7 @@ export class OpenAIRealtimeClient extends EventEmitter {
   }
 
   triggerResponse(response?: Record<string, unknown>): void {
-    this.send(response ? { type: "response.create", response } : { type: "response.create" });
+    this.enqueueResponseCreate(response);
   }
 
   sendFunctionOutput(callId: string, output: string, createResponse = true): void {
@@ -226,8 +237,28 @@ export class OpenAIRealtimeClient extends EventEmitter {
       item: { type: "function_call_output", call_id: callId, output },
     });
     if (createResponse) {
-      this.send({ type: "response.create" });
+      this.enqueueResponseCreate();
     }
+  }
+
+  private enqueueResponseCreate(response?: Record<string, unknown>): void {
+    if (this.responseActive || this.responseCreateInFlight) {
+      this.pendingResponseCreates.push(response);
+      return;
+    }
+    this.sendResponseCreate(response);
+  }
+
+  private flushPendingResponseCreate(): void {
+    if (this.responseActive || this.responseCreateInFlight) return;
+    if (this.pendingResponseCreates.length === 0) return;
+    const response = this.pendingResponseCreates.shift();
+    this.sendResponseCreate(response);
+  }
+
+  private sendResponseCreate(response?: Record<string, unknown>): void {
+    this.responseCreateInFlight = true;
+    this.send(response ? { type: "response.create", response } : { type: "response.create" });
   }
 
   private send(event: object): void {

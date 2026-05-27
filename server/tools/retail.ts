@@ -5,6 +5,10 @@ import {
   type RetailInventoryItem,
 } from "@shared/use-cases";
 import OpenAI from "openai";
+import {
+  getDemoCustomerProfile,
+  getDemoRetailCustomer,
+} from "../voice-agent/dto";
 
 type ToolResult = { success: boolean; result?: string; error?: string; data?: unknown };
 
@@ -129,7 +133,7 @@ export const retailTools = [
     type: "function" as const,
     name: "retail_lookup_inventory",
     description:
-      "Look up inventory by product or category across the current store and nearby stores. You must explicitly ask the user for their preferred pickup location before calling this tool.",
+      "Look up inventory by product or category across stores. Use this immediately after the caller selects a product so the assistant can state the available pickup store and propose a pickup time.",
     parameters: {
       type: "object",
       properties: {
@@ -139,10 +143,10 @@ export const retailTools = [
         },
         preferredStore: {
           type: "string",
-          description: "The location the customer wants to pick up from. DO NOT guess or assume based on profile. You must ask the customer explicitly.",
+          description: "Optional location only when the caller already stated one. Do not ask for this before checking inventory.",
         },
       },
-      required: ["product", "preferredStore"],
+      required: ["product"],
     },
   },
   {
@@ -225,18 +229,19 @@ export const retailTools = [
 
 export async function profile_lookup(args: Record<string, any>): Promise<ToolResult> {
   const suppliedPhone = typeof args.phone === "string" ? args.phone.trim() : "";
-  const customer = RETAIL_STORE_ASSISTANT_USE_CASE.customer;
+  const customer = getDemoRetailCustomer();
+  const profile = getDemoCustomerProfile();
 
   return {
     success: true,
     result: "Profile candidate found. Last-name confirmation is required before using customer details.",
     data: {
-      customerId: "cust-john-042",
-      preferredName: "John",
-      maskedFullName: "John R.",
+      customerId: profile.customerId,
+      preferredName: profile.firstName,
+      maskedFullName: profile.maskedName,
       phone: suppliedPhone ? maskPhone(suppliedPhone) : maskPhone(customer.phone),
       confirmationRequired: true,
-      confirmationPrompt: "Based on your phone number, I found a profile for John. Can you confirm your last name?",
+      confirmationPrompt: `Based on your phone number, I found a profile for ${profile.firstName}. Can you confirm your last name?`,
     },
   };
 }
@@ -251,20 +256,21 @@ export async function confirm_profile(args: Record<string, any>): Promise<ToolRe
       result: "Last-name confirmation is required before using the profile candidate.",
       data: {
         verified: false,
-        customerId: String(args.customerId || "cust-john-042"),
+        customerId: String(args.customerId || getDemoCustomerProfile().customerId),
         reason: "missing-last-name",
       },
     };
   }
 
+  const profile = getDemoCustomerProfile();
   return {
     success: true,
-    result: "Profile confirmed for demo purposes. The caller is John Rivera.",
+    result: `Profile confirmed for demo purposes. The caller is ${profile.name}.`,
     data: {
       verified: true,
-      customerId: String(args.customerId || "cust-john-042"),
-      customerName: "John Rivera",
-      preferredName: "John",
+      customerId: String(args.customerId || profile.customerId),
+      customerName: profile.name,
+      preferredName: profile.firstName,
       suppliedLastName,
       verificationMode: "demo-any-last-name",
       verifiedAt: Date.now(),
@@ -274,18 +280,19 @@ export async function confirm_profile(args: Record<string, any>): Promise<ToolRe
 
 export async function user_lookup(args: Record<string, any>): Promise<ToolResult> {
   const suppliedPhone = typeof args.phone === "string" ? args.phone.trim() : "";
-  const customer = RETAIL_STORE_ASSISTANT_USE_CASE.customer;
+  const customer = getDemoRetailCustomer();
+  const profile = getDemoCustomerProfile();
 
   return {
     success: true,
-    result: `User lookup complete: John found as a returning Gold member.`,
+    result: `User lookup complete: ${profile.firstName} found as a returning Gold member.`,
     data: {
-      customerId: "cust-john-042",
-      name: "John",
-      fullName: "John Rivera",
-      preferredName: "John",
+      customerId: profile.customerId,
+      name: profile.firstName,
+      fullName: profile.name,
+      preferredName: profile.firstName,
       phone: suppliedPhone ? maskPhone(suppliedPhone) : maskPhone(customer.phone),
-      email: "john.rivera@example.com",
+      email: profile.email,
       loyaltyTier: "Gold member",
       preferredStore: "ask caller",
       preferredPickupWindow: customer.preferredPickupTime,
@@ -309,9 +316,9 @@ export async function user_history_lookup(args: Record<string, any>): Promise<To
 
   return {
     success: true,
-    result: `Fetched ${conversationLimit} past conversations, previous orders, open issues, transactions, and engagement signals for John. Context source: prior Webex/SMS conversations, order history, transaction activity, store visits, and browsing engagement.`,
+    result: `Fetched ${conversationLimit} past conversations, previous orders, open issues, transactions, and engagement signals for ${getDemoCustomerProfile().firstName}. Context source: prior Webex/SMS conversations, order history, transaction activity, store visits, and browsing engagement.`,
     data: {
-      customerId: String(args.customerId || "cust-john-042"),
+      customerId: String(args.customerId || getDemoCustomerProfile().customerId),
       conversationCount: conversationLimit,
       contextSources: [
         "Past Webex conversations",
@@ -356,7 +363,7 @@ export async function user_history_lookup(args: Record<string, any>): Promise<To
 }
 
 export async function get_customer_context(args: Record<string, any>): Promise<ToolResult> {
-  const customer = RETAIL_STORE_ASSISTANT_USE_CASE.customer;
+  const customer = getDemoRetailCustomer();
   const suppliedName = typeof args.customerName === "string" ? args.customerName.trim() : "";
   const suppliedPhone = typeof args.phone === "string" ? args.phone.trim() : "";
 
@@ -406,7 +413,7 @@ export async function search_products(args: Record<string, any>): Promise<ToolRe
 
   return {
     success: true,
-    result: `Found ${catalogMatches.length} catalog match${catalogMatches.length === 1 ? "" : "es"} for ${query}: ${catalogMatches.map((item) => item.name).join("; ")}. This is product catalog information only; ask for pickup location before checking store availability.`,
+    result: `Found ${catalogMatches.length} catalog match${catalogMatches.length === 1 ? "" : "es"} for ${query}: ${catalogMatches.map((item) => item.name).join("; ")}. This is product catalog information only. If the caller chooses one of these products, call retail_lookup_inventory next without asking for pickup location first.`,
     data: {
       query,
       matches: catalogMatches,
@@ -422,13 +429,6 @@ export async function lookup_inventory(args: Record<string, any>): Promise<ToolR
   const preferredStore = String(args.preferredStore || "").trim();
   if (!query) {
     return { success: false, error: "Product is required for inventory lookup" };
-  }
-  if (!preferredStore) {
-    return { 
-      success: false, 
-      error: "You MUST ask the customer what location they want to pick up the product from before checking inventory.",
-      data: { product }
-    };
   }
 
   const ENABLE_STATIC_INVENTORY = process.env.ENABLE_STATIC_INVENTORY !== "false";
@@ -460,14 +460,19 @@ export async function lookup_inventory(args: Record<string, any>): Promise<ToolR
     });
 
     if (items.length > 0) {
-      const normalizedPreferredStore = /palo alto/i.test(preferredStore) ? "Palo Alto" : "San Jose";
+      const normalizedPreferredStore = preferredStore
+        ? /palo alto/i.test(preferredStore) ? "Palo Alto" : "San Jose"
+        : "";
       const available = items.filter((item) => item.status !== "out_of_stock" && item.quantity > 0);
       const unavailable = items.filter((item) => item.status === "out_of_stock" || item.quantity <= 0);
 
-      const preferredUnavailable = unavailable.find(item => item.store === normalizedPreferredStore) || unavailable[0];
+      const preferredUnavailable = normalizedPreferredStore
+        ? unavailable.find(item => item.store === normalizedPreferredStore) || unavailable[0]
+        : null;
       const recommendation = available[0] || null;
       // Use the caller's actual store name in the response, not the catalog's hardcoded store value
-      const callerStore = preferredStore.trim() || preferredUnavailable?.store || normalizedPreferredStore;
+      const callerStore = preferredStore || preferredUnavailable?.store || normalizedPreferredStore;
+      const suggestedPickupTime = "tomorrow at 2 PM";
 
       return {
         success: true,
@@ -476,7 +481,7 @@ export async function lookup_inventory(args: Record<string, any>): Promise<ToolR
             ? `${preferredUnavailable.name} is out of stock at ${callerStore}.`
             : null,
           recommendation
-            ? `${recommendation.name} is ${getRetailInventoryStatusLabel(recommendation.status).toLowerCase()} at ${recommendation.store}.`
+            ? `${recommendation.name} is ${getRetailInventoryStatusLabel(recommendation.status).toLowerCase()} at ${recommendation.store}. Offer to have it ready for pickup ${suggestedPickupTime}.`
             : null,
         ]
           .filter(Boolean)
@@ -487,6 +492,7 @@ export async function lookup_inventory(args: Record<string, any>): Promise<ToolR
           available,
           unavailable,
           recommendation,
+          suggestedPickupTime,
           generatedBy: "static-catalog",
         },
       };
@@ -651,7 +657,7 @@ export async function reserve_item(args: Record<string, any>): Promise<ToolResul
     : extractPickupTimeFromCombined(combinedPickup);
   const pickupTime = [pickupDate, pickupClockTime].filter(Boolean).join(" at ").trim() || combinedPickup;
   const product = String(args.product || args.sku || "").trim();
-  const customerName = String(args.customerName || RETAIL_STORE_ASSISTANT_USE_CASE.customer.name).trim();
+  const customerName = String(args.customerName || getDemoRetailCustomer().name).trim();
 
   if (!product) {
     return {
@@ -1018,7 +1024,7 @@ async function generateGiftAccessoryRecommendation(
 
   const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
   const model = process.env.RETAIL_RECOMMENDATION_MODEL || "gpt-4o-mini";
-  const customer = RETAIL_STORE_ASSISTANT_USE_CASE.customer;
+  const customer = getDemoRetailCustomer();
   const messages = [
     {
       role: "system" as const,
@@ -1040,8 +1046,8 @@ async function generateGiftAccessoryRecommendation(
           synthesizedHistorySignals: [
             "Customer previously mentioned the purchase is a birthday gift for their daughter.",
             "Daughter likes purple accessories.",
-            "Order activity suggests John prefers add-ons that make same-day pickup complete.",
-            "Past SMS engagement shows John responds well to concise, useful add-on suggestions.",
+            `Order activity suggests ${getDemoCustomerProfile().firstName} prefers add-ons that make same-day pickup complete.`,
+            `Past SMS engagement shows ${getDemoCustomerProfile().firstName} responds well to concise, useful add-on suggestions.`,
           ],
         },
         requiredJsonShape: {

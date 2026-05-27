@@ -9,7 +9,6 @@ import Build from "@/pages/build";
 import Evaluate from "@/pages/evaluate";
 import PstnCall from "@/pages/pstn-call";
 import DemoSetup from "@/pages/demo-setup";
-import WhatsAppOptIn from "@/pages/whatsapp-opt-in";
 import { UserProfile } from "@/components/user-profile";
 
 function Router() {
@@ -20,7 +19,6 @@ function Router() {
       <Route path="/evaluate" component={Evaluate} />
       <Route path="/pstn-call" component={PstnCall} />
       <Route path="/demo-setup" component={DemoSetup} />
-      <Route path="/whatsapp-opt-in" component={WhatsAppOptIn} />
       <Route component={NotFound} />
     </Switch>
   );

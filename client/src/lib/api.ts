@@ -201,14 +201,6 @@ export interface DemoCustomerSessionResult {
   emailConfigured: boolean;
 }
 
-export interface WhatsAppOptInConfig {
-  configured: boolean;
-  sandboxNumber: string;
-  joinCode: string;
-  joinMessage: string;
-  whatsAppUrl: string;
-}
-
 export const webexApi = {
   getStats: async (): Promise<WebexStats> => {
     const res = await fetch(`${API_BASE}/webex/stats`);
@@ -297,11 +289,6 @@ export const demoCustomerApi = {
     return res.json();
   },
 
-  getWhatsAppOptIn: async (): Promise<WhatsAppOptInConfig> => {
-    const res = await fetch(`${API_BASE}/demo/whatsapp-opt-in`);
-    if (!res.ok) throw new Error(await res.text());
-    return res.json();
-  },
 };
 
 export { type KnowledgeBaseItem };

@@ -1,28 +1,80 @@
-export const twilioTools = [
-  {
-    type: "function" as const,
-    name: "twilio_sms",
-    description: "Send an SMS text message to a specific phone number. Use this when the user asks you to send a text message.",
-    parameters: {
-      type: "object",
-      properties: {
-        to: {
-          type: "string",
-          description: "The destination phone number to send the SMS to, in E.164 format (e.g., +1234567890).",
-        },
-        body: {
-          type: "string",
-          description: "The content of the text message to send.",
-        },
+import { getDemoRetailCustomer } from "../voice-agent/dto";
+
+export const twilioSmsTool = {
+  type: "function" as const,
+  name: "twilio_sms",
+  description: "Send an SMS text message to a specific phone number. Use this when the user asks you to send a text message.",
+  parameters: {
+    type: "object",
+    properties: {
+      to: {
+        type: "string",
+        description: "The destination phone number to send the SMS to, in E.164 format (e.g., +1234567890).",
       },
-      required: ["to", "body"],
+      body: {
+        type: "string",
+        description: "The content of the text message to send.",
+      },
     },
+    required: ["to", "body"],
   },
-];
+};
+
+export const twilioCallerSummaryTool = {
+  type: "function" as const,
+  name: "twilio_sms_caller_summary",
+  description:
+    "Send a concise SMS summary of this voice call to the configured SMS recipient. Use only after the caller explicitly agrees to receive a summary text.",
+  parameters: {
+    type: "object",
+    properties: {
+      summary: {
+        type: "string",
+        description: "A concise, plain-language summary of the call discussion and any next steps.",
+      },
+    },
+    required: ["summary"],
+  },
+};
+
+export const voiceEndCallTool = {
+  type: "function" as const,
+  name: "voice_end_call",
+  description:
+    "End the active voice call only after the assistant has asked whether there is anything else and the user says no, or when the user explicitly says goodbye or asks to hang up. Do not use immediately after the user declines an add-on, pickup time, product option, or optional summary; ask if there is anything else first. Do not use after inventory misses, unsupported products, product corrections, or while the caller is asking about alternatives. Do not use for unrelated words like stock, call history, or callbacks.",
+  parameters: {
+    type: "object",
+    properties: {
+      reason: {
+        type: "string",
+        description: "Short reason the active call should end.",
+      },
+    },
+    required: ["reason"],
+  },
+};
+
+export const twilioTools = [twilioSmsTool];
 
 type SmsProvider = "twilio" | "webex_connect";
 
 const WEBEX_CONNECT_SMS_API_URL = "https://api.us.webexconnect.io/v2/messages";
+const SMS_SUMMARY_MAX_CHARS = 1200;
+
+interface SmsToolExecutionResult {
+  success: boolean;
+  result?: string;
+  error?: string;
+  data?: unknown;
+  durationMs?: number;
+}
+
+interface SmsReservationDetails {
+  reservationId: string;
+  itemName: string;
+  store: string;
+  pickupTime: string;
+}
 
 function getEnvValue(env: NodeJS.ProcessEnv, key: string): string {
   return env[key]?.trim() || "";
@@ -66,18 +118,61 @@ export function isSmsConfigured(env: NodeJS.ProcessEnv = process.env): boolean {
     : isTwilioSmsConfigured(env);
 }
 
-export function normalizeWhatsAppAddress(phoneNumber: string): string {
-  const trimmed = String(phoneNumber || "").trim();
-  if (trimmed.toLowerCase().startsWith("whatsapp:")) return trimmed;
-  return `whatsapp:${trimmed}`;
+export function canUseDemoSms(): boolean {
+  return isSmsConfigured();
 }
 
-export function isWhatsAppConfigured(): boolean {
-  return Boolean(
-    process.env.TWILIO_ACCOUNT_SID &&
-    process.env.TWILIO_AUTH_TOKEN &&
-    process.env.TWILIO_WHATSAPP_FROM
-  );
+export function resolveDemoSmsRecipientPhone(fallbackPhone?: string): string {
+  const configuredDemoRecipient = getEnvValue(process.env, "DEMO_SMS_RECIPIENT_PHONE");
+  const fallback = fallbackPhone && fallbackPhone !== "Unknown" ? fallbackPhone.trim() : "";
+  return configuredDemoRecipient || fallback || getDemoRetailCustomer().phone;
+}
+
+export function canSendCallSummarySms(fallbackPhone?: string): boolean {
+  return canUseDemoSms() && Boolean(resolveDemoSmsRecipientPhone(fallbackPhone));
+}
+
+export function withDemoSmsRecipient(args: Record<string, any>, fallbackPhone?: string): Record<string, any> {
+  return {
+    ...args,
+    to: resolveDemoSmsRecipientPhone(fallbackPhone),
+  };
+}
+
+function publicSmsFailureMessage(reservation?: SmsReservationDetails | null): string {
+  const reference = reservation
+    ? ` The reservation is still confirmed: ${reservation.itemName} at ${reservation.store} for ${reservation.pickupTime}. Reference ${reservation.reservationId}.`
+    : "";
+  return `I'm having issues sending SMS right now.${reference}`;
+}
+
+export function sanitizeSmsToolResult<T extends SmsToolExecutionResult>(
+  result: T,
+  reservation?: SmsReservationDetails | null
+): T | SmsToolExecutionResult {
+  if (result.success) return result;
+  return {
+    success: false,
+    error: publicSmsFailureMessage(reservation),
+    durationMs: result.durationMs,
+    data: {
+      smsUnavailable: true,
+      reservation: reservation
+        ? {
+            reservationId: reservation.reservationId,
+            itemName: reservation.itemName,
+            store: reservation.store,
+            pickupTime: reservation.pickupTime,
+          }
+        : undefined,
+    },
+  };
+}
+
+export function truncateForSms(text: string, maxLength = SMS_SUMMARY_MAX_CHARS): string {
+  const cleaned = text.replace(/\s+/g, " ").trim();
+  if (cleaned.length <= maxLength) return cleaned;
+  return cleaned.slice(0, maxLength - 3).trimEnd() + "...";
 }
 
 export async function sms(args: Record<string, any>): Promise<{ success: boolean; result?: string; error?: string }> {
@@ -87,6 +182,24 @@ export async function sms(args: Record<string, any>): Promise<{ success: boolean
   }
 
   return sendTwilioSms(args);
+}
+
+export async function sms_caller_summary(args: Record<string, any>): Promise<{ success: boolean; result?: string; error?: string }> {
+  const to = typeof args.to === "string" ? args.to.trim() : "";
+  if (!to) {
+    return { success: false, error: "SMS recipient phone number is unavailable" };
+  }
+
+  const summary = typeof args.summary === "string" ? args.summary : "";
+  if (!summary.trim()) {
+    return { success: false, error: "Summary is required" };
+  }
+
+  return sms({
+    to,
+    body: truncateForSms(`Summary of our call: ${summary}`),
+    correlationId: args.correlationId || "caller-summary",
+  });
 }
 
 async function sendTwilioSms(args: Record<string, any>): Promise<{ success: boolean; result?: string; error?: string }> {
@@ -218,47 +331,5 @@ async function sendWebexConnectSms(args: Record<string, any>): Promise<{ success
   } catch (error: any) {
     console.error("Webex Connect SMS exception:", error);
     return { success: false, error: error.message || "Failed to send Webex Connect SMS" };
-  }
-}
-
-export async function whatsapp(args: Record<string, any>): Promise<{ success: boolean; result?: string; error?: string }> {
-  const accountSid = process.env.TWILIO_ACCOUNT_SID;
-  const authToken = process.env.TWILIO_AUTH_TOKEN;
-  const fromWhatsApp = process.env.TWILIO_WHATSAPP_FROM;
-
-  if (!accountSid || !authToken || !fromWhatsApp) {
-    return { success: false, error: "Twilio WhatsApp is not configured" };
-  }
-
-  const { to, body } = args;
-  if (typeof to !== "string" || !to.trim()) {
-    return { success: false, error: "WhatsApp destination phone number is required" };
-  }
-  if (typeof body !== "string" || !body.trim()) {
-    return { success: false, error: "WhatsApp body is required" };
-  }
-
-  try {
-    const toWhatsApp = normalizeWhatsAppAddress(to);
-    const from = normalizeWhatsAppAddress(fromWhatsApp);
-    console.log(`Sending Twilio WhatsApp message to ${toWhatsApp}...`);
-
-    const twilioModule = (await import("twilio")).default;
-    const client = twilioModule(accountSid, authToken);
-
-    const message = await client.messages.create({
-      body,
-      from,
-      to: toWhatsApp,
-    });
-
-    console.log(`WhatsApp message sent successfully. SID: ${message.sid}`);
-    return {
-      success: true,
-      result: `WhatsApp message successfully sent to ${toWhatsApp}. Reference ID: ${message.sid}`,
-    };
-  } catch (error: any) {
-    console.error("Twilio WhatsApp exception:", error);
-    return { success: false, error: error.message || "Failed to send WhatsApp message" };
   }
 }

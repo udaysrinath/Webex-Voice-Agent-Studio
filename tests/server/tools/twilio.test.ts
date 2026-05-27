@@ -5,17 +5,13 @@ import {
   getSmsProvider,
   isSmsConfigured,
   isWebexConnectSmsConfigured,
-  isWhatsAppConfigured,
-  normalizeWhatsAppAddress,
   sms,
-  whatsapp,
-} from "./twilio";
+} from "../../../server/tools/twilio";
 
 const originalSmsProvider = process.env.SMS_PROVIDER;
 const originalSid = process.env.TWILIO_ACCOUNT_SID;
 const originalToken = process.env.TWILIO_AUTH_TOKEN;
 const originalPhone = process.env.TWILIO_PHONE_NUMBER;
-const originalFrom = process.env.TWILIO_WHATSAPP_FROM;
 const originalWebexKey = process.env.WEBEX_CONNECT_SMS_KEY;
 const originalWebexFrom = process.env.WEBEX_CONNECT_SMS_FROM;
 const originalWebexNotifyUrl = process.env.WEBEX_CONNECT_SMS_NOTIFY_URL;
@@ -26,28 +22,12 @@ delete process.env.SMS_PROVIDER;
 delete process.env.TWILIO_ACCOUNT_SID;
 delete process.env.TWILIO_AUTH_TOKEN;
 delete process.env.TWILIO_PHONE_NUMBER;
-delete process.env.TWILIO_WHATSAPP_FROM;
 delete process.env.WEBEX_CONNECT_SMS_KEY;
 delete process.env.WEBEX_CONNECT_SMS_FROM;
 delete process.env.WEBEX_CONNECT_SMS_NOTIFY_URL;
 delete process.env.WEBEX_CONNECT_SMS_CALLBACK_DATA;
 
-assert.equal(normalizeWhatsAppAddress("+15551234567"), "whatsapp:+15551234567");
-assert.equal(normalizeWhatsAppAddress(" whatsapp:+15557654321 "), "whatsapp:+15557654321");
-assert.equal(isWhatsAppConfigured(), false);
 assert.equal(isSmsConfigured(), false);
-
-const missingConfigResult = await whatsapp({
-  to: "+15551234567",
-  body: "Reservation confirmed.",
-});
-assert.equal(missingConfigResult.success, false);
-assert.match(missingConfigResult.error || "", /WhatsApp.*not configured/i);
-
-process.env.TWILIO_ACCOUNT_SID = "AC123";
-process.env.TWILIO_AUTH_TOKEN = "secret";
-process.env.TWILIO_WHATSAPP_FROM = "whatsapp:+14155238886";
-assert.equal(isWhatsAppConfigured(), true);
 
 process.env.SMS_PROVIDER = "webex_connect";
 process.env.WEBEX_CONNECT_SMS_KEY = "test-key";
@@ -125,12 +105,6 @@ if (originalPhone === undefined) {
   delete process.env.TWILIO_PHONE_NUMBER;
 } else {
   process.env.TWILIO_PHONE_NUMBER = originalPhone;
-}
-
-if (originalFrom === undefined) {
-  delete process.env.TWILIO_WHATSAPP_FROM;
-} else {
-  process.env.TWILIO_WHATSAPP_FROM = originalFrom;
 }
 
 if (originalSmsProvider === undefined) {

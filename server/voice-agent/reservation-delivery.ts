@@ -1,5 +1,5 @@
-export type ReservationDeliveryChannel = "email" | "sms" | "whatsapp";
-export type ReservationSpokenDeliveryRoute = "email" | "sms" | "whatsapp";
+export type ReservationDeliveryChannel = "email" | "sms";
+export type ReservationSpokenDeliveryRoute = "email" | "sms";
 
 export interface RetailReservationForDelivery {
   customerName: string;
@@ -105,9 +105,12 @@ export function resolveReservationDeliveryChannel(
   const requested = (requestedChannel || "").trim().toLowerCase();
 
   if (requested === "email") return "email";
-  if (requested === "whatsapp") return "whatsapp";
 
   return "sms";
+}
+
+export function getDemoConfirmationChannel(): ReservationDeliveryChannel {
+  return resolveReservationDeliveryChannel(process.env.DEMO_CONFIRMATION_CHANNEL);
 }
 
 export function getReservationDeliverySpokenInstruction(
@@ -115,9 +118,6 @@ export function getReservationDeliverySpokenInstruction(
 ): string {
   if (route === "sms") {
     return "After retail_reserve_item succeeds, your next spoken response must confirm the reservation and say that a confirmation will be sent by text message. Do not read out any reservation reference number or code.";
-  }
-  if (route === "whatsapp") {
-    return "After retail_reserve_item succeeds, your next spoken response must confirm the reservation and say that a confirmation will be sent by WhatsApp. Do not read out any reservation reference number or code.";
   }
   return "After retail_reserve_item succeeds, your next spoken response must confirm the reservation and say that a confirmation will be sent by email. Do not read out any reservation reference number or code.";
 }

@@ -495,7 +495,6 @@ const AVAILABLE_INTEGRATIONS = [
   { id: 'shopify', name: 'Shopify', category: 'payments', icon: '🛒', color: 'bg-green-500/10', iconColor: 'text-green-400', description: 'Voice-powered shopping assistant' },
   
   { id: 'twilio', name: 'Twilio', category: 'telephony', icon: '📞', color: 'bg-red-500/10', iconColor: 'text-red-400', description: 'Automated inbound/outbound calls', popular: true },
-  { id: 'whatsapp', name: 'WhatsApp', category: 'telephony', icon: '💚', color: 'bg-green-500/10', iconColor: 'text-green-400', description: 'Voice conversations on messaging platforms' },
   { id: 'sip', name: 'SIP Trunking', category: 'telephony', icon: '📱', color: 'bg-gray-500/10', iconColor: 'text-gray-400', description: 'Enterprise-grade telephony integration' },
   
   { id: 'zapier', name: 'Zapier', category: 'automation', icon: '⚡', color: 'bg-orange-500/10', iconColor: 'text-orange-400', description: 'Connect to 5,000+ apps without code', popular: true },

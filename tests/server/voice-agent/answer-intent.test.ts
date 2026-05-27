@@ -9,7 +9,7 @@ import {
   isIncompleteUserRequestTranscript,
   isNoMoreHelpAnswerTranscript,
   isStandaloneFinalCheckInTranscript,
-} from "./answer-intent";
+} from "../../../server/voice-agent/answer-intent";
 
 const negativeAnswers = [
   "No, that's all good, thank you.",
@@ -73,11 +73,10 @@ assert.equal(
 
 assert.equal(
   isAssistantWaitingForCallerAnswerTranscript(
-    "For the iPad mini, the option available in our catalog is Silver. If you’d like, I can check availability at your preferred pickup store next."
+    "The iPad mini is available at our Palo Alto store. I can have it ready for pickup tomorrow at 2 PM. Would that work?"
   ),
   true
 );
-assert.equal(isAssistantWaitingForCallerAnswerTranscript("I can check availability at your preferred pickup store next."), true);
 assert.equal(isAssistantWaitingForCallerAnswerTranscript("I can have it ready for pickup tomorrow at 2 PM. Would that work?"), true);
 assert.equal(
   isAssistantWaitingForCallerAnswerTranscript(

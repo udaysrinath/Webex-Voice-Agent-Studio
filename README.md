@@ -193,16 +193,16 @@ Replit stores env vars as **Secrets** (encrypted, not in source control):
 | `TWILIO_AUTH_TOKEN` | For Voice | Twilio Auth Token |
 | `TWILIO_PHONE_NUMBER` | For Voice | e.g. `+15551234567` |
 | `APP_BASE_URL` | For Voice | Public URL for Twilio webhooks |
-| `DEMO_ENABLE_SMS` | Optional | Defaults to `false`; keep disabled unless the environment is approved for SMS compliance |
-| `DEMO_CONFIRMATION_CHANNEL` | Optional | `sms`, `email`, or `whatsapp`; defaults to SMS. Spoken demo wording follows the selected channel |
+| `DEMO_SMS_RECIPIENT_PHONE` | Optional | E.164 number used for demo SMS from both browser and phone-call flows; when set, phone calls send demo SMS here instead of the inbound caller ID |
+| `DEMO_CUSTOMER_NAME` | Optional | Returning-customer demo name used by browser and phone-call retail flows; defaults to `Mayada Abdelrahman` |
+| `DEMO_CUSTOMER_PHONE` | Optional | Returning-customer demo phone used by browser flow and SMS fallback; defaults to `+16505550142` |
+| `DEMO_CONFIRMATION_CHANNEL` | Optional | `sms` or `email`; defaults to SMS. Spoken demo wording follows the selected channel |
 | `SMS_PROVIDER` | Optional | `twilio` or `webex_connect`; defaults to Twilio when Twilio SMS credentials are configured |
 | `WEBEX_CONNECT_SMS_KEY` | For Webex Connect SMS | API key used as the Webex Connect `key` header |
 | `WEBEX_CONNECT_SMS_FROM` | For Webex Connect SMS | Long code sender, for example `16693323901` |
 | `WEBEX_CONNECT_SMS_API_URL` | Optional | Defaults to `https://api.us.webexconnect.io/v2/messages` |
 | `WEBEX_CONNECT_SMS_NOTIFY_URL` | Optional | Webex Connect delivery callback URL |
 | `WEBEX_CONNECT_SMS_CALLBACK_DATA` | Optional | Callback metadata included in Webex Connect requests |
-| `TWILIO_WHATSAPP_FROM` | For WhatsApp confirmations | Twilio WhatsApp sender, for example the sandbox number `whatsapp:+14155238886` |
-| `TWILIO_WHATSAPP_SANDBOX_JOIN_CODE` | For WhatsApp opt-in | Sandbox join code shown on `/whatsapp-opt-in` |
 | `CUSTOMER_CONFIRMATION_EMAIL` | For email confirmations | Optional default customer email used when `DEMO_CONFIRMATION_CHANNEL=email`; `/demo-setup` can set this at runtime |
 | `DEMO_CONFIRMATION_EMAIL_WEBHOOK_URL` | For email confirmations | HTTPS endpoint that accepts the reservation email payload |
 | `DEMO_CONFIRMATION_EMAIL_FROM` | Optional email sender | Included in the email webhook payload when set |
@@ -353,18 +353,15 @@ For demo testers, do not distribute Webex access tokens. Configure `WEBEX_ACCESS
 
 The setup page configures only the customer email used when email confirmation delivery is selected. It does not create Webex rooms, add users to Webex rooms, or change the configured manager space. The spoken demo wording defaults to SMS.
 
-Post-call store-manager summaries use `WEBEX_SPACE_ID`. Customer reservation confirmations are sent through the selected customer channel: SMS by default, email, or WhatsApp.
+Post-call store-manager summaries use `WEBEX_SPACE_ID`. Customer reservation confirmations are sent through the selected customer channel: SMS by default, or email.
 
 ### Reservation Confirmation Delivery
 
 Customer-facing reservation confirmations are separate from the manager-facing Webex summary:
 
-- Spoken confirmation wording says text message by default. It says email when `DEMO_CONFIRMATION_CHANNEL=email` and WhatsApp when `DEMO_CONFIRMATION_CHANNEL=whatsapp`.
-- Actual SMS sends only when `DEMO_CONFIRMATION_CHANNEL=sms`, `DEMO_ENABLE_SMS=true`, and a supported SMS provider is configured. Twilio SMS uses `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, and either `TWILIO_PHONE_NUMBER` or `TWILIO_MESSAGING_SERVICE_SID`; Webex Connect SMS uses `SMS_PROVIDER=webex_connect`, `WEBEX_CONNECT_SMS_KEY`, and `WEBEX_CONNECT_SMS_FROM`.
+- Spoken confirmation wording says text message by default. It says email when `DEMO_CONFIRMATION_CHANNEL=email`.
+- Actual SMS sends only when `DEMO_CONFIRMATION_CHANNEL=sms` and a supported SMS provider is configured. Browser calls send to `DEMO_SMS_RECIPIENT_PHONE` when set, otherwise `DEMO_CUSTOMER_PHONE` or the default demo customer phone. Phone calls send to `DEMO_SMS_RECIPIENT_PHONE` when set, otherwise the inbound caller ID. Twilio SMS uses `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, and either `TWILIO_PHONE_NUMBER` or `TWILIO_MESSAGING_SERVICE_SID`; Webex Connect SMS uses `SMS_PROVIDER=webex_connect`, `WEBEX_CONNECT_SMS_KEY`, and `WEBEX_CONNECT_SMS_FROM`.
 - Actual email sends only when `DEMO_CONFIRMATION_CHANNEL=email`, `CUSTOMER_CONFIRMATION_EMAIL` is set or configured from `/demo-setup`, and `DEMO_CONFIRMATION_EMAIL_WEBHOOK_URL` is set.
-- Actual WhatsApp sends only when `DEMO_CONFIRMATION_CHANNEL=whatsapp`, `TWILIO_WHATSAPP_FROM` is set, and the recipient has joined the Twilio WhatsApp Sandbox.
-
-For Twilio WhatsApp Sandbox testing, set `DEMO_CONFIRMATION_CHANNEL=whatsapp`, `TWILIO_WHATSAPP_FROM=whatsapp:+14155238886`, and `TWILIO_WHATSAPP_SANDBOX_JOIN_CODE` to the Twilio-provided join code. Send recipients to `/whatsapp-opt-in` before the call.
 
 If the selected channel is not enabled or configured, the post-call job records a failed delivery instead of rerouting it to Webex or marking it as delivered.
 
@@ -456,6 +453,60 @@ The app includes a browser-based real-time voice agent powered by the **OpenAI R
 |------|---------|
 | `ws://host/ws/voice-agent` | Browser real-time voice (PCM16, 24kHz) |
 | `ws://host/ws/twilio-stream` | Twilio Media Streams (G.711 u-law, 8kHz) |
+
+### Realtime Voice Flow And Code Map
+
+Browser and phone calls intentionally share the retail behavior, tool definitions, Realtime client, and post-call confirmation semantics. The remaining browser-specific and Twilio-specific functions are transport adapters: they translate different audio formats, websocket payloads, UI/monitor events, and call shutdown mechanics into the same OpenAI Realtime flow.
+
+```mermaid
+flowchart TD
+  BrowserClient[Browser voice panel<br/>PCM16 24kHz websocket] --> BrowserSession[handleBrowserSession]
+  TwilioCall[Twilio Media Stream<br/>G.711 u-law 8kHz websocket] --> TwilioSession[handleTwilioSession]
+
+  BrowserSession --> SharedInstructions[prompt.ts<br/>buildRealtimeCallInstructions]
+  TwilioSession --> SharedInstructions
+
+  BrowserSession --> SharedTools[Shared tool list<br/>retail + Webex + Twilio SMS summary + voice_end_call]
+  TwilioSession --> SharedTools
+
+  SharedInstructions --> RealtimeClient[OpenAIRealtimeClient]
+  SharedTools --> RealtimeClient
+  BrowserSession --> RealtimeClient
+  TwilioSession --> RealtimeClient
+
+  RealtimeClient --> RealtimeAPI[OpenAI Realtime API<br/>STT + model + TTS + function calls]
+  RealtimeAPI --> FunctionCall[response.function_call_arguments.done]
+
+  FunctionCall --> ToolRouter[executeTool]
+  ToolRouter --> RetailTools[retail tools]
+  ToolRouter --> WebexTools[Webex summary tools]
+  ToolRouter --> TwilioTools[Twilio SMS tools]
+  ToolRouter --> EndCall[voice_end_call runtime guard]
+
+  RetailTools --> FunctionOutput[sendFunctionOutput]
+  WebexTools --> FunctionOutput
+  TwilioTools --> FunctionOutput
+  EndCall --> GracefulClose[final check-in / closing / hangup]
+
+  FunctionOutput --> RealtimeClient
+  RealtimeClient --> BrowserAudio[Browser PCM16 playback + UI events]
+  RealtimeClient --> TwilioAudio[Twilio media frames + marks]
+
+  GracefulClose --> BrowserPostCall[Browser post-call confirmation + Webex manager summary]
+  GracefulClose --> TwilioPostCall[Twilio post-call confirmation + Webex manager summary + REST hangup]
+```
+
+| Area | Browser code | Twilio/phone code | Shared code |
+|------|--------------|-------------------|-------------|
+| Session entry | [`handleBrowserSession`](server/voice-agent/index.ts#L2504) | [`handleTwilioSession`](server/voice-agent/index.ts#L1116) | Both instantiate [`OpenAIRealtimeClient`](server/voice-agent/openai-realtime.ts#L40) |
+| Behavior prompt | Calls [`buildRealtimeCallInstructions`](server/voice-agent/prompt.ts#L32) through the browser session | Calls [`buildRealtimeCallInstructions`](server/voice-agent/prompt.ts#L32) through the phone session | [`prompt.ts`](server/voice-agent/prompt.ts#L1) is the source of truth for greeting, product flow, add-on flow, final check-in, closing, transcription prompts, and SMS-summary offer |
+| Tool definitions | Uses [`twilioCallerSummaryTool`](server/tools/twilio.ts#L21) and [`voiceEndCallTool`](server/tools/twilio.ts#L38) | Uses [`twilioCallerSummaryTool`](server/tools/twilio.ts#L21) and [`voiceEndCallTool`](server/tools/twilio.ts#L38) | SMS implementation lives in [`sms_caller_summary`](server/tools/twilio.ts#L133) and normal tool dispatch is [`executeTool`](server/tools/index.ts#L32) |
+| Client flow config | Browser uses [`buildBrowserRealtimeConfig`](server/voice-agent/realtime_config.ts#L53) for PCM16 audio and far-field noise settings | Phone uses [`buildPhoneRealtimeConfig`](server/voice-agent/realtime_config.ts#L73) for G.711 audio and near-field noise settings | Shared Realtime defaults and tool assembly live in [`realtime_config.ts`](server/voice-agent/realtime_config.ts#L1); prompt text lives in [`prompt.ts`](server/voice-agent/prompt.ts#L1); queued `response.create` handling lives in [`OpenAIRealtimeClient`](server/voice-agent/openai-realtime.ts#L181) |
+| Audio input/output state | PCM16 browser frames, UI events, browser playback state | G.711 u-law Twilio media frames, mark queue, Twilio REST hangup | The session handlers still own websocket state because browser and Twilio transports emit different payloads |
+| Tool result return | [`sendBrowserFunctionOutput`](server/voice-agent/index.ts#L3477) | [`sendTwilioFunctionOutput`](server/voice-agent/index.ts#L2140) | Both call [`sendFunctionOutput`](server/voice-agent/openai-realtime.ts#L234) |
+| Post-call work | [`sendBrowserCallEnded`](server/voice-agent/index.ts#L3224) and [`sendBrowserOrderConfirmation`](server/voice-agent/index.ts#L3295) | [`sendCallEnded`](server/voice-agent/index.ts#L1718), [`sendOrderConfirmation`](server/voice-agent/index.ts#L1832), and [`completeTwilioEndCall`](server/voice-agent/index.ts#L2049) | Confirmation channel selection is shared by `getDemoConfirmationChannel`; SMS destination override is `DEMO_SMS_RECIPIENT_PHONE` |
+
+The browser path still has browser-named helpers because it must emit UI events, track browser playback, and handle PCM16 websocket frames. The Twilio path still has Twilio-named helpers because it must handle Twilio media payloads, mark acknowledgements, caller ID, monitor events, and REST hangup. Those names do not mean the business behavior differs; the shared behavior is [`prompt.ts`](server/voice-agent/prompt.ts#L1), tool definitions, tool execution, and Realtime client.
 
 ### Requirements
 

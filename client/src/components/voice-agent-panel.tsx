@@ -1,10 +1,11 @@
-import { useEffect, useRef, type RefObject } from "react";
+import { useEffect, useMemo, useRef, type RefObject } from "react";
 import { Activity, Bot, MessageSquare, Phone, PhoneOff, Loader2, Mic, UserRound, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { useVoiceAgent, type VoiceActivity, type VoiceAgentState, type TranscriptEntry } from "@/hooks/use-voice-agent";
-import { RetailProgressTimeline, type RetailAssistState } from "@/components/retail-agent-assist";
+import { RetailProgressTimeline, createRetailAssistState, type RetailAssistState } from "@/components/retail-agent-assist";
+import { MonitorBadge, VoiceMonitorWorkspace } from "@/components/voice-monitor-workspace";
 
 interface VoiceAgentPanelProps {
   agentId: number;
@@ -51,31 +52,55 @@ export function VoiceAgentPanel({
 
   const isActive = state !== "idle";
   const hasTranscript = transcript.length > 0 || Boolean(userPartial) || Boolean(assistantPartial);
+  const monitorTranscript = useMemo(() => {
+    const entries = [...transcript];
+    if (userPartial.trim()) {
+      entries.push({ role: "user", text: userPartial, timestamp: Date.now() });
+    }
+    if (assistantPartial.trim()) {
+      entries.push({ role: "assistant", text: assistantPartial, timestamp: Date.now() });
+    }
+    return entries;
+  }, [assistantPartial, transcript, userPartial]);
 
   if (layout === "split") {
     return (
-      <div className="grid h-full min-h-0 w-full grid-cols-1 lg:grid-cols-[minmax(0,1fr)_420px]">
-        <TranscriptPane
+      <div className="flex h-full min-h-0 w-full flex-col">
+        <VoiceMonitorWorkspace
+          transcriptRef={scrollRef}
+          transcript={monitorTranscript}
           agentName={agentName}
-          transcript={transcript}
-          userPartial={userPartial}
-          assistantPartial={assistantPartial}
-          scrollRef={scrollRef}
-          hasTranscript={hasTranscript}
+          transcriptSubtitle={state === "idle" ? "Ready for voice monitor" : getStateLabel(state, activity)}
+          emptyText="Waiting for call activity. The live transcript will appear here."
+          assistState={assistState || createRetailAssistState()}
+          callerLabel="Caller"
+          loading={state === "connecting"}
+          headerBadge={<MonitorBadge>{state === "idle" ? "Voice monitor" : getStateLabel(state, activity)}</MonitorBadge>}
+          headerAction={
+            !isActive ? (
+              <Button
+                size="sm"
+                className="shrink-0 gap-2 bg-green-600 hover:bg-green-700 text-white"
+                onClick={start}
+                data-testid="button-start-call"
+              >
+                <Phone className="w-4 h-4" />
+                Start
+              </Button>
+            ) : (
+              <Button
+                size="sm"
+                className="shrink-0 gap-2 bg-red-600 hover:bg-red-700 text-white"
+                onClick={stop}
+                data-testid="button-end-call"
+              >
+                <PhoneOff className="w-4 h-4" />
+                End
+              </Button>
+            )
+          }
         />
-
-        <div className="min-h-0 border-t border-white/10 bg-background/70 lg:border-l lg:border-t-0 flex flex-col">
-          <CallControlPane
-            agentName={agentName}
-            state={state}
-            activity={activity}
-            isActive={isActive}
-            start={start}
-            stop={stop}
-            assistState={assistState}
-          />
-          {error && <ErrorBanner message={error} />}
-        </div>
+        {error && <ErrorBanner message={error} />}
       </div>
     );
   }
@@ -470,6 +495,15 @@ function ErrorBanner({ message }: { message: string }) {
       <p className="text-xs text-red-400">{message}</p>
     </div>
   );
+}
+
+function getStateLabel(state: VoiceAgentState, activity?: VoiceActivity): string {
+  if (activity === "barge_in") return "Barge-in";
+  if (activity === "user_speaking") return "User talking";
+  if (activity === "agent_speaking" || state === "speaking") return "Agent talking";
+  if (state === "connecting") return "Connecting";
+  if (state === "listening") return "Voice call live";
+  return "Ready for voice monitor";
 }
 
 function CallPulse({ state, activity }: { state: VoiceAgentState; activity?: VoiceActivity }) {

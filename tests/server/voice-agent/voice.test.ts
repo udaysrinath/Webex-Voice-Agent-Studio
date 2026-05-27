@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mapRealtimeVoice, resolveRealtimeVoice } from "./voice";
+import { mapRealtimeVoice, resolveRealtimeVoice } from "../../../server/voice-agent/voice";
 
 assert.equal(mapRealtimeVoice("nova"), "marin");
 assert.equal(mapRealtimeVoice("onyx"), "marin");

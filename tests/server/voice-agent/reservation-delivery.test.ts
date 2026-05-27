@@ -5,7 +5,7 @@ import {
   resolveReservationDeliveryChannel,
   sendReservationConfirmationEmail,
   type RetailReservationForDelivery,
-} from "./reservation-delivery";
+} from "../../../server/voice-agent/reservation-delivery";
 
 const reservation: RetailReservationForDelivery = {
   customerName: "John Rivera",
@@ -32,11 +32,6 @@ assert.equal(
 );
 
 assert.equal(
-  resolveReservationDeliveryChannel("whatsapp"),
-  "whatsapp"
-);
-
-assert.equal(
   resolveReservationDeliveryChannel("sms"),
   "sms"
 );
@@ -48,7 +43,6 @@ assert.equal(
 
 assert.match(getReservationDeliverySpokenInstruction("sms"), /text message/i);
 assert.match(getReservationDeliverySpokenInstruction("email"), /email/i);
-assert.match(getReservationDeliverySpokenInstruction("whatsapp"), /WhatsApp/i);
 
 const requests: Array<{ url: string; init: RequestInit }> = [];
 const emailResult = await sendReservationConfirmationEmail(reservation, {

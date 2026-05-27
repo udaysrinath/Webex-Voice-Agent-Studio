@@ -17,6 +17,7 @@ import { agentsApi, evaluationsApi, ttsApi, chatApi, anamApi, ocrApi, type TTSRe
 import type { InsertEvaluation } from "@shared/schema";
 import type { ChatMessage } from "@/lib/api";
 import { VoiceAgentPanel } from "@/components/voice-agent-panel";
+import { VoiceMonitorPage } from "@/components/voice-monitor-page";
 import {
   createRetailAssistState,
   getRetailAssistEventTypeForTool,
@@ -927,6 +928,33 @@ export default function Evaluate() {
     agent.systemPrompt.toLowerCase().includes("retail store assistant");
   const showEvaluationControls = !isStoreAssistant;
 
+  if (isStoreAssistant) {
+    return (
+      <VoiceMonitorPage
+        title={agent.name}
+        subtitle={getAgentMonitorSubtitle(agent)}
+        onBack={() => setLocation("/")}
+        actions={
+          <Button variant="outline" size="sm" className="border-white/10 bg-white/5 hover:bg-white/10">
+            <Settings2 className="mr-2 h-4 w-4" />
+            Settings
+          </Button>
+        }
+      >
+        <VoiceAgentPanel
+          agentId={agent.id}
+          agentName={agent.name}
+          systemPrompt={agent.systemPrompt || undefined}
+          voice={agent.voiceModel}
+          gender={agent.gender}
+          onRealtimeEvent={handleRetailRealtimeEvent}
+          assistState={retailAssistState}
+          layout="split"
+        />
+      </VoiceMonitorPage>
+    );
+  }
+
   return (
     <div className="h-screen bg-background text-foreground font-sans flex flex-col overflow-hidden">
       <audio 
@@ -1608,4 +1636,16 @@ export default function Evaluate() {
       )}
     </div>
   );
+}
+
+function getAgentMonitorSubtitle(agent: {
+  llmModel?: string | null;
+  voiceModel?: string | null;
+  language?: string | null;
+}): string {
+  return [
+    agent.llmModel || "gpt-4o",
+    agent.voiceModel || "voice",
+    agent.language || "en-US",
+  ].join(" • ");
 }

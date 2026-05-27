@@ -3,7 +3,30 @@ import assert from "node:assert/strict";
 process.env.WEBEX_ACCESS_TOKEN = "test-webex-token";
 process.env.WEBEX_SPACE_ID = "active-demo-room";
 
-const { message } = await import("./webex");
+const {
+  buildConfiguredWebexMessageArgs,
+  getConfiguredWebexRoomId,
+  message,
+} = await import("../../../server/tools/webex");
+
+assert.equal(
+  getConfiguredWebexRoomId({
+    WEBEX_SPACE_ID: " configured-manager-room ",
+  } as NodeJS.ProcessEnv),
+  "configured-manager-room"
+);
+
+assert.deepEqual(
+  buildConfiguredWebexMessageArgs("store manager summary", {
+    WEBEX_SPACE_ID: "configured-manager-room",
+  } as NodeJS.ProcessEnv),
+  { message: "store manager summary", roomId: "configured-manager-room" }
+);
+
+assert.deepEqual(
+  buildConfiguredWebexMessageArgs("manager summary", {} as NodeJS.ProcessEnv),
+  { message: "manager summary" }
+);
 
 const sentRooms: string[] = [];
 const originalFetch = globalThis.fetch;

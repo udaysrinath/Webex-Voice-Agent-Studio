@@ -124,6 +124,9 @@ export function updateRetailAssistState(current: RetailAssistState, event: any):
     }
     case "identityVerified": {
       const data = event.data || {};
+      const verifiedCustomerName = typeof data.customerName === "string" && data.customerName.trim()
+        ? data.customerName.trim()
+        : "";
       return {
         ...current,
         verification: {
@@ -134,6 +137,9 @@ export function updateRetailAssistState(current: RetailAssistState, event: any):
           sentAt: current.verification?.sentAt,
           verifiedAt: data.verifiedAt || timestamp,
         },
+        customer: verifiedCustomerName
+          ? { ...current.customer, name: verifiedCustomerName }
+          : current.customer,
         completedStages: {
           ...current.completedStages,
           identityVerificationSent: true,
@@ -795,16 +801,21 @@ function getCurrentWorkState(state: RetailAssistState, event?: RetailToolEvent):
   const args = (event.args || {}) as any;
   const running = event.status === "running";
   const status = getThinkingStatus(event.status);
-  const customerFirstName = getFirstName(data.customer?.name || data.customerName || state.customer.name);
+  const candidateName = data.customer?.name || data.customerName || data.preferredName || data.maskedFullName || "";
+  const customerFirstName = getFirstName(candidateName);
+  const verifiedCustomerName = data.customer?.name || data.customerName || "";
   const phone = args.phone || data.phone || state.verification?.phone || state.customer.phone;
 
   if (event.toolName === "retail_profile_lookup") {
+    const possibleMatchText = customerFirstName === "the customer"
+      ? "a returning customer"
+      : customerFirstName;
     return {
       header: running ? "Looking up user" : "Confirming user",
-      summary: `Looking up phone number ${phone}. I see the caller could be ${customerFirstName}, so I need a quick confirmation before using customer details.`,
+      summary: `Looking up phone number ${phone}. I see the caller could be ${possibleMatchText}, so I need a quick confirmation before using customer details.`,
       lines: [
         { id: "lookup-phone", text: `Checking customer records for ${phone}.`, status },
-        { id: "lookup-match", text: `Possible match found: ${customerFirstName}.`, status },
+        { id: "lookup-match", text: `Possible match found: ${possibleMatchText}.`, status },
         { id: "lookup-confirm", text: "Preparing to ask for last-name confirmation.", status: running ? "waiting" : "active" },
       ],
     };
@@ -815,7 +826,7 @@ function getCurrentWorkState(state: RetailAssistState, event?: RetailToolEvent):
     return {
       header: running ? "Confirming profile" : verified ? "Profile confirmed" : "Confirmation needed",
       summary: verified
-        ? `The last name matches ${data.customerName || state.customer.name}. The assistant can now load history and continue naturally.`
+        ? `The last name matches ${verifiedCustomerName || "the profile candidate"}. The assistant can now load history and continue naturally.`
         : "The last name did not match, so the assistant should not use customer-specific details yet.",
       lines: [
         { id: "confirm-last-name", text: "Checking the provided last name against the profile candidate.", status },
@@ -842,7 +853,7 @@ function getCurrentWorkState(state: RetailAssistState, event?: RetailToolEvent):
   if (event.toolName === "retail_user_history_lookup") {
     return {
       header: "Looking up history",
-      summary: `Searching ${customerFirstName}'s previous interactions so the assistant can greet him naturally and avoid making him repeat context.`,
+      summary: `Searching ${customerFirstName}'s previous interactions so the assistant can use relevant context naturally and avoid making the caller repeat details.`,
       lines: [
         { id: "history-calls", text: "Searching previous call history.", status },
         { id: "history-orders", text: "Looking at previous order history.", status },
@@ -854,7 +865,7 @@ function getCurrentWorkState(state: RetailAssistState, event?: RetailToolEvent):
   if (event.toolName === "retail_get_customer_context") {
     return {
       header: running ? "Loading customer context" : "Customer context ready",
-      summary: `Combining ${customerFirstName}'s profile, prior conversations, and shopping preferences before the assistant greets him.`,
+      summary: `Combining ${customerFirstName}'s profile, prior conversations, and shopping preferences before the assistant uses customer context.`,
       lines: [
         { id: "context-profile", text: "Reading customer profile.", status },
         { id: "context-preferences", text: "Checking saved preferences and relationship context.", status },
@@ -879,7 +890,7 @@ function getCurrentWorkState(state: RetailAssistState, event?: RetailToolEvent):
             : "No exact product match found yet.",
           status,
         },
-        { id: "product-next", text: "Next step is checking pickup location and inventory.", status: running ? "waiting" : "complete" },
+        { id: "product-next", text: "Next step is checking inventory and proposing the pickup store.", status: running ? "waiting" : "complete" },
       ],
     };
   }
@@ -1279,7 +1290,7 @@ export function RetailAssistHero({ state, liveLabel }: { state: RetailAssistStat
           </div>
           <h2 className="mt-2 text-lg font-semibold">Continuity-driven retail agent assist</h2>
           <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-            John gets remembered context, cross-store inventory, reservation help, summary SMS consent, and an associate-ready playbook.
+            The caller gets remembered context, cross-store inventory, reservation help, summary SMS consent, and an associate-ready playbook.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">

@@ -11,13 +11,12 @@ export type ToolExecutionResult = {
 };
 
 const DEFAULT_TOOL_TIMEOUT_MS = 8000;
-const ENABLE_DEMO_SMS_TOOLS = process.env.DEMO_ENABLE_SMS === "true";
 
 // Combine tools from all providers that are configured
 export const realtimeTools = [
   ...retail.retailTools,
   ...webex.webexTools,
-  ...(ENABLE_DEMO_SMS_TOOLS && twilio.isSmsConfigured() ? twilio.twilioTools : []),
+  ...(twilio.isSmsConfigured() ? twilio.twilioTools : []),
 ];
 
 // Map for chat completion format

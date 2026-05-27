@@ -3,21 +3,19 @@ import { useLocation, useSearch } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import {
   ArrowLeft,
-  Bot,
   Loader2,
   MessageSquare,
-  Mic,
   PhoneCall,
-  Radio,
 } from "lucide-react";
 import { agentsApi, twilioApi } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
-  RetailProgressTimeline,
   createRetailAssistState,
   updateRetailAssistState,
 } from "@/components/retail-agent-assist";
+import { VoiceMonitorPage } from "@/components/voice-monitor-page";
+import { MonitorBadge, VoiceMonitorWorkspace } from "@/components/voice-monitor-workspace";
 
 type MonitorState = "connecting" | "waiting" | "in-call" | "ended" | "error";
 
@@ -118,13 +116,13 @@ export default function PstnCall() {
           ...createRetailAssistState(),
           toolEvents: current.toolEvents,
         }));
-        appendTranscript("system", "PSTN call connected.");
+        appendTranscript("system", "Voice call connected.");
         return;
       }
 
       if (msg.type === "callEnded") {
         setMonitorState("ended");
-        appendTranscript("system", "PSTN call ended.");
+        appendTranscript("system", "Voice call ended.");
         return;
       }
 
@@ -199,24 +197,12 @@ export default function PstnCall() {
     : formatHeaderPhoneNumber(twilioStatus?.phoneNumber);
 
   return (
-    <div className="pstn-page">
-      <div className="pstn-header">
-        <div className="pstn-header-inner mx-auto flex max-w-[1520px] items-center justify-between gap-4 px-6">
-          <div className="flex items-center gap-3 min-w-0">
-            <Button variant="ghost" size="icon" onClick={() => setLocation("/")} aria-label="Back">
-              <ArrowLeft className="w-4 h-4" />
-            </Button>
-            <div className="app-icon-tile flex h-11 w-11 shrink-0 items-center justify-center rounded-full">
-              <PhoneCall className="w-5 h-5 text-foreground" />
-            </div>
-            <div className="min-w-0">
-              <h1 className="truncate text-2xl font-bold leading-8 tracking-normal">PSTN Agent Assist</h1>
-              <p className="truncate text-[13px] leading-5 text-muted-foreground">
-                {agent?.name || "Loading agent..."}
-              </p>
-            </div>
-          </div>
-          <div className="pstn-header-actions flex shrink-0 items-center gap-3">
+    <VoiceMonitorPage
+      title={agent?.name || "Store Assistant"}
+      subtitle={getAgentMonitorSubtitle(agent)}
+      onBack={() => setLocation("/")}
+      actions={
+        <>
             <div className="pstn-webex-stack flex min-w-0 flex-col items-end gap-1">
               <Button variant="outline" size="sm" onClick={() => setLocation("/demo-setup")}>
                 <MessageSquare className="h-4 w-4" />
@@ -235,124 +221,21 @@ export default function PstnCall() {
               )}
             </div>
             <Badge className={getMonitorBadgeClass(monitorState)}>{statusLabel}</Badge>
-          </div>
-        </div>
-      </div>
-
-      <main className="mx-auto max-w-[1520px] px-6 pb-6">
-        <div className="pstn-primary flex flex-col">
-          <section className="pstn-workspace grid flex-1 lg:grid-cols-[minmax(0,1fr)_520px] xl:grid-cols-[minmax(0,1fr)_560px]">
-            <div className="flex min-h-0 min-w-0 flex-col">
-              <div className="pstn-section-header flex shrink-0 items-center justify-between gap-4 px-5">
-                <div className="flex items-center gap-3">
-                  <div className="app-icon-tile relative flex h-10 w-10 items-center justify-center rounded-full">
-                    {monitorState === "connecting" ? (
-                      <Loader2 className="relative z-10 w-4 h-4 text-foreground" />
-                    ) : (
-                      <Radio className="relative z-10 w-4 h-4 text-foreground" />
-                    )}
-                  </div>
-                  <div>
-                    <h2 className="text-[15px] font-bold leading-5 tracking-normal">Live PSTN Transcript</h2>
-                    <p className="text-xs text-muted-foreground">{statusLabel}</p>
-                  </div>
-                </div>
-                <Badge variant="outline" className="pstn-chip">
-                  Browser monitor
-                </Badge>
-              </div>
-
-              <div ref={transcriptRef} className="pstn-transcript-pane min-h-0 flex-1 overflow-y-auto p-5 space-y-4">
-                {isLoading && (
-                  <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-                    <Loader2 className="mr-2 h-4 w-4" />
-                    Loading PSTN monitor...
-                  </div>
-                )}
-
-                {!isLoading && transcript.length === 0 && (
-                  <div className="flex h-full flex-col items-center justify-center gap-3 text-center text-muted-foreground">
-                    <div className="app-icon-tile flex h-16 w-16 items-center justify-center rounded-full">
-                      <Mic className="h-8 w-8 text-foreground" />
-                    </div>
-                    <p className="max-w-sm text-sm">
-                      Waiting for a PSTN call on {agent?.name || "this agent"}. The live transcript will appear here.
-                    </p>
-                  </div>
-                )}
-
-                {transcript.map((entry, index) => (
-                  <TranscriptBubble
-                    key={`${entry.timestamp}-${index}`}
-                    entry={entry}
-                    agentName={agent?.name || "Agent"}
-                    callerPhone={callerPhone}
-                  />
-                ))}
-              </div>
-            </div>
-            <aside className="pstn-side-pane flex min-h-0 flex-col border-t lg:border-l lg:border-t-0 lg:overflow-hidden">
-              <div className="pstn-rail-header flex shrink-0 items-center gap-3 px-5">
-                <div className="app-icon-tile flex h-10 w-10 shrink-0 items-center justify-center rounded-full">
-                  <Bot className="h-4 w-4" />
-                </div>
-                <div className="min-w-0">
-                  <h2 className="text-[15px] font-bold leading-5 tracking-normal">Agent assist timeline</h2>
-                  <p className="mt-0.5 text-xs text-muted-foreground">Live tool progress and handoff context</p>
-                </div>
-              </div>
-              <div className="pstn-timeline-shell min-h-0 flex-1 overflow-y-auto p-4">
-                <div className="pstn-timeline-content">
-                  <RetailProgressTimeline className="pstn-progress-timeline" state={assistState} />
-                </div>
-                <div className="pstn-rail-empty flex h-full min-h-[320px] flex-col items-center justify-center rounded-lg p-6 text-center">
-                  <Radio className="mb-3 h-5 w-5 text-foreground" />
-                  <p className="text-sm font-medium text-foreground">Waiting for call activity</p>
-                  <p className="mt-1 max-w-[240px] text-xs leading-relaxed">
-                    Verification, inventory lookup, reservation, and handoff events will appear here.
-                  </p>
-                </div>
-              </div>
-            </aside>
-          </section>
-        </div>
-      </main>
-    </div>
-  );
-}
-
-function TranscriptBubble({ entry, agentName, callerPhone }: { entry: TranscriptEntry; agentName: string; callerPhone?: string | null }) {
-  if (entry.role === "system") {
-    return (
-      <div className="flex justify-center">
-        <div className="pstn-message-system rounded-full px-3 py-1 text-xs text-muted-foreground">
-          {entry.text}
-        </div>
-      </div>
-    );
-  }
-
-  const isUser = entry.role === "user";
-  return (
-    <div className={`flex gap-3 ${isUser ? "flex-row-reverse" : ""}`}>
-      <div className={`pstn-message-avatar flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
-        isUser ? "pstn-message-avatar-user" : "pstn-message-avatar-assistant"
-      }`}>
-        {isUser ? "U" : <Bot className="h-4 w-4" />}
-      </div>
-      <div className={`min-w-0 flex-1 ${isUser ? "text-right" : ""}`}>
-        <div className="mb-1 text-xs text-muted-foreground">
-          {isUser ? formatCallerPhone(callerPhone) : agentName}
-        </div>
-        <div className={`inline-block max-w-[85%] rounded-xl border p-3 text-left text-sm ${
-          isUser
-            ? "pstn-message-user rounded-tr-none"
-            : "pstn-message-assistant rounded-tl-none"
-        }`}>
-          {entry.text}
-        </div>
-      </div>
-    </div>
+        </>
+      }
+    >
+          <VoiceMonitorWorkspace
+            transcriptRef={transcriptRef}
+            transcript={transcript}
+            agentName={agent?.name || "Agent"}
+            transcriptSubtitle={statusLabel}
+            emptyText="Waiting for call activity. The live transcript will appear here."
+            assistState={assistState}
+            callerLabel={formatCallerPhone(callerPhone)}
+            loading={isLoading}
+            headerBadge={<MonitorBadge>Voice monitor</MonitorBadge>}
+          />
+    </VoiceMonitorPage>
   );
 }
 
@@ -391,9 +274,9 @@ function getMonitorStatusLabel(state: MonitorState): string {
     case "connecting":
       return "Connecting monitor";
     case "waiting":
-      return "Waiting for PSTN call";
+      return "Ready for voice monitor";
     case "in-call":
-      return "PSTN call live";
+      return "Voice call live";
     case "ended":
       return "Call ended";
     case "error":
@@ -414,4 +297,16 @@ function getMonitorBadgeClass(state: MonitorState): string {
     case "error":
       return "status-danger";
   }
+}
+
+function getAgentMonitorSubtitle(agent?: {
+  llmModel?: string | null;
+  voiceModel?: string | null;
+  language?: string | null;
+}): string {
+  return [
+    agent?.llmModel || "gpt-4o",
+    agent?.voiceModel || "voice",
+    agent?.language || "en-US",
+  ].join(" • ");
 }

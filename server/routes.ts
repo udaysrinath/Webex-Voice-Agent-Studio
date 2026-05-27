@@ -15,8 +15,11 @@ import { getSmsProvider, isSmsConfigured } from "./tools/twilio";
 import { buildRetailRuntimePrompt } from "@shared/prompt-builder";
 import { VOICE_USE_CASES, isRetailStoreUseCasePrompt } from "@shared/use-cases";
 import { getWebexProfile, updateWebexProfile } from "./webex-profile";
-import { setupDemoCustomerSession } from "./demo-customer-setup";
-import { getDemoWhatsAppOptInConfig } from "./demo-whatsapp-opt-in";
+import {
+  getReservationConfirmationEmailTo,
+  isReservationEmailConfigured,
+  updateReservationDeliveryProfile,
+} from "./voice-agent/reservation-delivery";
 
 const upload = multer({ 
   dest: os.tmpdir(),
@@ -893,18 +896,18 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
   app.post("/api/demo/customer-session", async (req, res) => {
     try {
       const data = demoCustomerSessionSchema.parse(req.body || {});
-      const result = setupDemoCustomerSession(data);
-      res.json(result);
+      updateReservationDeliveryProfile({ customerEmail: data.customerEmail });
+      res.json({
+        success: true,
+        customerEmail: getReservationConfirmationEmailTo(),
+        emailConfigured: isReservationEmailConfigured(),
+      });
     } catch (error: any) {
       if (error.name === "ZodError") {
         return res.status(400).json({ error: fromError(error).toString() });
       }
       res.status(500).json({ error: error.message || "Failed to set up customer confirmation" });
     }
-  });
-
-  app.get("/api/demo/whatsapp-opt-in", async (_req, res) => {
-    res.json(getDemoWhatsAppOptInConfig());
   });
 
   const syncRequestSchema = z.object({

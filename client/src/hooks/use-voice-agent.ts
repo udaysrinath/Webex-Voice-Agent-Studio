@@ -20,6 +20,8 @@ interface UseVoiceAgentOptions {
 
 const ASSISTANT_PLAYBACK_MIC_COOLDOWN_MS = 120;
 const TRANSIENT_ACTIVITY_MS = 900;
+const MIC_RMS_THRESHOLD = 0.012;
+const MIC_SPEECH_HANGOVER_MS = 650;
 
 export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
   const [state, setState] = useState<VoiceAgentState>("idle");
@@ -40,6 +42,7 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
   const assistantPlaybackActiveRef = useRef(false);
   const assistantPlaybackStartedAtRef = useRef(0);
   const assistantPlaybackBlockedUntilRef = useRef(0);
+  const micSpeechActiveUntilRef = useRef(0);
   const transientActivityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const playbackEndTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onEventRef = useRef(options.onEvent);
@@ -136,6 +139,8 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
         if (ws.readyState !== WebSocket.OPEN) return;
 
         const input = e.inputBuffer.getChannelData(0);
+        if (!shouldSendMicFrame(input)) return;
+
         const pcm16 = new Int16Array(input.length);
         for (let i = 0; i < input.length; i++) {
           const s = Math.max(-1, Math.min(1, input[i]));
@@ -312,6 +317,7 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
     assistantPlaybackActiveRef.current = false;
     assistantPlaybackStartedAtRef.current = 0;
     assistantPlaybackBlockedUntilRef.current = 0;
+    micSpeechActiveUntilRef.current = 0;
     clearTransientActivityTimer();
     if (playbackEndTimerRef.current) {
       clearTimeout(playbackEndTimerRef.current);
@@ -390,6 +396,26 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
       activeSourcesRef.current.length > 0 ||
       (ctx && nextPlayTimeRef.current > ctx.currentTime + 0.05)
     );
+  }
+
+  function shouldSendMicFrame(input: Float32Array): boolean {
+    let sumSquares = 0;
+    let peak = 0;
+    for (let i = 0; i < input.length; i++) {
+      const sample = input[i];
+      sumSquares += sample * sample;
+      peak = Math.max(peak, Math.abs(sample));
+    }
+
+    const rms = Math.sqrt(sumSquares / Math.max(1, input.length));
+    const now = Date.now();
+    const hasSpeechEnergy = rms >= MIC_RMS_THRESHOLD || peak >= MIC_RMS_THRESHOLD * 4;
+    if (hasSpeechEnergy) {
+      micSpeechActiveUntilRef.current = now + MIC_SPEECH_HANGOVER_MS;
+      return true;
+    }
+
+    return now < micSpeechActiveUntilRef.current;
   }
 
   function showTransientActivity(nextActivity: VoiceActivity): void {
