@@ -1,8 +1,9 @@
+import { DEFAULT_CUSTOMER_NAME } from "../server/voice-agent/dto";
 export type InventoryStatus = "in_stock" | "low_stock" | "out_of_stock";
 
 export interface RetailPastChat {
   date: string;
-  channel: "Webex" | "SMS" | "Store Visit";
+  
   summary: string;
 }
 
@@ -702,7 +703,7 @@ export const RETAIL_STORE_ASSISTANT_USE_CASE: VoiceUseCase = {
     },
   ],
   customer: {
-    name: "Mayada Abdelrahman",
+    name: DEFAULT_CUSTOMER_NAME,
     phone: "+16505550142",
     loyaltyTier: "Gold member",
     intent: "Find and reserve a tablet as a birthday gift for her daughter.",
@@ -718,7 +719,6 @@ export const RETAIL_STORE_ASSISTANT_USE_CASE: VoiceUseCase = {
     pastChats: [
       {
         date: "May 8",
-        channel: "Webex",
         summary: "Mayada mentioned the tablet is a birthday gift and asked for kid-friendly accessory ideas.",
       }
     ],
@@ -747,7 +747,7 @@ export const RETAIL_STORE_ASSISTANT_USE_CASE: VoiceUseCase = {
     },
   ],
   associatePlaybook: {
-    customerName: "Mayada Abdelrahman",
+    customerName: DEFAULT_CUSTOMER_NAME,
     intent: "Reserve an iPad as a birthday gift.",
     reservedItem: "iPad Pro 11-inch, M4, 256GB, Blue",
     reservedStore: "Palo Alto",

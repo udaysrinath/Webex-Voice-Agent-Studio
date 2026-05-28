@@ -944,10 +944,11 @@ function handleTwilioSession(ws: WebSocket): void {
         instructions = buildOpenAIVoiceAgentInstructions({
           callerPhone,
           confirmationSpokenRoute: getDemoConfirmationChannel(),
-          canSendCallerSummarySms,
           returningCallerName,
           startupRetailContext,
         });
+
+        console.log("[VoiceAgent] Instructions sent to OpenAI:", instructions);
 
         const tools = buildRealtimeVoiceTools({
           smsEnabled: canUseDemoSms(),
@@ -2292,10 +2293,11 @@ function handleBrowserSession(ws: WebSocket): void {
 
         instructions = buildOpenAIVoiceAgentInstructions({
           confirmationSpokenRoute: getDemoConfirmationChannel(),
-          canSendCallerSummarySms,
           returningCallerName,
           startupRetailContext,
         });
+
+        console.log("[VoiceAgent/Browser] Instructions sent to OpenAI:", instructions);
 
         openai = new OpenAIRealtimeClient(process.env.OPENAI_API_KEY || "", buildBrowserRealtimeConfig({
           instructions,

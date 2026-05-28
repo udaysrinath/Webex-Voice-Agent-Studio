@@ -367,8 +367,8 @@ export function RetailInlineAssist({ state }: { state: RetailAssistState }) {
                 </div>
                 <div className="space-y-2">
                   {state.customer.pastChats.slice(0, 2).map((chat) => (
-                    <p key={`${chat.date}-${chat.channel}`} className="text-xs leading-relaxed text-muted-foreground">
-                      <span className="font-medium text-foreground/80">{chat.channel}</span> · {chat.summary}
+                    <p key={`${chat.date}-${chat.date}`} className="text-xs leading-relaxed text-muted-foreground">
+                      <span className="font-medium text-foreground/80">{chat.date}</span> · {chat.summary}
                     </p>
                   ))}
                 </div>
@@ -1077,9 +1077,9 @@ export function RetailCustomerMemory({ state, compact = false }: { state: Retail
           </div>
           <div className="space-y-2">
             {customer.pastChats.map((chat) => (
-              <div key={`${chat.date}-${chat.channel}`} className="rounded-md border border-white/10 bg-white/[0.03] p-3">
+              <div key={`${chat.date}-${chat.date}`} className="rounded-md border border-white/10 bg-white/[0.03] p-3">
                 <div className="mb-1 flex items-center justify-between gap-2 text-xs">
-                  <span className="font-medium text-foreground">{chat.channel}</span>
+                  <span className="font-medium text-foreground">{chat.date}</span>
                   <span className="text-muted-foreground">{chat.date}</span>
                 </div>
                 <p className="text-xs leading-relaxed text-muted-foreground">{chat.summary}</p>

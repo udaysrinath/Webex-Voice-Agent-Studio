@@ -402,7 +402,7 @@ export async function search_products(args: Record<string, any>): Promise<ToolRe
   if (catalogMatches.length === 0) {
     return {
       success: true,
-      result: `No exact catalog match found for ${query}. Ask one clarifying question or offer to check nearby alternatives.`,
+      result: `No catalog match found for ${query}. Explicitly inform the caller that we do not carry this item or anything in this category in our store catalog. Do not offer nearby alternatives for this product.`,
       data: {
         query,
         matches: [],
@@ -413,7 +413,7 @@ export async function search_products(args: Record<string, any>): Promise<ToolRe
 
   return {
     success: true,
-    result: `Found ${catalogMatches.length} catalog match${catalogMatches.length === 1 ? "" : "es"} for ${query}: ${catalogMatches.map((item) => item.name).join("; ")}. This is product catalog information only. If the caller chooses one of these products, call retail_lookup_inventory next without asking for pickup location first.`,
+    result: `Found ${catalogMatches.length} catalog ${catalogMatches.length === 1 ? "match" : "matches"} for ${query}: ${catalogMatches.map((item) => item.name).join("; ")}. This is product catalog information only. If the caller chooses one of these products, call retail_lookup_inventory next without asking for pickup location first.`,
     data: {
       query,
       matches: catalogMatches,

@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 
 import {
-  applyDemoCustomerTextOverrides,
   getDemoCustomerProfile,
   getDemoRetailCustomer,
 } from "../../server/voice-agent/dto";
@@ -43,10 +42,6 @@ try {
   assert.match((profileLookup.data as any).confirmationPrompt, /profile for Avery/);
 
   assert.equal(resolveDemoSmsRecipientPhone(), "+14155550199");
-  assert.equal(
-    applyDemoCustomerTextOverrides("Mayada Abdelrahman uses +16505550142."),
-    "Avery Chen uses +14155550199."
-  );
 
   const runtimePrompt = buildOpenAIVoiceAgentInstructions({
     confirmationSpokenRoute: "sms",

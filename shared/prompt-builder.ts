@@ -279,7 +279,7 @@ export function buildUseCaseSystemPrompt(useCase: VoiceUseCase): string {
     .join("\n");
 
   const pastChats = customer.pastChats
-    .map((chat) => `- ${chat.date} via ${chat.channel}: ${chat.summary}`)
+    .map((chat) => `- ${chat.date} : ${chat.summary}`)
     .join("\n");
 
   const tools = useCase.recommendedTools
