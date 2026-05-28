@@ -80,6 +80,7 @@ import {
   RETAIL_VOICE_PRODUCT_TERMS,
   TRANSCRIPT_CORRECTION_MODEL,
   TWILIO_ASSISTANT_ECHO_MATCH_MS,
+  TWILIO_BARGE_IN_SPEECH_START_GUARD_MS,
   TWILIO_END_CALL_FALLBACK_MS,
   TWILIO_END_CALL_MAX_WAIT_MS,
   TWILIO_TRANSCRIPT_ECHO_GUARD_MS,
@@ -851,6 +852,7 @@ function handleTwilioSession(ws: WebSocket): void {
   let twilioEndCallFallbackStartedAt: number | null = null;
   let provisionalTwilioBargeInActive = false;
   let provisionalTwilioBargeInReleaseTimer: ReturnType<typeof setTimeout> | null = null;
+  let twilioSpeechStartBargeInTimer: ReturnType<typeof setTimeout> | null = null;
   const transcriptEntries: CallTranscriptEntry[] = [];
 
   ws.on("message", async (raw) => {
@@ -889,6 +891,7 @@ function handleTwilioSession(ws: WebSocket): void {
         twilioTranscriptPreview = "";
         provisionalTwilioBargeInActive = false;
         clearProvisionalTwilioBargeInRelease();
+        clearTwilioSpeechStartBargeInTimer();
         clearTwilioUserTurnResponseWatchdog();
         callerPhone = typeof params.callerPhone === "string" && params.callerPhone.trim()
           ? params.callerPhone.trim()
@@ -980,6 +983,7 @@ function handleTwilioSession(ws: WebSocket): void {
               itemId: pendingTwilioUserSpeechItemId,
               audioStartMs: pendingTwilioUserSpeechAudioStartMs,
             });
+            scheduleTwilioSpeechStartBargeIn();
           }
         });
 
@@ -1456,6 +1460,7 @@ function handleTwilioSession(ws: WebSocket): void {
         break;
       case "stop":
         clearTwilioUserTurnResponseWatchdog();
+        clearTwilioSpeechStartBargeInTimer();
         openai?.close();
         sendCallEnded();
         break;
@@ -1466,6 +1471,7 @@ function handleTwilioSession(ws: WebSocket): void {
     clearTwilioIdleFollowUp();
     clearTwilioUserTurnResponseWatchdog();
     clearProvisionalTwilioBargeInRelease();
+    clearTwilioSpeechStartBargeInTimer();
     openai?.close();
     sendCallEnded();
   });
@@ -1819,6 +1825,13 @@ function handleTwilioSession(ws: WebSocket): void {
     }
   }
 
+  function clearTwilioSpeechStartBargeInTimer(): void {
+    if (twilioSpeechStartBargeInTimer) {
+      clearTimeout(twilioSpeechStartBargeInTimer);
+      twilioSpeechStartBargeInTimer = null;
+    }
+  }
+
   function releaseProvisionalTwilioBargeIn(): void {
     clearProvisionalTwilioBargeInRelease();
     if (!provisionalTwilioBargeInActive) return;
@@ -1827,10 +1840,21 @@ function handleTwilioSession(ws: WebSocket): void {
   }
 
   function clearPendingTwilioUserSpeechCandidate(): void {
+    clearTwilioSpeechStartBargeInTimer();
     pendingTwilioUserSpeechStartedAt = null;
     pendingTwilioUserSpeechAudioStartMs = null;
     pendingTwilioUserSpeechItemId = null;
     twilioTranscriptPreview = "";
+  }
+
+  function scheduleTwilioSpeechStartBargeIn(): void {
+    clearTwilioSpeechStartBargeInTimer();
+    twilioSpeechStartBargeInTimer = setTimeout(() => {
+      twilioSpeechStartBargeInTimer = null;
+      if (!pendingTwilioUserSpeechStartedAt) return;
+      if (!hasActiveTwilioAssistantPlayback()) return;
+      provisionallyCutTwilioAssistantPlayback();
+    }, TWILIO_BARGE_IN_SPEECH_START_GUARD_MS);
   }
 
   function maybeProvisionallyCutTwilioAssistantPlaybackFromTranscript(text: string): void {
@@ -1884,7 +1908,7 @@ function handleTwilioSession(ws: WebSocket): void {
     if (lastItemId && audioEndMs < Math.round(currentTwilioAudioSentMs) - 20) {
       openai?.truncateResponse(lastItemId, audioEndMs);
     }
-    if (streamSid && ws.readyState === WebSocket.OPEN && markQueue.length > 0) {
+    if (streamSid && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ event: "clear", streamSid }));
     }
 

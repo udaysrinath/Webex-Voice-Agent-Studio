@@ -22,6 +22,8 @@ const ASSISTANT_PLAYBACK_MIC_COOLDOWN_MS = 120;
 const TRANSIENT_ACTIVITY_MS = 900;
 const MIC_RMS_THRESHOLD = 0.008;
 const MIC_SPEECH_HANGOVER_MS = 900;
+const STREAM_ALL_BROWSER_AUDIO =
+  String((import.meta as any).env?.VITE_BROWSER_STREAM_ALL_AUDIO || "").toLowerCase() === "true";
 
 export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
   const [state, setState] = useState<VoiceAgentState>("idle");
@@ -144,7 +146,7 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
         if (ws.readyState !== WebSocket.OPEN) return;
 
         const input = e.inputBuffer.getChannelData(0);
-        if (!shouldSendMicFrame(input)) return;
+        if (!STREAM_ALL_BROWSER_AUDIO && !shouldSendMicFrame(input)) return;
 
         const pcm16 = new Int16Array(input.length);
         for (let i = 0; i < input.length; i++) {
