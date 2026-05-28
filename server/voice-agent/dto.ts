@@ -60,9 +60,15 @@ export interface DemoCustomerProfile {
 
 
 const DEFAULT_CUSTOMER_PHONE = RETAIL_STORE_ASSISTANT_USE_CASE.customer.phone;
+const runtimeDemoCustomerProfile: { phone?: string } = {};
 
 function getEnvValue(env: NodeJS.ProcessEnv, key: string): string {
   return env[key]?.trim() || "";
+}
+
+function normalizeDemoCustomerPhone(phone?: string): string | undefined {
+  const trimmed = phone?.trim();
+  return trimmed || undefined;
 }
 
 function splitCustomerName(name: string): { firstName: string; lastName: string } {
@@ -122,8 +128,15 @@ function getProfileFromNameAndPhone(name: string, phone: string): DemoCustomerPr
 
 export function getDemoCustomerProfile(env: NodeJS.ProcessEnv = process.env): DemoCustomerProfile {
   const name = getEnvValue(env, "DEMO_CUSTOMER_NAME") || DEFAULT_CUSTOMER_NAME;
-  const phone = getEnvValue(env, "DEMO_CUSTOMER_PHONE") || DEFAULT_CUSTOMER_PHONE;
+  const phone = runtimeDemoCustomerProfile.phone || getEnvValue(env, "DEMO_CUSTOMER_PHONE") || DEFAULT_CUSTOMER_PHONE;
   return getProfileFromNameAndPhone(name, phone);
+}
+
+export function updateDemoCustomerProfile(update: { phone?: string }): DemoCustomerProfile {
+  if (update.phone !== undefined) {
+    runtimeDemoCustomerProfile.phone = normalizeDemoCustomerPhone(update.phone);
+  }
+  return getDemoCustomerProfile();
 }
 
 export function getDemoRetailCustomer(env: NodeJS.ProcessEnv = process.env) {
@@ -151,4 +164,3 @@ export function getDemoRetailAssociatePlaybook(env: NodeJS.ProcessEnv = process.
     associateMessage: replaceDemoIdentityText(playbook.associateMessage, profile),
   };
 }
-

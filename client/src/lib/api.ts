@@ -184,11 +184,13 @@ export interface SendMessageResult {
 export interface WebexProfile {
   hasBearerToken: boolean;
   webexSpaceId: string;
+  demoCustomerPhone: string;
 }
 
 export interface WebexProfileUpdate {
   bearerToken?: string;
   webexSpaceId?: string;
+  demoCustomerPhone?: string;
 }
 
 export interface DemoCustomerSessionRequest {

@@ -20,6 +20,10 @@ import {
   isReservationEmailConfigured,
   updateReservationDeliveryProfile,
 } from "./voice-agent/reservation-delivery";
+import {
+  getDemoCustomerProfile,
+  updateDemoCustomerProfile,
+} from "./voice-agent/dto";
 
 const upload = multer({ 
   dest: os.tmpdir(),
@@ -862,6 +866,7 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
   const webexProfileSchema = z.object({
     bearerToken: z.string().optional(),
     webexSpaceId: z.string().optional(),
+    demoCustomerPhone: z.string().optional(),
   });
 
   const demoCustomerSessionSchema = z.object({
@@ -870,9 +875,11 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
 
   app.get("/api/webex/profile", async (_req, res) => {
     const profile = getWebexProfile();
+    const demoCustomerProfile = getDemoCustomerProfile();
     res.json({
       hasBearerToken: !!profile.bearerToken,
       webexSpaceId: profile.webexSpaceId || "",
+      demoCustomerPhone: demoCustomerProfile.phone,
     });
   });
 
@@ -880,10 +887,14 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
     try {
       const data = webexProfileSchema.parse(req.body || {});
       const profile = updateWebexProfile(data);
+      const demoCustomerProfile = updateDemoCustomerProfile({
+        phone: data.demoCustomerPhone,
+      });
       res.json({
         success: true,
         hasBearerToken: !!profile.bearerToken,
         webexSpaceId: profile.webexSpaceId || "",
+        demoCustomerPhone: demoCustomerProfile.phone,
       });
     } catch (error: any) {
       if (error.name === "ZodError") {
