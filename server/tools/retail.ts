@@ -697,8 +697,9 @@ export async function reserve_item(args: Record<string, any>): Promise<ToolResul
     };
   }
 
+  const reservationId = `RSV-430-${getDemoCustomerProfile().firstName.toUpperCase()}`;
   const reservation = {
-    reservationId: "RSV-430-JOHN",
+    reservationId,
     customerName,
     item,
     store,
@@ -708,12 +709,12 @@ export async function reserve_item(args: Record<string, any>): Promise<ToolResul
     confirmationDelivery: {
       channel: "customer",
       status: "will_send_after_call",
-      message: `Customer confirmation will be handled after the call. Reservation reference RSV-430-JOHN.`,
+      message: `Customer confirmation will be handled after the call. Reservation reference ${reservationId}.`,
     },
   };
   return {
     success: true,
-    result: `${item.name} is reserved for ${customerName} at ${store} for ${pickupTime}. Customer confirmation will be handled after the call. Reservation reference RSV-430-JOHN.`,
+    result: `${item.name} is reserved for ${customerName} at ${store} for ${pickupTime}. Customer confirmation will be handled after the call. Reservation reference ${reservationId}.`,
     data: reservation,
   };
 }

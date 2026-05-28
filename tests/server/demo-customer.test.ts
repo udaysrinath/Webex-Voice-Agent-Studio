@@ -5,7 +5,7 @@ import {
   getDemoCustomerProfile,
   getDemoRetailCustomer,
 } from "../../server/voice-agent/dto";
-import { buildRuntimeInstructions } from "../../server/voice-agent/prompt";
+import { buildOpenAIVoiceAgentInstructions } from "../../server/voice-agent/prompt";
 import { profile_lookup } from "../../server/tools/retail";
 import { resolveDemoSmsRecipientPhone } from "../../server/tools/twilio";
 
@@ -44,11 +44,14 @@ try {
 
   assert.equal(resolveDemoSmsRecipientPhone(), "+14155550199");
   assert.equal(
-    applyDemoCustomerTextOverrides("John Rivera uses +16505550142."),
+    applyDemoCustomerTextOverrides("Mayada Abdelrahman uses +16505550142."),
     "Avery Chen uses +14155550199."
   );
 
-  const runtimePrompt = buildRuntimeInstructions("", "Store Assistant");
+  const runtimePrompt = buildOpenAIVoiceAgentInstructions({
+    confirmationSpokenRoute: "sms",
+    returningCallerName: "Avery",
+  });
   assert.match(runtimePrompt, /Avery Chen/);
   assert.doesNotMatch(runtimePrompt, /John Rivera/);
 } finally {

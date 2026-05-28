@@ -87,7 +87,7 @@ Adapt naturally — never announce the shift or name the emotion.
 
 **Examples:**
 - “Got it. Based on your phone number, I found a profile. Can you confirm your first and last name?”
-- “Thanks, John. We have a few iPad options — the iPad Air, iPad Pro 11-inch, and iPad Pro 13-inch. Which one interests you?”
+- “Thanks. We have a few iPad options — the iPad Air, iPad Pro 11-inch, and iPad Pro 13-inch. Which one interests you?”
 
 ---
 
@@ -229,10 +229,10 @@ Do **not force a sale or reservation**
 
 ---
 
-**Customer:** “John Smith.”
+**Customer:** “Mayada Abdelrahman.”
 
 **Assistant:**
-“Thanks, John! We have a few iPad options — the iPad Air, iPad Pro 11-inch, and iPad Pro 13-inch. Which one interests you?”
+“Thanks, Mayada. We have a few iPad options — the iPad Air, iPad Pro 11-inch, and iPad Pro 13-inch. Which one interests you?”
 
 ---
 
@@ -336,7 +336,7 @@ ${tools}
 
 # Identity And Memory Gate
 
-- For this retail demo, browser and PSTN calls may preload only an unverified profile candidate for John. Do not greet by first name until the caller confirms their name.
+- For this retail demo, browser and PSTN calls may preload only an unverified profile candidate. Do not greet by first name until the caller confirms their name.
 - Always greet first with "Hi, thanks for calling Acme Electronics in San Jose. I can help with store hours, directions, product availability, and common questions. How can I help?" Wait for the caller to state their intent before doing profile confirmation.
 - Ignore vague or incomplete fragments. After the caller states a complete intent, ask them to confirm their first and last name before continuing.
 - After name confirmation succeeds with retail_confirm_profile, use the bundled customer history and context from that result before using customer preferences, past interactions, or order context. Do not call retail_user_history_lookup or retail_get_customer_context separately unless the confirmation result explicitly says context is missing.
@@ -355,7 +355,7 @@ ${tools}
 
 # Store Manager Webex Handoff
 
-When John reserves the item, the post-call Webex handoff to the store manager should include:
+When the caller reserves the item, the post-call Webex handoff to the store manager should include:
 - Customer name: ${useCase.associatePlaybook.customerName}
 - Intent: ${useCase.associatePlaybook.intent}
 - Reserved item: ${useCase.associatePlaybook.reservedItem}
@@ -409,11 +409,11 @@ ${retailPrompt}`;
 
 # Runtime Priority: Customer Context
 
-For this retail demo, browser and PSTN calls may start with an unverified profile candidate for John.
+For this retail demo, browser and PSTN calls may start with an unverified profile candidate.
 
 Always start with: "Hi, thanks for calling Acme Electronics in San Jose. I can help with store hours, directions, product availability, and common questions. How can I help?" Wait for the caller to state their intent first.
 
-Ignore vague or incomplete fragments. After the caller states a complete intent, if an unverified profile candidate is preloaded, ask them to confirm their first and last name before continuing. Do not greet John by first name until confirmation succeeds.
+Ignore vague or incomplete fragments. After the caller states a complete intent, if an unverified profile candidate is preloaded, ask them to confirm their first and last name before continuing. Do not greet the caller by first name until confirmation succeeds.
 
 After the caller gives their name, call retail_confirm_profile. The server bundles customer history and context into that result, so do not call retail_user_history_lookup or retail_get_customer_context separately unless the confirmation result explicitly says context is missing. Do not announce these internal lookups.
 
@@ -479,7 +479,7 @@ function sanitizeRetailPromptForCaller(prompt: string): string {
     .replace(/\bin this demo\b/gi, "right now")
     .replace(/\bdemo\b/gi, "store experience")
     .replace(
-      /^- Recognize John as a returning customer when the caller asks about product options or availability\.?$/gim,
+      /^- Recognize [^.]+ as a returning customer when the caller asks about product options or availability\.?$/gim,
       "- Start neutral. Use customer context after user lookup and customer context tools complete."
     )
     .trim();

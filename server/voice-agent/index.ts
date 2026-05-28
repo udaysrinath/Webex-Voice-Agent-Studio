@@ -36,15 +36,11 @@ import {
   buildRealtimeVoiceTools,
 } from "./realtime_config";
 import {
-  DEFAULT_VOICE_ASSISTANT_INSTRUCTIONS,
   FINAL_CHECK_IN_TEXT,
   PROFILE_CONFIRMATION_TEXT,
   TRANSCRIPT_REVIEW_SYSTEM_PROMPT,
-  appendBrowserStartupRetailContext,
-  appendPhoneStartupRetailContext,
+  buildOpenAIVoiceAgentInstructions,
   buildRetailTranscriptionKeywords,
-  buildRealtimeCallInstructions,
-  buildRuntimeInstructions,
   getAddOnAnswerCheckInPrompt,
   getClosingInstruction,
   getClosingResponseInstructions,
@@ -135,7 +131,7 @@ function getReservationDetails(data: unknown): RetailReservationDetails | null {
     ].filter(Boolean).join(" | "),
     store: store || RETAIL_STORE_ASSISTANT_USE_CASE.associatePlaybook.reservedStore,
     pickupTime: pickupTime || RETAIL_STORE_ASSISTANT_USE_CASE.associatePlaybook.pickupTime,
-    reservationId: String(value.reservationId || "RSV-430-JOHN"),
+    reservationId: String(value.reservationId || `RSV-430-${getDemoCustomerProfile().firstName.toUpperCase()}`),
   };
 }
 
@@ -671,6 +667,24 @@ function isLikelyAssistantEchoTranscript(userText: string, assistantText: string
   return normalizedAssistant.includes(normalizedUser) || hasHighAssistantEchoOverlap(normalizedUser, normalizedAssistant);
 }
 
+function isLikelyBiasedProductHallucinationDuringPlayback(userText: string, assistantText: string): boolean {
+  const normalizedUser = normalizeTranscript(userText)
+    .replace(/['’]/g, "")
+    .replace(/\s+/g, " ");
+  if (!normalizedUser) return false;
+  if (!/\b(do you have|have any|in stock|available|availability|reserve|order|buy)\b/.test(normalizedUser)) {
+    return false;
+  }
+  if (!/\b(bose|quietcomfort|sony|wh\s*1000|xm5)\b/.test(normalizedUser)) {
+    return false;
+  }
+
+  const normalizedAssistant = normalizeTranscript(assistantText)
+    .replace(/['’]/g, "")
+    .replace(/\s+/g, " ");
+  return !/\b(bose|quietcomfort|sony|wh\s*1000|xm5)\b/.test(normalizedAssistant);
+}
+
 export function shouldSuppressTwilioUserTranscript(
   text: string,
   context: {
@@ -724,6 +738,14 @@ export function shouldSuppressBrowserUserTranscript(
   text: string,
   context: BrowserTranscriptGuardContext
 ): boolean {
+  const recentAssistant = context.responseActive || context.browserPlaybackActive;
+  if (
+    recentAssistant &&
+    isLikelyBiasedProductHallucinationDuringPlayback(text, context.lastAssistantTranscript)
+  ) {
+    return true;
+  }
+
   return shouldSuppressTwilioUserTranscript(text, {
     lastAssistantAudioAt: context.lastAssistantAudioAt,
     lastAssistantDoneAt: context.lastAssistantDoneAt,
@@ -838,6 +860,7 @@ function handleTwilioSession(ws: WebSocket): void {
   let twilioProfileConfirmed = false;
   let twilioFinalCheckInAsked = false;
   let twilioPendingAddOnOffer = false;
+  let twilioPendingPickupProposal = false;
   let twilioEndCallFallbackStartedAt: number | null = null;
   let provisionalTwilioBargeInActive = false;
   let provisionalTwilioBargeInReleaseTimer: ReturnType<typeof setTimeout> | null = null;
@@ -856,7 +879,7 @@ function handleTwilioSession(ws: WebSocket): void {
         callSid = msg.start.callSid;
         activeCallSid = typeof callSid === "string" ? callSid : null;
 
-        let instructions = DEFAULT_VOICE_ASSISTANT_INSTRUCTIONS;
+        let instructions = "";
         let voice = "marin";
         let language = "en-US";
         agentName = "Store Assistant";
@@ -871,6 +894,7 @@ function handleTwilioSession(ws: WebSocket): void {
         twilioProfileConfirmed = false;
         twilioFinalCheckInAsked = false;
         twilioPendingAddOnOffer = false;
+        twilioPendingPickupProposal = false;
         twilioEndCallFallbackStartedAt = null;
         pendingTwilioUserSpeechStartedAt = null;
         pendingTwilioUserSpeechAudioStartMs = null;
@@ -898,7 +922,6 @@ function handleTwilioSession(ws: WebSocket): void {
           }
           if (agent) {
             agentName = agent.name;
-            instructions = agent.systemPrompt || instructions;
             voice = resolveRealtimeVoice(agent.voiceModel, agent.gender);
             language = agent.language || language;
             monitorAgentId = resolvedAgentId;
@@ -918,16 +941,13 @@ function handleTwilioSession(ws: WebSocket): void {
         const returningCallerName = startupRetailContext ? getDemoCustomerProfile().firstName : undefined;
         twilioProfileCandidateAvailable = Boolean(startupRetailContext);
 
-        instructions = buildRuntimeInstructions(instructions, agentName);
-        instructions = buildRealtimeCallInstructions({
-          baseInstructions: instructions,
-          channel: "twilio",
+        instructions = buildOpenAIVoiceAgentInstructions({
           callerPhone,
           confirmationSpokenRoute: getDemoConfirmationChannel(),
           canSendCallerSummarySms,
           returningCallerName,
+          startupRetailContext,
         });
-        instructions = appendPhoneStartupRetailContext(instructions, startupRetailContext);
 
         const tools = buildRealtimeVoiceTools({
           smsEnabled: canUseDemoSms(),
@@ -1045,6 +1065,7 @@ function handleTwilioSession(ws: WebSocket): void {
             text: reviewed.text,
             lastAssistantTranscript,
             pendingAddOnOffer: twilioPendingAddOnOffer,
+            pendingPickupProposal: twilioPendingPickupProposal,
             finalCheckInAsked: twilioFinalCheckInAsked,
             profileConfirmationNeeded: shouldRequestProfileConfirmation(reviewed.text, {
               candidateAvailable: twilioProfileCandidateAvailable,
@@ -1055,6 +1076,7 @@ function handleTwilioSession(ws: WebSocket): void {
             endCallReason: "Caller expressed end-call intent",
           });
           twilioPendingAddOnOffer = turnDecision.pendingAddOnOffer;
+          twilioPendingPickupProposal = turnDecision.pendingPickupProposal;
           twilioFinalCheckInAsked = turnDecision.finalCheckInAsked;
           switch (turnDecision.action.type) {
             case "request_profile_confirmation":
@@ -1232,9 +1254,11 @@ function handleTwilioSession(ws: WebSocket): void {
               : rawResult;
             if (result.success && name === "retail_lookup_inventory") {
               inventoryLookupSucceeded = true;
+              twilioPendingPickupProposal = true;
             }
             if (result.success && name === "retail_reserve_item") {
               latestReservation = getReservationDetails(result.data);
+              twilioPendingPickupProposal = false;
             }
             if (result.success && name === "retail_recommend_gift_accessory") {
               latestRecommendedUpsell = getRecommendedUpsell(result.data);
@@ -2191,6 +2215,7 @@ function handleBrowserSession(ws: WebSocket): void {
   let browserProfileConfirmed = false;
   let browserFinalCheckInAsked = false;
   let browserPendingAddOnOffer = false;
+  let browserPendingPickupProposal = false;
   let browserEndCallFallbackStartedAt: number | null = null;
   let provisionalBrowserBargeInActive = false;
   let provisionalBrowserBargeInReleaseTimer: ReturnType<typeof setTimeout> | null = null;
@@ -2211,8 +2236,8 @@ function handleBrowserSession(ws: WebSocket): void {
 
       if (msg.type === "start") {
         const { agentId, config } = msg;
-        let instructions = config?.systemPrompt || DEFAULT_VOICE_ASSISTANT_INSTRUCTIONS;
-        let voice = resolveRealtimeVoice(config?.voice || "marin", config?.gender);
+        let instructions = "";
+        let voice = "marin";
         language = config?.language || language;
         agentName = "Store Assistant";
         lastAssistantTranscript = "";
@@ -2237,6 +2262,7 @@ function handleBrowserSession(ws: WebSocket): void {
         browserProfileConfirmed = false;
         browserFinalCheckInAsked = false;
         browserPendingAddOnOffer = false;
+        browserPendingPickupProposal = false;
         browserEndCallFallbackStartedAt = null;
         provisionalBrowserBargeInActive = false;
         clearProvisionalBrowserBargeInRelease();
@@ -2248,7 +2274,6 @@ function handleBrowserSession(ws: WebSocket): void {
           const agent = await storage.getAgent(parseInt(agentId));
           if (agent) {
             agentName = agent.name;
-            instructions = agent.systemPrompt || instructions;
             voice = resolveRealtimeVoice(agent.voiceModel, agent.gender);
             language = agent.language || language;
           }
@@ -2265,15 +2290,12 @@ function handleBrowserSession(ws: WebSocket): void {
           callerSummarySmsEnabled: canSendCallerSummarySms,
         });
 
-        instructions = buildRuntimeInstructions(instructions, agentName);
-        instructions = buildRealtimeCallInstructions({
-          baseInstructions: instructions,
-          channel: "browser",
+        instructions = buildOpenAIVoiceAgentInstructions({
           confirmationSpokenRoute: getDemoConfirmationChannel(),
           canSendCallerSummarySms,
           returningCallerName,
+          startupRetailContext,
         });
-        instructions = appendBrowserStartupRetailContext(instructions, startupRetailContext);
 
         openai = new OpenAIRealtimeClient(process.env.OPENAI_API_KEY || "", buildBrowserRealtimeConfig({
           instructions,
@@ -2404,6 +2426,7 @@ function handleBrowserSession(ws: WebSocket): void {
             text: reviewed.text,
             lastAssistantTranscript,
             pendingAddOnOffer: browserPendingAddOnOffer,
+            pendingPickupProposal: browserPendingPickupProposal,
             finalCheckInAsked: browserFinalCheckInAsked,
             profileConfirmationNeeded: shouldRequestProfileConfirmation(reviewed.text, {
               candidateAvailable: browserProfileCandidateAvailable,
@@ -2414,6 +2437,7 @@ function handleBrowserSession(ws: WebSocket): void {
             endCallReason: "User expressed end-call intent",
           });
           browserPendingAddOnOffer = turnDecision.pendingAddOnOffer;
+          browserPendingPickupProposal = turnDecision.pendingPickupProposal;
           browserFinalCheckInAsked = turnDecision.finalCheckInAsked;
           switch (turnDecision.action.type) {
             case "request_profile_confirmation":
@@ -2664,9 +2688,11 @@ function handleBrowserSession(ws: WebSocket): void {
             }
             if (result.success && name === "retail_lookup_inventory") {
               inventoryLookupSucceeded = true;
+              browserPendingPickupProposal = true;
             }
             if (result.success && name === "retail_reserve_item") {
               latestReservation = getReservationDetails(result.data);
+              browserPendingPickupProposal = false;
             }
             if (result.success && name === "retail_recommend_gift_accessory") {
               latestRecommendedUpsell = getRecommendedUpsell(result.data);

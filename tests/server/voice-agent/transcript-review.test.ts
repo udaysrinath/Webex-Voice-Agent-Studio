@@ -101,6 +101,18 @@ try {
   });
   assert.equal(twilioGreetingSuppressed, true);
   assert.equal(browserGreetingSuppressed, twilioGreetingSuppressed);
+
+  const browserBiasedProductSuppressed = shouldSuppressBrowserUserTranscript(
+    "Do you have the Bose QuietComfort 45 in stock?",
+    {
+      lastAssistantAudioAt: 99_900,
+      lastAssistantDoneAt: 99_900,
+      lastAssistantTranscript: "The Samsung Galaxy S25+ is available at our Palo Alto store.",
+      browserPlaybackActive: true,
+      responseActive: false,
+    }
+  );
+  assert.equal(browserBiasedProductSuppressed, true);
 } finally {
   if (originalApiKey === undefined) {
     delete process.env.OPENAI_API_KEY;

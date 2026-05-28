@@ -222,7 +222,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return res.status(404).json({ error: "Use case not found" });
     }
 
-    if (useCase.id !== "retail-john-cross-store") {
+    if (useCase.id !== "retail-customer-cross-store") {
       return res.json([]);
     }
 

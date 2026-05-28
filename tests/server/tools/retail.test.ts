@@ -17,12 +17,12 @@ const reservation = await reserve_item({
   store: "Palo Alto",
   pickupDate: "Friday",
   pickupTime: "2 PM",
-  customerName: "John",
+  customerName: "Mayada",
 });
 
 assert.equal(reservation.success, true);
 assert.match(reservation.result || "", /confirmation/i);
 assert.match(reservation.result || "", /handled after the call/i);
-assert.match(reservation.result || "", /RSV-430-JOHN/);
+assert.match(reservation.result || "", /RSV-430-MAYADA/);
 
 console.log("retail reservation confirmation regression passed");

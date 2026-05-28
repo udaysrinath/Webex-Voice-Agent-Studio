@@ -8,12 +8,12 @@ import {
 } from "../../../server/voice-agent/reservation-delivery";
 
 const reservation: RetailReservationForDelivery = {
-  customerName: "John Rivera",
+  customerName: "Mayada Abdelrahman",
   itemName: "iPad Air",
   itemDetails: "iPad Air | SKU IPAD-AIR",
   store: "Palo Alto",
   pickupTime: "Friday at 2 PM",
-  reservationId: "RSV-430-JOHN",
+  reservationId: "RSV-430-MAYADA",
 };
 
 assert.equal(
@@ -64,6 +64,6 @@ assert.ok(requests[0].init.signal instanceof AbortSignal);
 const payload = JSON.parse(String(requests[0].init.body));
 assert.equal(payload.to, "customer@example.com");
 assert.match(payload.subject, /Reservation confirmed/i);
-assert.match(payload.text, /RSV-430-JOHN/);
+assert.match(payload.text, /RSV-430-MAYADA/);
 
 console.log("reservation delivery routing regression passed");

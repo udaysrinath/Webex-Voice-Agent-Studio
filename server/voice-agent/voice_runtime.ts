@@ -17,6 +17,7 @@ type AcceptedUserTurnAction =
 
 export type AcceptedUserTurnDecision = {
   pendingAddOnOffer: boolean;
+  pendingPickupProposal: boolean;
   finalCheckInAsked: boolean;
   action: AcceptedUserTurnAction;
 };
@@ -25,6 +26,7 @@ export type AcceptedUserTurnOptions = {
   text: string;
   lastAssistantTranscript: string;
   pendingAddOnOffer: boolean;
+  pendingPickupProposal: boolean;
   finalCheckInAsked: boolean;
   profileConfirmationNeeded: boolean;
   softDeclineReason: string;
@@ -95,6 +97,10 @@ function isNegativeAnswerTranscript(text: string): boolean {
   return /^(no|nope|nah|no thanks|no thank you)$/i.test(normalizeIntentText(text)) || isNoMoreHelpAnswerTranscript(text);
 }
 
+function isAffirmativeAnswerTranscript(text: string): boolean {
+  return /^(yes|yeah|yep|yup|sure|ok|okay|perfect|great|sounds good|that sounds good|that works|that works for me|yes that works|yeah that works|sure that works|yes please|please do)\b/.test(normalizeIntentText(text));
+}
+
 export function canEndCallFromUserTranscript(text: string, lastAssistantTranscript: string, finalCheckInAsked = false): boolean {
   if (isDefiniteEndCallIntent(text)) return true;
   const checkInWasAsked = hasFinalCheckInBeenAsked(lastAssistantTranscript, finalCheckInAsked);
@@ -117,11 +123,13 @@ export function getAcceptedUserTurnDecision(options: AcceptedUserTurnOptions): A
     options.finalCheckInAsked
   );
   let pendingAddOnOffer = options.pendingAddOnOffer;
+  let pendingPickupProposal = options.pendingPickupProposal;
   let finalCheckInAsked = options.finalCheckInAsked;
 
   if (options.profileConfirmationNeeded) {
     return {
       pendingAddOnOffer,
+      pendingPickupProposal,
       finalCheckInAsked,
       action: { type: "request_profile_confirmation", initialIntent: options.text },
     };
@@ -133,6 +141,7 @@ export function getAcceptedUserTurnDecision(options: AcceptedUserTurnOptions): A
     if ((addOnAnswer === "negative" || addOnAnswer === "positive") && !isDefiniteEndCallIntent(options.text)) {
       return {
         pendingAddOnOffer,
+        pendingPickupProposal,
         finalCheckInAsked,
         action: { type: "request_add_on_check_in", text: getAddOnAnswerCheckInText(addOnAnswer) },
       };
@@ -146,9 +155,20 @@ export function getAcceptedUserTurnDecision(options: AcceptedUserTurnOptions): A
     finalCheckInAsked = false;
   }
 
+  if (pendingPickupProposal && isAffirmativeAnswerTranscript(options.text)) {
+    pendingPickupProposal = false;
+    return {
+      pendingAddOnOffer,
+      pendingPickupProposal,
+      finalCheckInAsked,
+      action: { type: "respond" },
+    };
+  }
+
   if (shouldAskFinalCheckInBeforeEnding(options.text, options.lastAssistantTranscript, finalCheckInWasAsked)) {
     return {
       pendingAddOnOffer,
+      pendingPickupProposal,
       finalCheckInAsked,
       action: { type: "request_final_check_in", reason: options.softDeclineReason },
     };
@@ -157,6 +177,7 @@ export function getAcceptedUserTurnDecision(options: AcceptedUserTurnOptions): A
   if (canEndCallFromUserTranscript(options.text, options.lastAssistantTranscript, finalCheckInWasAsked)) {
     return {
       pendingAddOnOffer,
+      pendingPickupProposal,
       finalCheckInAsked: false,
       action: { type: "request_graceful_end_call", reason: options.endCallReason },
     };
@@ -164,6 +185,7 @@ export function getAcceptedUserTurnDecision(options: AcceptedUserTurnOptions): A
 
   return {
     pendingAddOnOffer,
+    pendingPickupProposal: false,
     finalCheckInAsked,
     action: { type: "respond" },
   };

@@ -83,7 +83,7 @@ const BAY_AREA_CATALOG: RetailCatalogItem[] = [
       unavailableStore: "San Jose",
       availableQuantity: 3,
       eta: "Back in 5-7 days",
-      unavailableNote: "John's first-choice tablet is not available at the current location.",
+      unavailableNote: "The customer's first-choice tablet is not available at the current location.",
       availableNote: "Best fulfillment option for same-day pickup.",
       pairedAccessorySku: "CASE-IPAD-11-PURPLE",
     },
@@ -252,7 +252,7 @@ const BAY_AREA_CATALOG: RetailCatalogItem[] = [
       availableQuantity: 8,
       eta: "Back tomorrow",
       unavailableNote: "San Jose is out of the purple tablet case today.",
-      availableNote: "Personalized upsell based on John's previous birthday-gift context.",
+      availableNote: "Personalized upsell based on the customer's previous birthday-gift context.",
     },
     {
       sku: "PENCIL-APPLE-USB-C",
@@ -654,7 +654,7 @@ export function getAccessoryForProduct(
 }
 
 export const RETAIL_STORE_ASSISTANT_USE_CASE: VoiceUseCase = {
-  id: "retail-john-cross-store",
+  id: "retail-customer-cross-store",
   title: "Retail Store Assistant",
   agentName: "Store Assistant",
   description:
@@ -686,7 +686,7 @@ export const RETAIL_STORE_ASSISTANT_USE_CASE: VoiceUseCase = {
     },
     {
       name: "retail_get_customer_context",
-      description: "Load John and his previous store interactions.",
+      description: "Load the returning customer and their previous store interactions.",
     },
     {
       name: "retail_lookup_inventory",
@@ -702,41 +702,31 @@ export const RETAIL_STORE_ASSISTANT_USE_CASE: VoiceUseCase = {
     },
   ],
   customer: {
-    name: "John Rivera",
+    name: "Mayada Abdelrahman",
     phone: "+16505550142",
     loyaltyTier: "Gold member",
-    intent: "Find and reserve a tablet as a birthday gift for his daughter.",
+    intent: "Find and reserve a tablet as a birthday gift for her daughter.",
     preferredPickupTime: "Customer chooses pickup date and time during the call",
     relationshipContext:
-      "John has shopped with the store before and expects the assistant to remember useful context without making him repeat it.",
+      "Mayada has shopped with the store before and expects the assistant to remember useful context without making her repeat it.",
     preferences: [
-      "Birthday gift for his daughter",
+      "Birthday gift for her daughter",
       "Daughter likes purple accessories",
-      "Prefers a quick pickup handoff once he chooses a pickup time",
+      "Prefers a quick pickup handoff once she chooses a pickup time",
       "Open to nearby store pickup when local inventory is unavailable",
     ],
     pastChats: [
       {
         date: "May 8",
         channel: "Webex",
-        summary: "John mentioned the tablet is a birthday gift and asked for kid-friendly accessory ideas.",
-      },
-      {
-        date: "May 9",
-        channel: "SMS",
-        summary: "He asked whether purple cases were available for the tablet size he was considering.",
-      },
-      {
-        date: "May 10",
-        channel: "Store Visit",
-        summary: "A store associate noted that John prefers a quick pickup handoff at the counter.",
-      },
+        summary: "Mayada mentioned the tablet is a birthday gift and asked for kid-friendly accessory ideas.",
+      }
     ],
   },
   inventory: buildBayAreaInventory(),
   decisionTrace: [
     {
-      title: "Recognize John",
+      title: "Recognize returning customer",
       detail: "Use caller identity and past chats to retrieve purchase context and preferences.",
     },
     {
@@ -749,7 +739,7 @@ export const RETAIL_STORE_ASSISTANT_USE_CASE: VoiceUseCase = {
     },
     {
       title: "Personalize next step",
-      detail: "Recommend the purple case because John said this is a birthday gift for his daughter.",
+      detail: "Recommend the purple case because the customer said this is a birthday gift for her daughter.",
     },
     {
       title: "Prepare manager handoff",
@@ -757,14 +747,14 @@ export const RETAIL_STORE_ASSISTANT_USE_CASE: VoiceUseCase = {
     },
   ],
   associatePlaybook: {
-    customerName: "John Rivera",
+    customerName: "Mayada Abdelrahman",
     intent: "Reserve an iPad as a birthday gift.",
     reservedItem: "iPad Pro 11-inch, M4, 256GB, Blue",
     reservedStore: "Palo Alto",
     pickupTime: "Customer-confirmed pickup time",
     recommendedUpsell: "Purple Protective Case for iPad 11-inch",
     associateMessage:
-      "John has a pickup scheduled for the customer-confirmed time. Mention the purple protective case and keep the reservation ready at the front counter.",
+      "Mayada has a pickup scheduled for the customer-confirmed time. Mention the purple protective case and keep the reservation ready at the front counter.",
   },
 };
 
@@ -787,7 +777,7 @@ export function isRetailStoreUseCasePrompt(prompt: string | undefined, agentName
     text.includes("store assistant") ||
     text.includes("retail store assistant") ||
     text.includes("cross-store intelligence") ||
-    text.includes("john rivera") ||
+    text.includes("mayada abdelrahman") ||
     text.includes("ipad")
   );
 }
