@@ -4,7 +4,7 @@ export type VoiceAgentState = "idle" | "connecting" | "listening" | "speaking";
 export type VoiceActivity = "idle" | "connecting" | "ready" | "user_speaking" | "agent_speaking" | "barge_in";
 
 export interface TranscriptEntry {
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "system";
   text: string;
   correctedText?: string;
   timestamp: number;
@@ -46,6 +46,7 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
   const transientActivityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const playbackEndTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onEventRef = useRef(options.onEvent);
+  const closingRequestedRef = useRef(false);
 
   useEffect(() => {
     onEventRef.current = options.onEvent;
@@ -65,6 +66,7 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
   const start = useCallback(async () => {
     try {
       setError(null);
+      closingRequestedRef.current = false;
       setState("connecting");
       setActivity("connecting");
       setTranscript([]);
@@ -121,6 +123,9 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
       };
 
       ws.onclose = () => {
+        if (closingRequestedRef.current) {
+          appendCallEndedTranscript();
+        }
         setUserPartial("");
         setState("idle");
         setActivity("idle");
@@ -128,7 +133,7 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
       };
 
       ws.onerror = () => {
-        setError("Connection failed. Check that OPENAI_API_KEY is configured.");
+        console.warn("[VoiceAgent/Browser] WebSocket error suppressed in UI.");
         setUserPartial("");
         setState("idle");
         setActivity("idle");
@@ -154,7 +159,7 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
       processor.connect(processorSink);
       processorSink.connect(audioContext.destination);
     } catch (err: any) {
-      setError(err.message || "Failed to start voice agent");
+      console.warn("[VoiceAgent/Browser] Start error suppressed in UI:", err?.message || err);
       setUserPartial("");
       setState("idle");
       setActivity("idle");
@@ -162,9 +167,13 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
   }, [options.agentId, options.systemPrompt, options.voice]);
 
   const stop = useCallback(() => {
+    closingRequestedRef.current = true;
+    appendCallEndedTranscript();
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ type: "stop" }));
       wsRef.current.close();
+    } else {
+      wsRef.current?.close();
     }
     cleanup();
     setUserPartial("");
@@ -240,6 +249,8 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
         }
         break;
       case "callEnded":
+        appendCallEndedTranscript();
+        closingRequestedRef.current = true;
         wsRef.current?.close();
         cleanup();
         setUserPartial("");
@@ -248,7 +259,7 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
         break;
       case "error":
         if (isBenignVoiceError(msg.message)) return;
-        setError(msg.message);
+        console.warn("[VoiceAgent/Browser] Server error suppressed in UI:", msg.message);
         break;
     }
   }
@@ -272,6 +283,10 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
       ) return prev;
       return [...prev, { role, text: cleaned, correctedText: correction, timestamp: Date.now() }];
     });
+  }
+
+  function appendCallEndedTranscript(): void {
+    appendTranscript("system", "Voice call ended.");
   }
 
   function playAudioChunk(arrayBuffer: ArrayBuffer): void {

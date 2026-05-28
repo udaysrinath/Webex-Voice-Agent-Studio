@@ -32,7 +32,7 @@ export function VoiceAgentPanel({
   assistState,
   layout = "compact",
 }: VoiceAgentPanelProps) {
-  const { state, activity, transcript, userPartial, assistantPartial, error, start, stop } = useVoiceAgent({
+  const { state, activity, transcript, userPartial, assistantPartial, start, stop } = useVoiceAgent({
     agentId,
     systemPrompt,
     voice,
@@ -107,7 +107,6 @@ export function VoiceAgentPanel({
             )
           }
         />
-        {error && <ErrorBanner message={error} />}
       </div>
     );
   }
@@ -202,7 +201,6 @@ export function VoiceAgentPanel({
         )}
       </div>
 
-      {error && <ErrorBanner message={error} />}
     </div>
   );
 }
@@ -496,14 +494,6 @@ function CallActivityStack({ activity }: { activity: VoiceActivity }) {
   );
 }
 
-function ErrorBanner({ message }: { message: string }) {
-  return (
-    <div className="px-4 py-2 bg-red-500/10 border-t border-red-500/20">
-      <p className="text-xs text-red-400">{message}</p>
-    </div>
-  );
-}
-
 function getStateLabel(state: VoiceAgentState, activity?: VoiceActivity): string {
   if (activity === "barge_in") return "Barge-in";
   if (activity === "user_speaking") return "User talking";
@@ -590,6 +580,16 @@ function StatusBadge({ state, activity }: { state: VoiceAgentState; activity?: V
 }
 
 function TranscriptBubble({ entry, agentName }: { entry: TranscriptEntry; agentName: string }) {
+  if (entry.role === "system") {
+    return (
+      <div className="flex justify-center">
+        <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-muted-foreground">
+          {entry.text}
+        </div>
+      </div>
+    );
+  }
+
   const isUser = entry.role === "user";
 
   return (
