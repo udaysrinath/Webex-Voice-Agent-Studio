@@ -7,6 +7,7 @@ import {
   getDemoRetailAssociatePlaybook,
   getDemoRetailCustomer,
 } from "./dto";
+import { RETAIL_STORE_ASSISTANT_USE_CASE } from "@shared/use-cases";
 
 export type RealtimeCallChannel = "twilio" | "browser";
 
@@ -33,13 +34,6 @@ export function buildRetailTranscriptionKeywords(env: NodeJS.ProcessEnv = proces
 export const TRANSCRIPT_REVIEW_SYSTEM_PROMPT =
   "You correct noisy ASR transcripts from an en-US browser or PSTN voice assistant call. Return JSON only: {\"action\":\"keep|replace|suppress\",\"text\":\"...\"}. Keep clear English, including normal short replies like yes, no, hey, thanks, or thank you. Replace only when the correction is obvious from phonetics/context. When the last assistant turn offered a small closed set of product or store options, correct obvious ASR confusions only to one of those offered options or to the provided retail vocabulary. Suppress non-English false positives, assistant echo, names invented by ASR, accidental background speech, invented-looking single words, or unclear fragments. Do not invent product details.";
 
-export const STORE_MANAGER_SUMMARY_SYSTEM_PROMPT = [
-  "You summarize retail store assistant phone calls for store managers.",
-  "Return only valid compact JSON with these keys:",
-  "customer_name, final_resolution, summary, customer_intent, products_discussed, customer_preferences, store_actions, recommended_next_step, reserved_item, pickup_time, recommended_upsell.",
-  "Use Unknown or Not specified when the transcript does not contain a value.",
-].join(" ");
-
 export function buildOpenAIVoiceAgentInstructions(options: {
   callerPhone?: string;
   confirmationSpokenRoute: ReservationSpokenDeliveryRoute;
@@ -53,6 +47,10 @@ export function buildOpenAIVoiceAgentInstructions(options: {
   } = options;
   const customer = getDemoRetailCustomer();
   const playbook = getDemoRetailAssociatePlaybook();
+  
+  const inventory = RETAIL_STORE_ASSISTANT_USE_CASE.inventory;
+  const catalogCategories = Array.from(new Set(inventory.map((i) => i.category))).join(", ");
+  const catalogProducts = Array.from(new Set(inventory.map((i) => i.name))).join(", ");
 
   const promptText = `# Store Assistant System Prompt
 
@@ -102,13 +100,18 @@ ${startupRetailContext ? `Context:\n${startupRetailContext}\n` : ""}
 
 ## Product And Inventory
 
-- When a caller mentions a product or category, call retail_search_products.
+**Available Catalog Categories**: ${catalogCategories}
+**Available Catalog Products**: ${catalogProducts}
+
+- If the caller asks for a product or category that is NOT in the available list above, immediately inform them that Acme Electronics does not carry it. Do not attempt to use retail_search_products for products explicitly missing from the catalog.
+- When a caller mentions a product or category that might be in the catalog, call retail_search_products.
 - Treat retail_search_products as catalog discovery only.
 - Never infer stock or pickup availability from product search alone.
 - For broad requests like "an iPad" or "a tablet", present options and let the caller choose.
 - If the caller asks about stock:
   1. Call retail_search_products
   2. Then call retail_lookup_inventory
+- If the caller says they want to buy, order, reserve, or pick up a specific product or product category, call retail_search_products, then call retail_lookup_inventory once there is one clear product match. Do not ask whether to check availability.
 - Do not ask for store or city before inventory lookup.
 - After the caller selects a specific product, immediately call retail_lookup_inventory.
 
@@ -309,9 +312,9 @@ export function getExactTextResponseInstructions(text: string): string {
 export function getProfileConfirmationPrompt(initialIntent: string, channel: RealtimeCallChannel): string {
   return [
     `The caller may have stated this pre-confirmation intent: "${initialIntent}".`,
-    "ASR can hallucinate product names before identity is confirmed, so treat that pre-confirmation intent as unverified.",
+    "The server already accepted this as a complete caller intent, so keep it as the active request after profile confirmation unless the caller changes it.",
     `Ask exactly this profile confirmation and no other words: "${PROFILE_CONFIRMATION_TEXT}"`,
-    "After the caller confirms, do not resume or act on the pre-confirmation intent unless they repeat it after confirmation.",
+    "After the caller confirms, continue with the active request without asking what they want to shop for again.",
   ].join(" ");
 }
 

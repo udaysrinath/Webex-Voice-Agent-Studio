@@ -1,4 +1,5 @@
 import {
+  RETAIL_STORE_CATALOG,
   RETAIL_STORE_ASSISTANT_USE_CASE,
   getRetailInventoryStatusLabel,
   getAccessoryForProduct,
@@ -9,6 +10,7 @@ import {
   getDemoCustomerProfile,
   getDemoRetailCustomer,
 } from "../voice-agent/dto";
+import MiniSearch from 'minisearch';
 
 type ToolResult = { success: boolean; result?: string; error?: string; data?: unknown };
 
@@ -391,13 +393,29 @@ export async function search_products(args: Record<string, any>): Promise<ToolRe
     return { success: false, error: "Product search query is required." };
   }
 
-  const queryLower = query.toLowerCase();
-  const queryWords = getProductQueryWords(queryLower);
-  const matches = RETAIL_STORE_ASSISTANT_USE_CASE.inventory
-    .filter((item) => item.category.toLowerCase() !== "accessory")
-    .filter((item) => productMatchesQuery(item, queryLower, queryWords))
-    .slice(0, 6);
-  const catalogMatches = getUniqueCatalogProducts(matches);
+  const catalogItems = RETAIL_STORE_CATALOG.filter(
+    (item) => item.category.toLowerCase() !== "accessory"
+  );
+  
+  const miniSearch = new MiniSearch({
+    fields: ['name', 'category', 'sku'],
+    storeFields: ['sku', 'name', 'category', 'price'],
+    idField: 'sku',
+    searchOptions: {
+      boost: { name: 2, category: 1.5, sku: 1 },
+      fuzzy: 0.2
+    }
+  });
+  
+  miniSearch.addAll(catalogItems);
+  const searchResults = miniSearch.search(query).slice(0, 6);
+  
+  const catalogMatches = searchResults.map((result) => ({
+    sku: String(result.sku || ""),
+    name: String(result.name || ""),
+    category: String(result.category || ""),
+    price: String(result.price || ""),
+  }));
 
   if (catalogMatches.length === 0) {
     return {
@@ -413,7 +431,9 @@ export async function search_products(args: Record<string, any>): Promise<ToolRe
 
   return {
     success: true,
-    result: `Found ${catalogMatches.length} catalog ${catalogMatches.length === 1 ? "match" : "matches"} for ${query}: ${catalogMatches.map((item) => item.name).join("; ")}. This is product catalog information only. If the caller chooses one of these products, call retail_lookup_inventory next without asking for pickup location first.`,
+    result: catalogMatches.length === 1
+      ? `Found 1 catalog match for ${query}: ${catalogMatches[0].name}. This is product catalog information only. Call retail_lookup_inventory now without asking whether to check availability and without asking for pickup location first.`
+      : `Found ${catalogMatches.length} catalog matches for ${query}: ${catalogMatches.map((item) => item.name).join("; ")}. This is product catalog information only. Ask the caller to choose one of these products, then call retail_lookup_inventory next without asking for pickup location first.`,
     data: {
       query,
       matches: catalogMatches,
@@ -564,55 +584,6 @@ function getProductQueryWords(query: string): string[] {
     .replace(/[^a-z0-9\s]/g, " ")
     .split(/\s+/)
     .filter((w) => w.length >= 3 && !/^(\d+(st|nd|rd|th|gb|tb|mm|inch)?|generation|model|new|the|and|for|with)$/.test(w));
-}
-
-function productMatchesQuery(item: RetailInventoryItem, queryLower: string, queryWords: string[]): boolean {
-  const nameLower = item.name.toLowerCase();
-  const skuLower = item.sku.toLowerCase();
-  const catLower = item.category.toLowerCase();
-
-  const fastPathRegex = new RegExp(`\\b${queryLower.replace(/[^a-z0-9\s]/g, " ").trim().replace(/\s+/g, "\\b.*\\b")}\\b`);
-  if (nameLower.includes(queryLower) || fastPathRegex.test(catLower) || skuLower.includes(queryLower) || queryLower.includes(nameLower)) {
-    return true;
-  }
-
-  if (queryWords.length >= 2) {
-    const significantMatches = queryWords.filter((w) => {
-      const regex = new RegExp(`\\b${w}\\b`);
-      return regex.test(nameLower) || regex.test(skuLower) || regex.test(catLower);
-    });
-    return significantMatches.length >= Math.min(2, queryWords.length);
-  }
-
-  return queryWords.length === 1 && (new RegExp(`\\b${queryWords[0]}\\b`).test(nameLower) || new RegExp(`\\b${queryWords[0]}\\b`).test(skuLower));
-}
-
-function getUniqueCatalogProducts(items: RetailInventoryItem[]): Array<{
-  sku: string;
-  name: string;
-  category: string;
-  price: string;
-}> {
-  const products = new Map<string, {
-    sku: string;
-    name: string;
-    category: string;
-    price: string;
-  }>();
-
-  items.forEach((item) => {
-    const key = `${item.name.toLowerCase()}|${item.category.toLowerCase()}|${item.price.toLowerCase()}`;
-    if (!products.has(key)) {
-      products.set(key, {
-        sku: item.sku,
-        name: item.name,
-        category: item.category,
-        price: item.price,
-      });
-    }
-  });
-
-  return Array.from(products.values());
 }
 
 function hasPickupTimeSignal(value: string): boolean {

@@ -6,6 +6,15 @@ const productSearch = await search_products({ query: "iPad mini" });
 assert.equal(productSearch.success, true);
 assert.match(productSearch.result || "", /call retail_lookup_inventory next without asking for pickup location/i);
 
+const broadProductSearch = await search_products({ query: "iPad" });
+assert.equal(broadProductSearch.success, true);
+assert.match(broadProductSearch.result || "", /catalog matches/i);
+
+const singleProductSearch = await search_products({ query: "GoPro" });
+assert.equal(singleProductSearch.success, true);
+assert.match(singleProductSearch.result || "", /Found 1 catalog match/i);
+assert.match(singleProductSearch.result || "", /Call retail_lookup_inventory now/i);
+
 const inventory = await lookup_inventory({ product: "iPad mini, 128GB, Silver" });
 assert.equal(inventory.success, true);
 assert.match(inventory.result || "", /Palo Alto/i);

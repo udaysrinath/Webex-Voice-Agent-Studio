@@ -2,7 +2,6 @@ import * as fs from "fs";
 import * as path from "path";
 import OpenAI from "openai";
 import { getWebexProfile } from "../webex-profile";
-import { STORE_MANAGER_SUMMARY_SYSTEM_PROMPT } from "../voice-agent/prompt";
 import type { CallTranscriptEntry, StoreManagerCallSummary } from "../voice-agent/dto";
 
 export const STORE_MANAGER_WEBEX_TEMPLATE = "store_manager_webex_message";
@@ -108,7 +107,12 @@ export async function summarizeCallForStoreManager(transcriptText: string): Prom
       messages: [
         {
           role: "system",
-          content: STORE_MANAGER_SUMMARY_SYSTEM_PROMPT,
+          content: [
+            "You summarize retail store assistant phone calls for store managers.",
+            "Return only valid compact JSON with these keys:",
+            "customer_name, final_resolution, summary, customer_intent, products_discussed, customer_preferences, store_actions, recommended_next_step, reserved_item, pickup_time, recommended_upsell.",
+            "Use Unknown or Not specified when the transcript does not contain a value.",
+          ].join(" "),
         },
         {
           role: "user",

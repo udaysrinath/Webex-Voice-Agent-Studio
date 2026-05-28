@@ -20,8 +20,8 @@ interface UseVoiceAgentOptions {
 
 const ASSISTANT_PLAYBACK_MIC_COOLDOWN_MS = 120;
 const TRANSIENT_ACTIVITY_MS = 900;
-const MIC_RMS_THRESHOLD = 0.012;
-const MIC_SPEECH_HANGOVER_MS = 650;
+const MIC_RMS_THRESHOLD = 0.008;
+const MIC_SPEECH_HANGOVER_MS = 900;
 
 export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
   const [state, setState] = useState<VoiceAgentState>("idle");

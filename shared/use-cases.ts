@@ -606,6 +606,13 @@ const BAY_AREA_CATALOG: RetailCatalogItem[] = [
     },
 ];
 
+export const RETAIL_STORE_CATALOG = BAY_AREA_CATALOG.map(({ sku, name, category, price }) => ({
+  sku,
+  name,
+  category,
+  price,
+}));
+
 function buildBayAreaInventory(): RetailInventoryItem[] {
   return BAY_AREA_CATALOG.flatMap((item) => {
     const availableStore: BayAreaStore = item.unavailableStore === "San Jose" ? "Palo Alto" : "San Jose";

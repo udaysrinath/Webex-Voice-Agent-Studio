@@ -141,31 +141,17 @@ function getRecommendedUpsell(data: unknown): string {
   return String(value.recommendation?.name || value.recommendedUpsell || "").trim();
 }
 
-function addBrowserProfileConfirmationGuard(result: ToolExecutionResult): ToolExecutionResult {
-  const guardInstruction =
-    "Browser ASR before profile confirmation is unverified. Do not resume or act on any product, category, store, pickup time, or shopping intent that appeared only before this confirmation. Ask the caller what they need now unless they repeated the request after confirming their name. Do not call retail_search_products based only on pre-confirmation browser transcript text.";
-  return {
-    ...result,
-    result: result.result
-      ? `${result.result} ${guardInstruction}`
-      : guardInstruction,
-    data: {
-      ...(result.data && typeof result.data === "object" ? (result.data as Record<string, unknown>) : {}),
-      browserPostConfirmationInstruction: guardInstruction,
-    },
-  };
-}
-
 async function addProfileContextBundle(
   result: ToolExecutionResult,
   args: Record<string, any>,
-  options: { includeBrowserGuard?: boolean } = {}
+  options: { acceptedInitialIntent?: string } = {}
 ): Promise<{
   result: ToolExecutionResult;
   historyResult: ToolExecutionResult;
   contextResult: ToolExecutionResult;
 }> {
-  const baseResult = options.includeBrowserGuard ? addBrowserProfileConfirmationGuard(result) : result;
+  const activeIntent = String(options.acceptedInitialIntent || "").trim();
+  const baseResult = result;
   const data = baseResult.data && typeof baseResult.data === "object" ? baseResult.data as Record<string, any> : {};
   const customerId = String(data.customerId || args.customerId || getDemoCustomerProfile().customerId);
   const customerName = String(data.customerName || args.customerName || getDemoCustomerProfile().name);
@@ -189,12 +175,13 @@ async function addProfileContextBundle(
         "Customer history and context are loaded.",
         "Respond once, briefly acknowledge the caller, and continue with the current request.",
         "Do not mention profile verification, internal lookups, tools, or history loading.",
-        options.includeBrowserGuard
-          ? "If the shopping intent appeared only before profile confirmation, ask one concise clarification instead of acting on it."
+        activeIntent
+          ? `The active caller request is: "${activeIntent}". Continue it now; do not ask what they want to shop for again.`
           : "",
       ].filter(Boolean).join(" "),
       data: {
         ...data,
+        acceptedInitialIntent: activeIntent || undefined,
         profileContextBundled: true,
         history: historyResult.data,
         customerContext: contextResult.data,
@@ -2214,6 +2201,7 @@ function handleBrowserSession(ws: WebSocket): void {
   let browserProfileCandidateAvailable = false;
   let browserProfileConfirmationAsked = false;
   let browserProfileConfirmed = false;
+  let browserAcceptedInitialIntent = "";
   let browserFinalCheckInAsked = false;
   let browserPendingAddOnOffer = false;
   let browserPendingPickupProposal = false;
@@ -2261,6 +2249,7 @@ function handleBrowserSession(ws: WebSocket): void {
         browserProfileCandidateAvailable = false;
         browserProfileConfirmationAsked = false;
         browserProfileConfirmed = false;
+        browserAcceptedInitialIntent = "";
         browserFinalCheckInAsked = false;
         browserPendingAddOnOffer = false;
         browserPendingPickupProposal = false;
@@ -2683,7 +2672,9 @@ function handleBrowserSession(ws: WebSocket): void {
             let bundledProfileHistoryResult: ToolExecutionResult | null = null;
             let bundledProfileContextResult: ToolExecutionResult | null = null;
             if (result.success && name === "retail_confirm_profile") {
-              const bundled = await addProfileContextBundle(result, args, { includeBrowserGuard: true });
+              const bundled = await addProfileContextBundle(result, args, {
+                acceptedInitialIntent: browserAcceptedInitialIntent,
+              });
               result = bundled.result;
               bundledProfileHistoryResult = bundled.historyResult;
               bundledProfileContextResult = bundled.contextResult;
@@ -3289,6 +3280,7 @@ function handleBrowserSession(ws: WebSocket): void {
   function requestBrowserProfileConfirmation(initialIntent: string): void {
     if (!openai || endingCall || pendingEndCall || browserProfileConfirmationAsked || browserProfileConfirmed) return;
     clearBrowserIdleFollowUp();
+    browserAcceptedInitialIntent = initialIntent.trim();
     browserProfileConfirmationAsked = true;
     openai.triggerResponse({
       input: [
