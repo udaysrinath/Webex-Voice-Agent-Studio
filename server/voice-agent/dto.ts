@@ -1,4 +1,4 @@
-import { RETAIL_STORE_ASSISTANT_USE_CASE } from "@shared/use-cases";
+import { RETAIL_STORE_ASSISTANT_USE_CASE, DEFAULT_CUSTOMER_NAME } from "@shared/use-cases";
 
 export interface BrowserTranscriptGuardContext {
   browserPlaybackActive: boolean;
@@ -58,7 +58,7 @@ export interface DemoCustomerProfile {
   email: string;
 }
 
-export const DEFAULT_CUSTOMER_NAME = "Mayada Abdelrahman";
+
 const DEFAULT_CUSTOMER_PHONE = RETAIL_STORE_ASSISTANT_USE_CASE.customer.phone;
 
 function getEnvValue(env: NodeJS.ProcessEnv, key: string): string {
