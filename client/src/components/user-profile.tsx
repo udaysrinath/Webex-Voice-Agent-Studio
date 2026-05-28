@@ -16,11 +16,14 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 
+const MASKED_BEARER_TOKEN = "••••••••••••••••";
+
 export function UserProfile() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [bearerToken, setBearerToken] = useState("");
+  const [bearerTokenChanged, setBearerTokenChanged] = useState(false);
   const [webexSpaceId, setWebexSpaceId] = useState("");
   const [demoCustomerPhone, setDemoCustomerPhone] = useState("");
 
@@ -31,20 +34,26 @@ export function UserProfile() {
 
   useEffect(() => {
     if (profile) {
+      setBearerToken(profile.hasBearerToken ? MASKED_BEARER_TOKEN : "");
+      setBearerTokenChanged(false);
       setWebexSpaceId(profile.webexSpaceId || "");
       setDemoCustomerPhone(profile.demoCustomerPhone || "");
     }
   }, [profile]);
 
   const saveProfileMutation = useMutation({
-    mutationFn: () =>
-      webexApi.updateProfile({
-        bearerToken: bearerToken.trim(),
+    mutationFn: () => {
+      const trimmedBearerToken = bearerToken.trim();
+      return webexApi.updateProfile({
+        ...(bearerTokenChanged && trimmedBearerToken && trimmedBearerToken !== MASKED_BEARER_TOKEN
+          ? { bearerToken: trimmedBearerToken }
+          : {}),
         webexSpaceId: webexSpaceId.trim(),
         demoCustomerPhone: demoCustomerPhone.trim(),
-      }),
+      });
+    },
     onSuccess: () => {
-      setBearerToken("");
+      setBearerTokenChanged(false);
       queryClient.invalidateQueries({ queryKey: ["webex-profile"] });
       queryClient.invalidateQueries({ queryKey: ["webex-stats"] });
       setOpen(false);
@@ -98,8 +107,16 @@ export function UserProfile() {
                 id="webex-bearer-token"
                 type="password"
                 value={bearerToken}
-                onChange={(event) => setBearerToken(event.target.value)}
-                placeholder={profile?.hasBearerToken ? "Token saved. Paste a new token to replace it." : "Bearer token"}
+                onFocus={(event) => {
+                  if (profile?.hasBearerToken && !bearerTokenChanged) {
+                    event.currentTarget.select();
+                  }
+                }}
+                onChange={(event) => {
+                  setBearerTokenChanged(true);
+                  setBearerToken(event.target.value);
+                }}
+                placeholder={profile?.hasBearerToken ? "Saved token" : "Bearer token"}
                 autoComplete="off"
                 data-testid="input-webex-bearer-token"
               />
