@@ -311,10 +311,6 @@
     min-width: 0;
   }
 
-  .pstn-webex-stack {
-    width: 174px;
-  }
-
   .pstn-header-phone {
     display: inline-flex;
     max-width: 100%;

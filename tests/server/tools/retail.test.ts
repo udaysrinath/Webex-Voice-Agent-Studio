@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 
-import { lookup_inventory, reserve_item, search_products } from "../../../server/tools/retail";
+import { confirm_profile, lookup_inventory, reserve_item, search_products } from "../../../server/tools/retail";
+
+const firstNameOnlyConfirmation = await confirm_profile({ lastName: "Mayada" });
+assert.equal(firstNameOnlyConfirmation.success, true);
+assert.equal((firstNameOnlyConfirmation.data as any).verificationMode, "last-name-provided");
+
+const validLastNameConfirmation = await confirm_profile({ lastName: "Abdelrahman" });
+assert.equal(validLastNameConfirmation.success, true);
+assert.equal((validLastNameConfirmation.data as any).verificationMode, "last-name-provided");
 
 const productSearch = await search_products({ query: "iPad mini" });
 assert.equal(productSearch.success, true);

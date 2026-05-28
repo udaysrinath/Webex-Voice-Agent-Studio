@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, type RefObject } from "react";
+import { useCallback, useEffect, useMemo, useRef, type RefObject } from "react";
 import { Activity, Bot, MessageSquare, Phone, PhoneOff, Loader2, Mic, UserRound, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -15,6 +15,7 @@ interface VoiceAgentPanelProps {
   gender?: string;
   onStateChange?: (state: VoiceAgentState) => void;
   onRealtimeEvent?: (event: any) => void;
+  onSessionStart?: () => void;
   assistState?: RetailAssistState;
   layout?: "compact" | "split";
 }
@@ -27,6 +28,7 @@ export function VoiceAgentPanel({
   gender,
   onStateChange,
   onRealtimeEvent,
+  onSessionStart,
   assistState,
   layout = "compact",
 }: VoiceAgentPanelProps) {
@@ -49,6 +51,11 @@ export function VoiceAgentPanel({
   useEffect(() => {
     onStateChange?.(state);
   }, [onStateChange, state]);
+
+  const handleStart = useCallback(() => {
+    onSessionStart?.();
+    void start();
+  }, [onSessionStart, start]);
 
   const isActive = state !== "idle";
   const hasTranscript = transcript.length > 0 || Boolean(userPartial) || Boolean(assistantPartial);
@@ -81,7 +88,7 @@ export function VoiceAgentPanel({
               <Button
                 size="sm"
                 className="shrink-0 gap-2 bg-green-600 hover:bg-green-700 text-white"
-                onClick={start}
+                onClick={handleStart}
                 data-testid="button-start-call"
               >
                 <Phone className="w-4 h-4" />
@@ -123,7 +130,7 @@ export function VoiceAgentPanel({
           <Button
             size="sm"
             className="shrink-0 gap-2 bg-green-600 hover:bg-green-700 text-white"
-            onClick={start}
+            onClick={handleStart}
             data-testid="button-start-call"
           >
             <Phone className="w-4 h-4" />

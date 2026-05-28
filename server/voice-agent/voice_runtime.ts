@@ -178,7 +178,7 @@ export function getAcceptedUserTurnDecision(options: AcceptedUserTurnOptions): A
     return {
       pendingAddOnOffer,
       pendingPickupProposal,
-      finalCheckInAsked: false,
+      finalCheckInAsked: finalCheckInWasAsked,
       action: { type: "request_graceful_end_call", reason: options.endCallReason },
     };
   }

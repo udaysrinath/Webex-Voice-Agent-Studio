@@ -14,7 +14,7 @@ function normalizeAnswerText(text: string): string {
 
 function stripLeadingDiscourseMarkers(text: string): string {
   let normalized = text;
-  const markerPattern = /^(uh|um|hm|hmm|well|so|okay|ok|alright|right|cool|great|perfect|thanks|thank you|yes|yeah|yep|yup|sure|actually)\s+(.+)$/;
+  const markerPattern = /^(uh|um|hm|hmm|well|so|okay|ok|alright|right|cool|great|perfect|thanks|thank you|yes|yeah|yep|yup|sure|actually|you know)\s+(.+)$/;
   while (true) {
     const next = normalized.replace(markerPattern, "$2").trim();
     if (next === normalized) return normalized;
@@ -115,7 +115,7 @@ function isNegativeNoMoreHelpAnswer(text: string): boolean {
     /^(no|nope|nah)\s+(thanks|thank you)\s+(thats all|that is all|thats it|that is it|all good|nothing else)$/.test(text) ||
     /^(no|nope|nah)\s+(thanks|thank you|im good|i am good|im okay|i am okay|im ok|i am ok|im fine|i am fine|im all good|i am all good|im all set|i am all set|all good|all set|thats all|that is all|thats all good|that is all good|thats it|that is it|that should do it|thatll do it|nothing else|not right now|not at the moment|not today|no more|no more questions)(\s+(thanks|thank you))?$/.test(text) ||
     /^(all good|all set|im good|i am good|im okay|i am okay|im ok|i am ok|im fine|i am fine|im all good|i am all good|im all set|i am all set|were good|we are good|were all set|we are all set)(\s+(for now|thanks|thank you))?$/.test(text) ||
-    /^(thats all|that is all|thats it|that is it|thats everything|that is everything|that should do it|thatll do it|that will do it|that does it|that should be all|that should be it|this is all|this is it)(\s+(thanks|thank you))?$/.test(text) ||
+    /^(thats all|that is all|thats it|that is it|thats about it|that is about it|thats everything|that is everything|that should do it|thatll do it|that will do it|that does it|that should be all|that should be it|this is all|this is it)(\s+(thanks|thank you))?$/.test(text) ||
     /^(good|thats good|that is good|that sounds good|that works|that should work)(\s+(for now|right now))?$/.test(text) ||
     /^(nothing else|nothing more|no more questions|no other questions|no further questions|not right now|not at the moment|not today|not for now)$/.test(text) ||
     /^(i|we)\s+(dont|do not)\s+(need|want|have)\s+(anything|something)?\s*(else|more|right now|at the moment|today)?$/.test(text) ||

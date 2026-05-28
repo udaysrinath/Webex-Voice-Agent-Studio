@@ -71,8 +71,26 @@ assert.deepEqual(finalNegativeDecision.action, {
   type: "request_graceful_end_call",
   reason: "end call",
 });
-assert.equal(finalNegativeDecision.finalCheckInAsked, false);
+assert.equal(finalNegativeDecision.finalCheckInAsked, true);
 assert.equal(canEndCallFromUserTranscript("No, that's all.", FINAL_CHECK_IN_TEXT, true), true);
+
+const conversationalFinalNegativeDecision = getAcceptedUserTurnDecision({
+  text: "You know, that's about it.",
+  lastAssistantTranscript: FINAL_CHECK_IN_TEXT,
+  pendingAddOnOffer: false,
+  pendingPickupProposal: false,
+  finalCheckInAsked: true,
+  profileConfirmationNeeded: false,
+  softDeclineReason: "soft decline",
+  endCallReason: "end call",
+});
+
+assert.deepEqual(conversationalFinalNegativeDecision.action, {
+  type: "request_graceful_end_call",
+  reason: "end call",
+});
+assert.equal(conversationalFinalNegativeDecision.finalCheckInAsked, true);
+assert.equal(canEndCallFromUserTranscript("You know, that's about it.", FINAL_CHECK_IN_TEXT, true), true);
 
 const effects = getAssistantTranscriptEffects(
   `Would you like me to add a Purple Protective Case? ${FINAL_CLOSING_TEXT}`

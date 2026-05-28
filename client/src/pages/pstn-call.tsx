@@ -4,12 +4,10 @@ import { useQuery } from "@tanstack/react-query";
 import {
   ArrowLeft,
   Loader2,
-  MessageSquare,
   PhoneCall,
 } from "lucide-react";
 import { agentsApi, twilioApi } from "@/lib/api";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import {
   createRetailAssistState,
   updateRetailAssistState,
@@ -81,9 +79,6 @@ export default function PstnCall() {
     queryFn: twilioApi.getStatus,
   });
 
-  const normalizedPhoneNumber = getDialablePhoneNumber(twilioStatus?.phoneNumber);
-  const phoneHref = normalizedPhoneNumber ? `tel:${normalizedPhoneNumber}` : undefined;
-
   useEffect(() => {
     if (hasAgentId && requestedAgentId !== 1) {
       setLocation("/pstn-call?agentId=1", { replace: true });
@@ -103,7 +98,6 @@ export default function PstnCall() {
     ws.onopen = () => setMonitorState("waiting");
     ws.onmessage = (event) => {
       const msg = JSON.parse(event.data) as TwilioMonitorMessage;
-      setAssistState((current) => updateRetailAssistState(current, msg));
       if (msg.type === "connected") {
         setMonitorState("waiting");
         return;
@@ -112,13 +106,18 @@ export default function PstnCall() {
       if (msg.type === "callStarted") {
         setMonitorState("in-call");
         setCallerPhone(msg.callerPhone || null);
-        setAssistState((current) => ({
-          ...createRetailAssistState(),
-          toolEvents: current.toolEvents,
-        }));
-        appendTranscript("system", "Voice call connected.");
+        setAssistState(createRetailAssistState());
+        setTranscript([
+          {
+            role: "system",
+            text: "Voice call connected.",
+            timestamp: msg.timestamp || Date.now(),
+          },
+        ]);
         return;
       }
+
+      setAssistState((current) => updateRetailAssistState(current, msg));
 
       if (msg.type === "callEnded") {
         setMonitorState("ended");
@@ -201,28 +200,6 @@ export default function PstnCall() {
       title={agent?.name || "Store Assistant"}
       subtitle={getAgentMonitorSubtitle(agent)}
       onBack={() => setLocation("/")}
-      actions={
-        <>
-            <div className="pstn-webex-stack flex min-w-0 flex-col items-end gap-1">
-              <Button variant="outline" size="sm" onClick={() => setLocation("/demo-setup")}>
-                <MessageSquare className="h-4 w-4" />
-                Webex setup
-              </Button>
-              {phoneHref ? (
-                <a className="pstn-header-phone" href={phoneHref} aria-label={`Call ${displayPhoneNumber}`}>
-                  <PhoneCall className="h-3 w-3" />
-                  <span>{displayPhoneNumber}</span>
-                </a>
-              ) : (
-                <span className="pstn-header-phone pstn-header-phone-muted">
-                  <PhoneCall className="h-3 w-3" />
-                  <span>{displayPhoneNumber}</span>
-                </span>
-              )}
-            </div>
-            <Badge className={getMonitorBadgeClass(monitorState)}>{statusLabel}</Badge>
-        </>
-      }
     >
           <VoiceMonitorWorkspace
             transcriptRef={transcriptRef}
@@ -233,7 +210,15 @@ export default function PstnCall() {
             assistState={assistState}
             callerLabel={formatCallerPhone(callerPhone)}
             loading={isLoading}
-            headerBadge={<MonitorBadge>Voice monitor</MonitorBadge>}
+            headerBadge={
+              <>
+                <MonitorBadge>Voice monitor</MonitorBadge>
+                <span className="pstn-header-phone pstn-header-phone-muted">
+                  <PhoneCall className="h-3 w-3" />
+                  <span>{displayPhoneNumber}</span>
+                </span>
+              </>
+            }
           />
     </VoiceMonitorPage>
   );
@@ -241,13 +226,6 @@ export default function PstnCall() {
 
 function normalizeTranscriptForDedupe(text: string): string {
   return text.toLowerCase().replace(/[.!?,\s]+$/g, "");
-}
-
-function getDialablePhoneNumber(value?: string | null): string | null {
-  const raw = value?.trim();
-  if (!raw) return null;
-  const dialable = raw.replace(/[^\d+]/g, "");
-  return dialable || null;
 }
 
 function formatHeaderPhoneNumber(value?: string | null): string {
@@ -281,21 +259,6 @@ function getMonitorStatusLabel(state: MonitorState): string {
       return "Call ended";
     case "error":
       return "Monitor unavailable";
-  }
-}
-
-function getMonitorBadgeClass(state: MonitorState): string {
-  switch (state) {
-    case "connecting":
-      return "status-warning";
-    case "waiting":
-      return "status-info";
-    case "in-call":
-      return "status-success";
-    case "ended":
-      return "status-muted";
-    case "error":
-      return "status-danger";
   }
 }
 

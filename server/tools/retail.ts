@@ -250,31 +250,31 @@ export async function profile_lookup(args: Record<string, any>): Promise<ToolRes
 
 export async function confirm_profile(args: Record<string, any>): Promise<ToolResult> {
   const suppliedLastName = String(args.lastName || "").trim();
-  const verified = suppliedLastName.length > 0;
+  const profile = getDemoCustomerProfile();
 
-  if (!verified) {
+  if (!suppliedLastName) {
     return {
-      success: true,
-      result: "Last-name confirmation is required before using the profile candidate.",
+      success: false,
+      error: "Last-name confirmation is required before using the profile candidate.",
+      result: "Ask the caller to provide their first and last name. Do not use customer details yet.",
       data: {
         verified: false,
-        customerId: String(args.customerId || getDemoCustomerProfile().customerId),
+        customerId: String(args.customerId || profile.customerId),
         reason: "missing-last-name",
       },
     };
   }
 
-  const profile = getDemoCustomerProfile();
   return {
     success: true,
-    result: `Profile confirmed for demo purposes. The caller is ${profile.name}.`,
+    result: `Profile confirmed after last-name confirmation. The caller is ${profile.name}.`,
     data: {
       verified: true,
       customerId: String(args.customerId || profile.customerId),
       customerName: profile.name,
       preferredName: profile.firstName,
       suppliedLastName,
-      verificationMode: "demo-any-last-name",
+      verificationMode: "last-name-provided",
       verifiedAt: Date.now(),
     },
   };
@@ -371,7 +371,8 @@ export async function get_customer_context(args: Record<string, any>): Promise<T
 
   return {
     success: true,
-    result: `Loaded ${customer.name} (${customer.loyaltyTier}). ${customer.intent}`,
+    result:
+      "Customer context loaded. Use this context silently during product selection and inventory lookup; mention birthday-gift personalization only during the add-on recommendation.",
     data: {
       confidence: "user-lookup",
       verification: {
@@ -383,6 +384,8 @@ export async function get_customer_context(args: Record<string, any>): Promise<T
       customer,
       pastChats: customer.pastChats,
       suppliedName,
+      usageGuidance:
+        "Do not mention birthday-gift, daughter, purple preference, or prior-conversation context until retail_recommend_gift_accessory.",
     },
   };
 }

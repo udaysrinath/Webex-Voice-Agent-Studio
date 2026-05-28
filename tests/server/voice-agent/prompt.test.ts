@@ -33,8 +33,8 @@ const browserProfilePrompt = getProfileConfirmationPrompt("Wanna buy iPad?", "br
 const twilioProfilePrompt = getProfileConfirmationPrompt("Wanna buy iPad?", "twilio");
 assert.equal(browserProfilePrompt, twilioProfilePrompt);
 assert.match(browserProfilePrompt, /pre-confirmation intent/i);
-assert.match(browserProfilePrompt, /treat that pre-confirmation intent as unverified/i);
-assert.match(browserProfilePrompt, /do not resume or act on the pre-confirmation intent/i);
+assert.match(browserProfilePrompt, /keep it as the active request after profile confirmation/i);
+assert.match(browserProfilePrompt, /without asking what they want to shop for again/i);
 
 const browserCallInstructions = buildOpenAIVoiceAgentInstructions({
   confirmationSpokenRoute: "sms",
@@ -52,6 +52,8 @@ assert.match(browserCallInstructions, /Call retail_reserve_item/i);
 assert.match(browserCallInstructions, /Call retail_recommend_gift_accessory/i);
 assert.match(browserCallInstructions, /birthday gift/i);
 assert.match(browserCallInstructions, /purple/i);
+assert.match(browserCallInstructions, /do not mention that this may be a birthday gift/i);
+assert.match(browserCallInstructions, /only stage where you may mention the birthday gift/i);
 
 const retailRuntimePrompt = buildRetailRuntimePrompt(buildUseCaseSystemPrompt(RETAIL_STORE_ASSISTANT_USE_CASE));
 assert.match(retailRuntimePrompt, /Do not ask which store, location, or city/i);

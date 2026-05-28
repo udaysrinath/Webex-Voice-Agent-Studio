@@ -934,12 +934,6 @@ export default function Evaluate() {
         title={agent.name}
         subtitle={getAgentMonitorSubtitle(agent)}
         onBack={() => setLocation("/")}
-        actions={
-          <Button variant="outline" size="sm" className="border-white/10 bg-white/5 hover:bg-white/10">
-            <Settings2 className="mr-2 h-4 w-4" />
-            Settings
-          </Button>
-        }
       >
         <VoiceAgentPanel
           agentId={agent.id}
@@ -948,6 +942,7 @@ export default function Evaluate() {
           voice={agent.voiceModel}
           gender={agent.gender}
           onRealtimeEvent={handleRetailRealtimeEvent}
+          onSessionStart={() => setRetailAssistState(createRetailAssistState())}
           assistState={retailAssistState}
           layout="split"
         />
@@ -1024,6 +1019,7 @@ export default function Evaluate() {
                 voice={agent.voiceModel}
                 gender={agent.gender}
                 onRealtimeEvent={handleRetailRealtimeEvent}
+                onSessionStart={() => setRetailAssistState(createRetailAssistState())}
                 assistState={retailAssistState}
                 layout="split"
               />
