@@ -231,7 +231,9 @@ export class OpenAIRealtimeClient extends EventEmitter {
   }
 
   injectToolCall(toolName: string, toolArgs: object, toolOutput: string, response?: Record<string, unknown>): void {
-    const callId = `server_${toolName}_${Date.now()}`;
+    const suffix = Date.now().toString().slice(-8);
+    const prefix = `s_${toolName}`.slice(0, 23);
+    const callId = `${prefix}_${suffix}`;
     this.send({
       type: "conversation.item.create",
       item: { type: "function_call", name: toolName, call_id: callId, arguments: JSON.stringify(toolArgs) },
