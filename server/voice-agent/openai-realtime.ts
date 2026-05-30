@@ -230,6 +230,19 @@ export class OpenAIRealtimeClient extends EventEmitter {
     }
   }
 
+  injectToolCall(toolName: string, toolArgs: object, toolOutput: string, response?: Record<string, unknown>): void {
+    const callId = `server_${toolName}_${Date.now()}`;
+    this.send({
+      type: "conversation.item.create",
+      item: { type: "function_call", name: toolName, call_id: callId, arguments: JSON.stringify(toolArgs) },
+    });
+    this.send({
+      type: "conversation.item.create",
+      item: { type: "function_call_output", call_id: callId, output: toolOutput },
+    });
+    this.send(response ? { type: "response.create", response } : { type: "response.create" });
+  }
+
   private send(event: object): void {
     if (this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(event));

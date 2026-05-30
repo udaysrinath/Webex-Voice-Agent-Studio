@@ -85,7 +85,7 @@ const BAY_AREA_CATALOG: RetailCatalogItem[] = [
       unavailableStore: "San Jose",
       availableQuantity: 3,
       eta: "Back in 5-7 days",
-      unavailableNote: "John's first-choice tablet is not available at the current location.",
+      unavailableNote: "Mayada's first-choice tablet is not available at the current location.",
       availableNote: "Best fulfillment option for same-day pickup.",
       pairedAccessorySku: "CASE-IPAD-11-PURPLE",
     },
@@ -254,7 +254,7 @@ const BAY_AREA_CATALOG: RetailCatalogItem[] = [
       availableQuantity: 8,
       eta: "Back tomorrow",
       unavailableNote: "San Jose is out of the purple tablet case today.",
-      availableNote: "Personalized upsell based on John's previous birthday-gift context.",
+      availableNote: "Personalized upsell based on Mayada's previous birthday-gift context.",
     },
     {
       sku: "PENCIL-APPLE-USB-C",
@@ -688,7 +688,7 @@ export const RETAIL_STORE_ASSISTANT_USE_CASE: VoiceUseCase = {
     },
     {
       name: "retail_get_customer_context",
-      description: "Load John and his previous store interactions.",
+      description: "Load Mayada and her previous store interactions.",
     },
     {
       name: "retail_lookup_inventory",
@@ -704,41 +704,41 @@ export const RETAIL_STORE_ASSISTANT_USE_CASE: VoiceUseCase = {
     },
   ],
   customer: {
-    name: "John Rivera",
+    name: "Mayada Abdelrahman",
     phone: "+16505550142",
     loyaltyTier: "Gold member",
-    intent: "Find and reserve a tablet as a birthday gift for his daughter.",
+    intent: "Find and reserve a tablet as a birthday gift for her daughter.",
     preferredPickupTime: "Customer chooses pickup date and time during the call",
     relationshipContext:
-      "John has shopped with the store before and expects the assistant to remember useful context without making him repeat it.",
+      "Mayada has shopped with the store before and expects the assistant to remember useful context without making her repeat it.",
     preferences: [
-      "Birthday gift for his daughter",
+      "Birthday gift for her daughter",
       "Daughter likes purple accessories",
-      "Prefers a quick pickup handoff once he chooses a pickup time",
+      "Prefers a quick pickup handoff once she chooses a pickup time",
       "Open to nearby store pickup when local inventory is unavailable",
     ],
     pastChats: [
       {
         date: "May 8",
         channel: "Webex",
-        summary: "John mentioned the tablet is a birthday gift and asked for kid-friendly accessory ideas.",
+        summary: "Mayada mentioned the tablet is a birthday gift and asked for kid-friendly accessory ideas.",
       },
       {
         date: "May 9",
         channel: "SMS",
-        summary: "He asked whether purple cases were available for the tablet size he was considering.",
+        summary: "She asked whether purple cases were available for the tablet size she was considering.",
       },
       {
         date: "May 10",
         channel: "Store Visit",
-        summary: "A store associate noted that John prefers a quick pickup handoff at the counter.",
+        summary: "A store associate noted that Mayada prefers a quick pickup handoff at the counter.",
       },
     ],
   },
   inventory: buildBayAreaInventory(),
   decisionTrace: [
     {
-      title: "Recognize John",
+      title: "Recognize Mayada",
       detail: "Use caller identity and past chats to retrieve purchase context and preferences.",
     },
     {
@@ -751,7 +751,7 @@ export const RETAIL_STORE_ASSISTANT_USE_CASE: VoiceUseCase = {
     },
     {
       title: "Personalize next step",
-      detail: "Recommend the purple case because John said this is a birthday gift for his daughter.",
+      detail: "Recommend the purple case because Mayada said this is a birthday gift for her daughter.",
     },
     {
       title: "Prepare manager handoff",
@@ -759,27 +759,27 @@ export const RETAIL_STORE_ASSISTANT_USE_CASE: VoiceUseCase = {
     },
   ],
   associatePlaybook: {
-    customerName: "John Rivera",
+    customerName: "Mayada Abdelrahman",
     intent: "Reserve an iPad as a birthday gift.",
     reservedItem: "iPad Pro 11-inch, M4, 256GB, Blue",
     reservedStore: "Palo Alto",
     pickupTime: "Customer-confirmed pickup time",
     recommendedUpsell: "Purple Protective Case for iPad 11-inch",
     associateMessage:
-      "John has a pickup scheduled for the customer-confirmed time. Mention the purple protective case and keep the reservation ready at the front counter.",
+      "Mayada has a pickup scheduled for the customer-confirmed time. Mention the purple protective case and keep the reservation ready at the front counter.",
   },
   promptDirectives: [
-    "For this demo, browser and PSTN calls may find John as an unverified profile candidate. Ask for last-name confirmation before greeting by first name or using customer-specific memory.",
+    "For this demo, browser and PSTN calls may find Mayada as an unverified profile candidate. Ask for last-name confirmation before greeting by first name or using customer-specific memory.",
     "After last-name confirmation succeeds with retail_confirm_profile, call retail_user_history_lookup and retail_get_customer_context before using previous orders, profile details, reservations, preferences, or personalized follow-up.",
     "Use user lookup and history context only when it helps the caller. Do not announce the internal lookup.",
     "Answer product, inventory, store, and price questions directly.",
-    "When John asks for a particular product or product family, call retail_search_products before discussing availability, alternatives, or reservations. Treat product search as catalog identity only; do not mention store location, stock status, or pickup availability from product search.",
-    "When John asks about a product, first ask which location he would like to pick up from before checking inventory. Only after he confirms a pickup location should you call retail_lookup_inventory with that location. If the item is unavailable at his location, let him know and offer the nearest available option.",
+    "When Mayada asks for a particular product or product family, call retail_search_products before discussing availability, alternatives, or reservations. Treat product search as catalog identity only; do not mention store location, stock status, or pickup availability from product search.",
+    "When Mayada asks about a product, first ask which location she would like to pick up from before checking inventory. Only after she confirms a pickup location should you call retail_lookup_inventory with that location. If the item is unavailable at her location, let her know and offer the nearest available option.",
     "Do not call retail_reserve_item unless retail_lookup_inventory has succeeded in this same call.",
     "Use cross-store intelligence: do not stop at local retrieval when a nearby fulfillment option is available.",
-    "When John accepts, ask an open-ended question for both his preferred pickup date/day and specific pickup time before reserving. If he provides only the day/date, ask what time works for him. If he provides only a time, ask what day or date works for him. Do not reserve until both are confirmed in the current call. Do not mention, suggest, or assume any usual/default pickup time or same-day pickup unless he says it first in this call.",
+    "When Mayada accepts, ask an open-ended question for both her preferred pickup date/day and specific pickup time before reserving. If she provides only the day/date, ask what time works for her. If she provides only a time, ask what day or date works for her. Do not reserve until both are confirmed in the current call. Do not mention, suggest, or assume any usual/default pickup time or same-day pickup unless she says it first in this call.",
     "After retail_reserve_item succeeds, call retail_recommend_gift_accessory with the exact reserved product and a brief current-call summary. Offer the returned accessory only if the tool selects one, using the personalized reason from prior conversations, order history, pickup context, or current-call details.",
-    "Near the end, ask if John wants a concise summary texted to his number. Send it only after explicit consent.",
+    "Near the end, ask if Mayada wants a concise summary texted to her number. Send it only after explicit consent.",
     "After the call, send the store manager a Webex pickup handoff with customer name, intent, item, pickup time, and recommended upsell.",
   ],
   guardrails: [

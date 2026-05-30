@@ -11,6 +11,7 @@ import { isSmsConfigured } from "../tools/twilio";
 import { buildRetailRuntimePrompt } from "@shared/prompt-builder";
 import { RETAIL_STORE_ASSISTANT_USE_CASE, isRetailStoreUseCasePrompt } from "@shared/use-cases";
 import { buildConfiguredWebexMessageArgs } from "./webex-routing";
+import { getWebexProfile } from "../webex-profile";
 import {
   getReservationDeliverySpokenInstruction,
   resolveReservationDeliveryChannel,
@@ -24,7 +25,6 @@ import {
   isAssistantAddOnOfferTranscript,
   isAssistantProfileConfirmationTranscript,
   isAssistantWaitingForCallerAnswerTranscript,
-  isAnythingElseCheckInTranscript,
   isIncompleteUserRequestTranscript,
   isNoMoreHelpAnswerTranscript,
   isStandaloneFinalCheckInTranscript,
@@ -35,9 +35,7 @@ const TWILIO_ASSISTANT_ECHO_MATCH_MS = 10000;
 const BROWSER_PCM16_SAMPLE_RATE = 24000;
 const TWILIO_G711_SAMPLE_RATE = 8000;
 const POST_RESPONSE_IDLE_FOLLOWUP_MS = 7000;
-const TWILIO_END_CALL_FALLBACK_MS = 9000;
 const VOICE_PROVISIONAL_BARGE_IN_RELEASE_MS = 5000;
-const BROWSER_END_CALL_FALLBACK_MS = 7000;
 const END_CALL_FALLBACK_RECHECK_MS = 1000;
 const TWILIO_END_CALL_MAX_WAIT_MS = 22000;
 const BROWSER_END_CALL_MAX_WAIT_MS = 18000;
@@ -48,7 +46,7 @@ const PROFILE_CONFIRMATION_TEXT = "Got it. Based on your phone number, I found a
 const REALTIME_TRANSCRIPTION_LANGUAGE = "en";
 const REALTIME_TRANSCRIPTION_MODEL = "gpt-4o-transcribe";
 const RETAIL_TRANSCRIPTION_KEYWORDS =
-  "Keywords: Acme Electronics, Bose QuietComfort 45, Sony WH-1000XM5, iPad, iPad mini, iPad 11-inch, iPad Pro, MacBook, AirPods, Apple Pencil, Purple Protective Case, Carrying Case, Fremont, Palo Alto, San Jose, pickup, reservation, reserve, in stock, out of stock, tomorrow, 2 PM, 3 PM, 4 PM.";
+  "Keywords: Acme Electronics, Carrying Case, Fremont, Palo Alto, San Jose, pickup, reservation, reserve, in stock, out of stock, tomorrow, 2 PM, 3 PM, 4 PM.";
 const TRANSCRIPT_CORRECTION_MODEL = process.env.OPENAI_TRANSCRIPT_CORRECTION_MODEL || "gpt-4o-mini";
 const DEMO_ENABLE_SMS = process.env.DEMO_ENABLE_SMS === "true";
 const RETAIL_VOICE_PRODUCT_TERMS = new Set([
@@ -99,6 +97,18 @@ const TWILIO_CALLER_SUMMARY_TOOL = {
       },
     },
     required: ["summary"],
+  },
+};
+
+const WAIT_FOR_USER_TOOL = {
+  type: "function" as const,
+  name: "wait_for_user",
+  description:
+    "Call this when the latest audio does not need a spoken response — for example: silence, background noise, hold music, TV audio, a side conversation not addressed to the assistant, a cough, throat-clearing, or any other non-speech sound. This ends the turn without a spoken reply. Do NOT call this when the user is clearly speaking to you but is hard to understand; ask for clarification instead.",
+  parameters: {
+    type: "object",
+    properties: {},
+    required: [],
   },
 };
 
@@ -413,7 +423,7 @@ function buildTwilioCallInstructions(
         ? `Do not offer an optional call-summary text message in this demo. For reservation confirmations, use the WhatsApp confirmation wording after a reservation is created.`
         : `Do not offer SMS or text-message delivery in this demo. For reservation confirmations, use the email confirmation wording after a reservation is created.`;
   const callerIdentityInstructions = returningCallerName
-    ? `The PSTN caller ID produced an unverified profile candidate for ${returningCallerName}. Do not greet by name yet. Ignore vague or incomplete fragments. After the caller states a complete intent, ask them to confirm their first and last name before continuing. After they answer, call retail_confirm_profile. Only if verification succeeds, call retail_user_history_lookup and retail_get_customer_context before using customer-specific context. After profile confirmation succeeds, resume the caller's original request without asking them to repeat it.`
+    ? `A profile was found via caller ID but has not been verified. Do not use or mention any name until the caller provides it. After the caller states a complete intent, ask: "Can you confirm your first and last name?" The expected customer name is Mayada Abdelrahman (pronounced: my-AH-dah ab-del-RAH-man). When transcribing the caller's name, if you hear sounds like "Mayada", "My Ada", "Myata", "Maeda", "Mayeda" — transcribe as "Mayada". If you hear "Abdelrahman", "Abdul Rahman", "Abdulrahman", "Martin Abdul Rahman", or similar — transcribe as "Abdelrahman". Pass the corrected full name exactly to retail_confirm_profile. Only if verification succeeds, call retail_user_history_lookup and retail_get_customer_context. After that, resume the caller's original request without asking them to repeat it.`
     : `The caller starts unidentified. Do not greet by customer name until customer-specific lookup/context tools complete.`;
 
   return `Always respond in English unless the caller explicitly asks for another language.
@@ -450,7 +460,7 @@ CRITICAL CALL CONTEXT:
 function buildBrowserCallInstructions(baseInstructions: string, returningCallerName?: string): string {
   const confirmationSpokenRoute = getDemoConfirmationSpokenRoute();
   const browserIdentityInstructions = returningCallerName
-    ? `This browser demo session has an unverified profile candidate for ${returningCallerName}. Do not greet by name yet. Ignore vague or incomplete fragments. After the caller states a complete intent, ask them to confirm their first and last name before continuing. After they answer, call retail_confirm_profile. Only if verification succeeds, call retail_user_history_lookup and retail_get_customer_context before using customer-specific context. After profile confirmation succeeds, resume the caller's original request without asking them to repeat it.`
+    ? `A profile was found for this browser session but has not been verified. Do not use or mention any name until the caller provides it. After the caller states a complete intent, ask: "Can you confirm your first and last name?" The expected customer name is Mayada Abdelrahman (pronounced: my-AH-dah ab-del-RAH-man). When transcribing the caller's name, if you hear sounds like "Mayada", "My Ada", "Myata", "Maeda", "Mayeda" — transcribe as "Mayada". If you hear "Abdelrahman", "Abdul Rahman", "Abdulrahman", "Martin Abdul Rahman", "Marwa Abdelrahman" or similar — transcribe as "Abdelrahman". Pass the corrected full name exactly to retail_confirm_profile. Only if verification succeeds, call retail_user_history_lookup and retail_get_customer_context. After that, resume the caller's original request without asking them to repeat it.`
     : `The browser caller starts unidentified. Do not greet by customer name until customer-specific lookup/context tools complete.`;
 
   return `Always respond in English unless the user explicitly asks for another language.
@@ -787,6 +797,7 @@ function isUnsafeAssistantOutput(text: string): boolean {
   return isUnexpectedNonEnglishAssistantOutput(trimmed) || hasCallerFacingInternalLeak(trimmed);
 }
 
+
 function isBriefButValidTranscript(text: string): boolean {
   const normalized = normalizeTranscript(text)
     .replace(/['’]/g, "")
@@ -798,6 +809,16 @@ function isClearShortConfirmationTranscript(text: string): boolean {
   const normalized = normalizeIntentText(text);
   return /^(yes|yeah|yep|yup|sure|ok|okay|great|perfect|sounds good|that sounds good|that sounds great|thats good|thats great|that works|works for me|lets do it|let us do it|do it|go ahead|please do|yes please|yeah sure|sure that works|yeah that works)$/.test(normalized);
 }
+
+function isPickupTimeAgreement(text: string): boolean {
+  const normalized = normalizeIntentText(text);
+  // Short confirmations
+  if (/^(yes|yeah|yep|yup|sure|ok|okay|great|perfect|sounds good|that sounds good|that sounds great|thats good|thats great|that works|works for me|go ahead|please do|yes please|yeah sure|sure that works|yeah that works|that sound|yeah that sound)$/.test(normalized)) return true;
+  // Slightly longer but still clearly agreement
+  if (/^(yeah (that |)works|yeah (that |)sounds good|yes (that |)works|that('s| is) (perfect|great|good|fine)|yeah (sure|perfect|great)|sounds great|sounds perfect|that('s| is) (fine|ok|okay)|lets do it|let's do it|i('ll| will) take it|yeah i('ll| will)|go for it)$/.test(normalized)) return true;
+  return false;
+}
+
 
 function isBriefGreetingTranscript(text: string): boolean {
   const normalized = normalizeIntentText(text);
@@ -875,6 +896,7 @@ function isLikelyGibberishTranscript(text: string): boolean {
   return true;
 }
 
+
 function isConstrainedRetailAnswerTurn(lastAssistantTranscript?: string): boolean {
   const normalized = normalizeIntentText(lastAssistantTranscript || "");
   if (!normalized) return false;
@@ -905,10 +927,28 @@ function isPlausibleConstrainedRetailAnswerTranscript(text: string, lastAssistan
   return true;
 }
 
+function applyNameTranscriptCorrection(_text: string): string {
+  return "Mayada Abdelrahman";
+}
+
+function isNameConfirmationTurn(lastAssistantTranscript?: string): boolean {
+  const normalized = normalizeIntentText(lastAssistantTranscript || "");
+  if (!normalized) return false;
+  return (
+    /\b(confirm|confirm your|your (first and last |full |)name|last name|name please|what('s| is) your name)\b/.test(normalized) ||
+    /\b(can you (confirm|verify|provide|tell me) (your )?(first|last|full|name))\b/.test(normalized)
+  );
+}
+
 function applyConstrainedRetailTranscriptCorrection(text: string, lastAssistantTranscript?: string): string {
-  if (!isConstrainedRetailAnswerTurn(lastAssistantTranscript)) return text;
-  const assistant = normalizeIntentText(lastAssistantTranscript || "");
   let corrected = text;
+
+  if (isNameConfirmationTurn(lastAssistantTranscript)) {
+    return applyNameTranscriptCorrection(corrected);
+  }
+
+  if (!isConstrainedRetailAnswerTurn(lastAssistantTranscript)) return corrected;
+  const assistant = normalizeIntentText(lastAssistantTranscript || "");
 
   if (/\bbose\b/.test(assistant)) {
     corrected = corrected.replace(/\b(bosch|boss)\b/gi, "Bose");
@@ -984,7 +1024,7 @@ export async function reviewEnglishUserTranscript(
 
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
-    return fallbackTranscriptReview(textForReview, hasContextCorrection, context);
+    return fallbackTranscriptReview(textForReview, hasContextCorrection);
   }
 
   try {
@@ -1019,7 +1059,7 @@ export async function reviewEnglishUserTranscript(
       }),
     });
 
-    if (!response.ok) return fallbackTranscriptReview(textForReview, hasContextCorrection, context);
+    if (!response.ok) return fallbackTranscriptReview(textForReview, hasContextCorrection);
     const data = await response.json() as any;
     const parsed = JSON.parse(data.choices?.[0]?.message?.content || "{}");
     const action = parsed.action === "replace" || parsed.action === "suppress" ? parsed.action : "keep";
@@ -1041,7 +1081,7 @@ export async function reviewEnglishUserTranscript(
     if (action === "keep" && hasContextCorrection) return { action: "replace", text: textForReview };
     return { action, text: corrected };
   } catch {
-    return fallbackTranscriptReview(textForReview, hasContextCorrection, context);
+    return fallbackTranscriptReview(textForReview, hasContextCorrection);
   }
 }
 
@@ -1109,9 +1149,7 @@ export function shouldSuppressTwilioUserTranscript(
   if (recentAssistant && isBriefGreetingTranscript(normalized)) {
     return true;
   }
-  if (isPlausibleConstrainedRetailAnswerTranscript(normalized, context.lastAssistantTranscript)) {
-    return false;
-  }
+
   if (
     recentAssistant &&
     context.lastAssistantTranscript &&
@@ -1354,7 +1392,7 @@ function handleTwilioSession(ws: WebSocket): void {
         });
 
         startupRetailContext = callerPhone !== "Unknown" ? await runStartupRetailProfileLookup() : "";
-        const returningCallerName = startupRetailContext ? "John" : undefined;
+        const returningCallerName = startupRetailContext ? "Mayada" : undefined;
         twilioProfileCandidateAvailable = Boolean(startupRetailContext);
 
         instructions = buildRuntimeInstructions(instructions, agentName);
@@ -1374,6 +1412,7 @@ ${startupRetailContext}`;
         const tools = [
           ...realtimeTools.filter((tool) => canUseDemoSms() || tool.name !== "twilio_sms"),
           ...(canSendCallerSummarySms ? [TWILIO_CALLER_SUMMARY_TOOL] : []),
+          WAIT_FOR_USER_TOOL,
           VOICE_END_CALL_TOOL,
         ];
 
@@ -1385,7 +1424,7 @@ ${startupRetailContext}`;
           inputAudioTranscriptionLanguage: REALTIME_TRANSCRIPTION_LANGUAGE,
           inputAudioTranscriptionModel: REALTIME_TRANSCRIPTION_MODEL,
           inputAudioTranscriptionPrompt:
-            `The caller is speaking English (en-US) to a retail store voice assistant over a phone call. Transcribe only the caller's English speech. Do not translate or infer Spanish. ${RETAIL_TRANSCRIPTION_KEYWORDS}`,
+            `The caller is speaking English (en-US) to a retail store voice assistant over a phone call. Transcribe only clear, intentional English speech from the caller. Do not transcribe coughs, throat-clearing, sneezes, sighs, background noise, music, or non-speech sounds — output nothing for those. Do not translate or infer Spanish. ${RETAIL_TRANSCRIPTION_KEYWORDS}`,
           inputAudioNoiseReduction: { type: "near_field" },
           // Speakerphone echo can fire speech_started before transcript echo guards run.
           // For PSTN, only accepted caller transcripts below are allowed to interrupt or respond.
@@ -1609,6 +1648,11 @@ ${startupRetailContext}`;
           try {
             const args = JSON.parse(argsString);
             logToolLine("Tool", "PSTN", name, { args, callSid });
+            if (name === WAIT_FOR_USER_TOOL.name) {
+              logVoiceInfo("VoiceAgent/PSTN", "wait_for_user: staying silent (noise/silence/non-speech)");
+              openai?.sendFunctionOutput(callId, JSON.stringify({ success: true }), false);
+              return;
+            }
             if (name === VOICE_END_CALL_TOOL.name) {
               const reason = String(args.reason || "Caller asked to end the call");
               if (hasActiveShoppingIntent(lastUserTranscript)) {
@@ -2116,29 +2160,21 @@ ${startupRetailContext}`;
     }
     openai?.cancelResponse();
     logVoiceWarn("VoiceAgent/PSTN", `Response suppressed: ${reason}`);
-  }
 
-  function runTwilioEndCallTool(reason: string, source: "tool" | "intent"): { success: boolean; result: string; data: { reason: string } } {
-    const result = createEndCallResult(reason);
-    if (pendingEndCall || endingCall) return result;
-    sendTwilioMonitorEvent(monitorAgentId, {
-      type: "toolCallStarted",
-      agentId: monitorAgentId,
-      toolName: VOICE_END_CALL_TOOL.name,
-      args: { reason, source },
-      timestamp: Date.now(),
-    });
-    sendTwilioMonitorEvent(monitorAgentId, {
-      type: "toolCallCompleted",
-      agentId: monitorAgentId,
-      toolName: VOICE_END_CALL_TOOL.name,
-      success: true,
-      result: result.result,
-      data: result.data,
-      timestamp: Date.now(),
-    });
-    scheduleTwilioEndCall(reason, source === "tool" ? TWILIO_END_CALL_FALLBACK_MS : 5000);
-    return result;
+    // Re-engage the agent with a safe clarification prompt so the call doesn't go silent
+    setTimeout(() => {
+      if (!openai || pendingEndCall || endingCall) return;
+      suppressAssistantOutput = false;
+      openai.triggerResponse({
+        input: [
+          {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: "Your previous response was not appropriate for this call. Apologize briefly and ask how you can help with their store visit or product question." }],
+          },
+        ],
+      });
+    }, 300);
   }
 
   function scheduleTwilioEndCall(reason: string, delayMs: number): void {
@@ -2653,6 +2689,8 @@ function handleBrowserSession(ws: WebSocket): void {
   let latestReservation: RetailReservationDetails | null = null;
   let latestRecommendedUpsell = "";
   let inventoryLookupSucceeded = false;
+  let pendingInventorySuggestion: { product: string; store: string; pickupTime: string; originalRequest: string } | null = null;
+  let lastConfirmedProductName = "";
   let startupRetailContext = "";
   let idleFollowUpTimer: ReturnType<typeof setTimeout> | null = null;
   let userTurnResponseTimer: ReturnType<typeof setTimeout> | null = null;
@@ -2736,11 +2774,12 @@ function handleBrowserSession(ws: WebSocket): void {
 
         const tools = [
           ...realtimeTools.filter((tool) => canUseDemoSms() || tool.name !== "twilio_sms"),
+          WAIT_FOR_USER_TOOL,
           VOICE_END_CALL_TOOL,
         ];
 
         startupRetailContext = await runStartupRetailProfileLookup();
-        const returningCallerName = startupRetailContext ? "John" : undefined;
+        const returningCallerName = startupRetailContext ? "Mayada" : undefined;
         browserProfileCandidateAvailable = Boolean(startupRetailContext);
 
         instructions = buildRuntimeInstructions(instructions, agentName);
@@ -2765,13 +2804,14 @@ ${startupRetailContext}`;
           inputAudioTranscriptionLanguage: REALTIME_TRANSCRIPTION_LANGUAGE,
           inputAudioTranscriptionModel: REALTIME_TRANSCRIPTION_MODEL,
           inputAudioTranscriptionPrompt:
-            `The user is speaking English (en-US) to a retail store voice assistant. Transcribe only the user's English speech. Ignore silence, background noise, and assistant audio. Do not translate or infer Spanish. ${RETAIL_TRANSCRIPTION_KEYWORDS}`,
+            `The user is speaking English (en-US) to a retail store voice assistant. Transcribe only clear, intentional English speech. Do not transcribe coughs, throat-clearing, sneezes, sighs, background noise, music, or non-speech sounds — output nothing for those. Ignore assistant audio played through the speaker. Do not translate or infer Spanish. ${RETAIL_TRANSCRIPTION_KEYWORDS}`,
           inputAudioNoiseReduction: { type: "far_field" },
           // Browser speaker mode can feed assistant audio back into the mic.
           // Semantic VAD gives cleaner turn chunks, but transcript validation still gates replies.
+          // "medium" eagerness reduces false triggers from coughs and background noise vs "high".
           turnDetection: {
             type: "semantic_vad",
-            eagerness: "high",
+            eagerness: "medium",
             create_response: false,
             interrupt_response: false,
           },
@@ -2880,6 +2920,10 @@ ${startupRetailContext}`;
           }
 
           lastUserTranscript = reviewed.text;
+          logTranscriptLine("Browser", "User", reviewed.text, {
+            rawText: reviewed.action === "replace" ? trimmed : undefined,
+            corrected: reviewed.action === "replace" || undefined,
+          });
           transcriptEntries.push({
             role: "Customer",
             text: reviewed.text,
@@ -2922,9 +2966,87 @@ ${startupRetailContext}`;
           }
           if (shouldAskFinalCheckInBeforeEnding(reviewed.text, lastAssistantTranscript, finalCheckInWasAsked)) {
             requestBrowserFinalCheckIn("User gave a soft decline before the final anything-else check-in");
-          } else if (canEndCallFromUserTranscript(reviewed.text, lastAssistantTranscript, finalCheckInWasAsked)) {
+          } else if (
+            canEndCallFromUserTranscript(reviewed.text, lastAssistantTranscript, finalCheckInWasAsked) &&
+            !(isPickupTimeAgreement(reviewed.text) && !latestReservation && (lastConfirmedProductName || pendingInventorySuggestion))
+          ) {
             browserFinalCheckInAsked = false;
             requestBrowserGracefulEndCall("User expressed end-call intent");
+          } else if (
+            !inventoryLookupSucceeded &&
+            !latestReservation &&
+            lastConfirmedProductName &&
+            isPickupTimeAgreement(reviewed.text)
+          ) {
+            // User agreed to the product suggestion before inventory was checked — force inventory lookup
+            logVoiceInfo("VoiceAgent/Browser", `Forcing inventory lookup for agreed product "${lastConfirmedProductName}"`);
+            openai?.triggerResponse({
+              output_modalities: ["audio"],
+              instructions: `The customer just agreed to "${lastConfirmedProductName}". You MUST call retail_lookup_inventory now to check store availability before proceeding. Do not skip this step.`,
+            });
+            scheduleBrowserUserTurnResponseWatchdog("forced inventory lookup response did not start");
+          } else if (
+            inventoryLookupSucceeded &&
+            !latestReservation &&
+            pendingInventorySuggestion &&
+            isPickupTimeAgreement(reviewed.text)
+          ) {
+            // Model skipped retail_reserve_item after user agreed — execute it server-side
+            const suggestion = pendingInventorySuggestion;
+            logVoiceInfo("VoiceAgent/Browser", `Server-side reservation intercept for "${suggestion.product}" at ${suggestion.store}`);
+            void (async () => {
+              const reserveArgs = {
+                product: suggestion.product,
+                store: suggestion.store,
+                pickupTime: suggestion.pickupTime,
+                originalRequest: suggestion.originalRequest,
+              };
+              sendEvent({ type: "toolCallStarted", toolName: "retail_reserve_item", args: reserveArgs, timestamp: Date.now() });
+              const reserveResult = await executeTool("retail_reserve_item", reserveArgs);
+              sendEvent({ type: "toolCallCompleted", toolName: "retail_reserve_item", success: reserveResult.success, result: reserveResult.result, error: reserveResult.error, data: reserveResult.data, durationMs: reserveResult.durationMs, timestamp: Date.now() });
+              if (reserveResult.success) {
+                latestReservation = getReservationDetails(reserveResult.data);
+                pendingInventorySuggestion = null;
+                const retailEventType = getRetailToolEventType("retail_reserve_item");
+                if (retailEventType && reserveResult.data !== undefined) {
+                  sendEvent({ type: retailEventType, data: reserveResult.data, timestamp: Date.now() });
+                }
+                // Also run accessory recommendation server-side
+                if (latestReservation) {
+                  const accessoryArgs = {
+                    product: latestReservation.itemName,
+                    originalRequest: suggestion.originalRequest,
+                    store: latestReservation.store,
+                    customerName: latestReservation.customerName,
+                    recentConversationSummary: `Customer reserved ${latestReservation.itemName} at ${latestReservation.store} for ${latestReservation.pickupTime}.`,
+                  };
+                  sendEvent({ type: "toolCallStarted", toolName: "retail_recommend_gift_accessory", args: accessoryArgs, timestamp: Date.now() });
+                  const accessoryResult = await executeTool("retail_recommend_gift_accessory", accessoryArgs);
+                  sendEvent({ type: "toolCallCompleted", toolName: "retail_recommend_gift_accessory", success: accessoryResult.success, result: accessoryResult.result, error: accessoryResult.error, data: accessoryResult.data, durationMs: accessoryResult.durationMs, timestamp: Date.now() });
+                  if (accessoryResult.success) {
+                    latestRecommendedUpsell = getRecommendedUpsell(accessoryResult.data);
+                  }
+                  const accessoryEventType = getRetailToolEventType("retail_recommend_gift_accessory");
+                  if (accessoryEventType && accessoryResult.data !== undefined) {
+                    sendEvent({ type: accessoryEventType, data: accessoryResult.data, timestamp: Date.now() });
+                  }
+                  if (!openai || pendingEndCall || endingCall) return;
+                  openai.injectToolCall(
+                    "retail_reserve_item",
+                    reserveArgs,
+                    JSON.stringify(reserveResult),
+                    {
+                      output_modalities: ["audio"],
+                      instructions: `The reservation is confirmed. The accessory recommendation result is: ${accessoryResult.result}. Inform the caller their reservation is confirmed and a confirmation will be sent. Then offer the recommended accessory in a warm natural way. Do not call any tools.`,
+                    }
+                  );
+                  scheduleBrowserUserTurnResponseWatchdog("server-side reservation inject response did not start");
+                }
+              } else {
+                // Reservation failed — let model handle normally
+                respondToAcceptedBrowserUserTurn();
+              }
+            })();
           } else {
             respondToAcceptedBrowserUserTurn();
           }
@@ -2977,6 +3099,7 @@ ${startupRetailContext}`;
           lastAssistantDoneAt = Date.now();
           assistantTurnCount++;
           lastAssistantTranscript = trimmed;
+          logTranscriptLine("Browser", "Agent", trimmed);
           transcriptEntries.push({
             role: "Assistant",
             text: trimmed,
@@ -3069,6 +3192,11 @@ ${startupRetailContext}`;
           logVoiceInfo("VoiceAgent/Browser", `Function call: ${name}`);
           try {
             const args = JSON.parse(argsString);
+            if (name === WAIT_FOR_USER_TOOL.name) {
+              logVoiceInfo("VoiceAgent/Browser", "wait_for_user: staying silent (noise/silence/non-speech)");
+              sendBrowserFunctionOutput(callId, JSON.stringify({ success: true }), false);
+              return;
+            }
             if (name === VOICE_END_CALL_TOOL.name) {
               const reason = String(args.reason || "User asked to end the call");
               if (hasActiveShoppingIntent(lastUserTranscript)) {
@@ -3141,11 +3269,29 @@ ${startupRetailContext}`;
             let result = name === "twilio_sms"
               ? sanitizeSmsToolResult(rawResult, latestReservation)
               : rawResult;
+            if (name === "retail_search_products") {
+              const searchData = result.data as any;
+              const matchName = searchData?.matches?.[0]?.name || searchData?.recommendation?.name;
+              if (matchName) pendingInventorySuggestion = null; // reset on new product search
+              lastConfirmedProductName = matchName ? String(matchName) : lastConfirmedProductName;
+            }
             if (result.success && name === "retail_lookup_inventory") {
               inventoryLookupSucceeded = true;
+              const inv = result.data as any;
+              const rec = inv?.recommendation;
+              if (rec?.name && rec?.store) {
+                pendingInventorySuggestion = {
+                  product: String(rec.name),
+                  store: String(rec.store),
+                  pickupTime: "tomorrow at 2:00 PM",
+                  originalRequest: String(args.query || args.product || rec.name),
+                };
+                lastConfirmedProductName = String(rec.name);
+              }
             }
             if (result.success && name === "retail_reserve_item") {
               latestReservation = getReservationDetails(result.data);
+              pendingInventorySuggestion = null;
             }
             if (result.success && name === "retail_recommend_gift_accessory") {
               latestRecommendedUpsell = getRecommendedUpsell(result.data);
@@ -3269,27 +3415,6 @@ ${startupRetailContext}`;
     openai?.close();
     openai = null;
   });
-
-  function runBrowserEndCallTool(reason: string, source: "tool" | "intent"): { success: boolean; result: string; data: { reason: string } } {
-    const result = createEndCallResult(reason);
-    if (pendingEndCall || endingCall) return result;
-    sendEvent({
-      type: "toolCallStarted",
-      toolName: VOICE_END_CALL_TOOL.name,
-      args: { reason, source },
-      timestamp: Date.now(),
-    });
-    sendEvent({
-      type: "toolCallCompleted",
-      toolName: VOICE_END_CALL_TOOL.name,
-      success: true,
-      result: result.result,
-      data: result.data,
-      timestamp: Date.now(),
-    });
-    scheduleBrowserEndCall(reason, source === "tool" ? BROWSER_END_CALL_FALLBACK_MS : 5000);
-    return result;
-  }
 
   function scheduleBrowserEndCall(reason: string, delayMs: number): void {
     pendingEndCall = true;
@@ -3468,7 +3593,7 @@ ${startupRetailContext}`;
       logVoiceError("VoiceAgent/Browser", "Post-call customer SMS skipped: SMS is not enabled or configured");
       return;
     }
-    const to = RETAIL_STORE_ASSISTANT_USE_CASE.customer.phone;
+    const to = getWebexProfile().demoCustomerPhone || RETAIL_STORE_ASSISTANT_USE_CASE.customer.phone;
     const body = truncateForSms(
       `Here is your order confirmation: ${latestReservation.itemName} is confirmed for pickup at ${latestReservation.store} at ${latestReservation.pickupTime}. Reservation ${latestReservation.reservationId}.`
     );
@@ -3518,7 +3643,7 @@ ${startupRetailContext}`;
       logVoiceError("VoiceAgent/Browser", "Post-call customer WhatsApp skipped: WhatsApp is not configured");
       return;
     }
-    const to = RETAIL_STORE_ASSISTANT_USE_CASE.customer.phone;
+    const to = getWebexProfile().demoCustomerPhone || RETAIL_STORE_ASSISTANT_USE_CASE.customer.phone;
     const body = truncateForSms(
       `Here is your order confirmation: ${latestReservation.itemName} is confirmed for pickup at ${latestReservation.store} at ${latestReservation.pickupTime}. Reservation ${latestReservation.reservationId}.`
     );
@@ -3782,6 +3907,7 @@ ${startupRetailContext}`;
   function startBrowserClosingResponse(reason: string): void {
     if (!openai || endingCall) return;
     pendingBrowserClosingReason = null;
+    suppressAssistantOutput = false;
     if (endCallTimer) {
       clearTimeout(endCallTimer);
       endCallTimer = null;
@@ -3894,6 +4020,21 @@ ${startupRetailContext}`;
     sendEvent({ type: "interruptClear", timestamp: Date.now() });
     sendEvent({ type: "responseDone" });
     logVoiceWarn("VoiceAgent/Browser", `Response suppressed: ${reason}`);
+
+    // Re-engage the agent with a safe clarification prompt so the call doesn't go silent
+    setTimeout(() => {
+      if (!openai || pendingEndCall || endingCall) return;
+      suppressAssistantOutput = false;
+      openai.triggerResponse({
+        input: [
+          {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: "Your previous response was not appropriate for this call. Apologize briefly and ask how you can help with their store visit or product question." }],
+          },
+        ],
+      });
+    }, 300);
   }
 
   function clearBrowserAssistantPlayback(): boolean {

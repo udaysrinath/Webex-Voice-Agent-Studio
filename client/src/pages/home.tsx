@@ -171,7 +171,7 @@ export default function Home() {
             <span>Next-Gen Voice Agents</span>
           </div>
           <h1 className="text-5xl md:text-7xl font-display font-bold mb-6 tracking-tight leading-tight">
-            Webex <span className="text-transparent bg-clip-text bg-gradient-to-r from-primary to-purple-400">Voice Agent Studio</span>
+            AI <span className="text-transparent bg-clip-text bg-gradient-to-r from-primary to-purple-400">Voice Agent</span>
           </h1>
           <p className="text-xl text-muted-foreground leading-relaxed">
             Design personalized voice agents for the Webex ecosystem. 
@@ -329,9 +329,9 @@ export default function Home() {
                         <Pencil className="h-4 w-4 shrink-0" />
                         Edit
                       </Button>
-                      <Link href={`/evaluate?agentId=${agent.id}`} className="w-full">
-                        <Button 
-                          variant="outline" 
+                      <Link href={`/browser-call?agentId=${agent.id}`} className="w-full">
+                        <Button
+                          variant="outline"
                           className="min-h-[82px] w-full justify-start gap-3 px-3 py-3 text-left"
                           data-testid={`button-evaluate-agent-${agent.id}`}
                         >

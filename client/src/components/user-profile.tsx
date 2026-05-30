@@ -22,6 +22,7 @@ export function UserProfile() {
   const [open, setOpen] = useState(false);
   const [bearerToken, setBearerToken] = useState("");
   const [webexSpaceId, setWebexSpaceId] = useState("");
+  const [demoCustomerPhone, setDemoCustomerPhone] = useState("");
 
   const { data: profile } = useQuery({
     queryKey: ["webex-profile"],
@@ -31,6 +32,7 @@ export function UserProfile() {
   useEffect(() => {
     if (profile) {
       setWebexSpaceId(profile.webexSpaceId || "");
+      setDemoCustomerPhone(profile.demoCustomerPhone || "");
     }
   }, [profile]);
 
@@ -39,6 +41,7 @@ export function UserProfile() {
       webexApi.updateProfile({
         bearerToken: bearerToken.trim(),
         webexSpaceId: webexSpaceId.trim(),
+        demoCustomerPhone: demoCustomerPhone.trim(),
       }),
     onSuccess: () => {
       setBearerToken("");
@@ -85,7 +88,7 @@ export function UserProfile() {
         <DialogContent className="sm:max-w-[440px]" data-testid="dialog-user-profile">
           <DialogHeader>
             <DialogTitle>User Profile</DialogTitle>
-            <DialogDescription>Set the Webex credentials used for outgoing messages.</DialogDescription>
+            <DialogDescription>Set Webex credentials and demo caller profile values.</DialogDescription>
           </DialogHeader>
 
           <div className="grid gap-4 py-2">
@@ -111,6 +114,18 @@ export function UserProfile() {
                 placeholder="Webex space id"
                 autoComplete="off"
                 data-testid="input-webex-space-id"
+              />
+            </div>
+
+            <div className="grid gap-2">
+              <Label htmlFor="demo-customer-phone">Demo customer phone</Label>
+              <Input
+                id="demo-customer-phone"
+                value={demoCustomerPhone}
+                onChange={(event) => setDemoCustomerPhone(event.target.value)}
+                placeholder={profile?.demoCustomerPhone || "e.g. +12138803111"}
+                autoComplete="off"
+                data-testid="input-demo-customer-phone"
               />
             </div>
           </div>

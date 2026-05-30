@@ -1,6 +1,7 @@
 export interface WebexProfile {
   bearerToken?: string;
   webexSpaceId?: string;
+  demoCustomerPhone?: string;
 }
 
 const runtimeProfile: WebexProfile = {};
@@ -16,10 +17,16 @@ function normalizeSpaceId(spaceId?: string): string | undefined {
   return trimmed || undefined;
 }
 
+function normalizePhone(phone?: string): string | undefined {
+  const trimmed = phone?.trim();
+  return trimmed || undefined;
+}
+
 export function getWebexProfile(): WebexProfile {
   return {
     bearerToken: runtimeProfile.bearerToken || normalizeBearerToken(process.env.WEBEX_ACCESS_TOKEN),
     webexSpaceId: runtimeProfile.webexSpaceId || normalizeSpaceId(process.env.WEBEX_SPACE_ID),
+    demoCustomerPhone: runtimeProfile.demoCustomerPhone || normalizePhone(process.env.DEMO_CUSTOMER_PHONE),
   };
 }
 
@@ -30,6 +37,10 @@ export function updateWebexProfile(update: WebexProfile): WebexProfile {
 
   if (update.webexSpaceId !== undefined) {
     runtimeProfile.webexSpaceId = normalizeSpaceId(update.webexSpaceId);
+  }
+
+  if (update.demoCustomerPhone !== undefined) {
+    runtimeProfile.demoCustomerPhone = normalizePhone(update.demoCustomerPhone);
   }
 
   return getWebexProfile();

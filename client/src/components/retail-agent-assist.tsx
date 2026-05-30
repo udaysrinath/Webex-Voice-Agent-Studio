@@ -842,7 +842,7 @@ function getCurrentWorkState(state: RetailAssistState, event?: RetailToolEvent):
   if (event.toolName === "retail_user_history_lookup") {
     return {
       header: "Looking up history",
-      summary: `Searching ${customerFirstName}'s previous interactions so the assistant can greet him naturally and avoid making him repeat context.`,
+      summary: `Searching ${customerFirstName}'s previous interactions so the assistant can greet them naturally and avoid making them repeat context.`,
       lines: [
         { id: "history-calls", text: "Searching previous call history.", status },
         { id: "history-orders", text: "Looking at previous order history.", status },
@@ -854,7 +854,7 @@ function getCurrentWorkState(state: RetailAssistState, event?: RetailToolEvent):
   if (event.toolName === "retail_get_customer_context") {
     return {
       header: running ? "Loading customer context" : "Customer context ready",
-      summary: `Combining ${customerFirstName}'s profile, prior conversations, and shopping preferences before the assistant greets him.`,
+      summary: `Combining ${customerFirstName}'s profile, prior conversations, and shopping preferences before the assistant greets them.`,
       lines: [
         { id: "context-profile", text: "Reading customer profile.", status },
         { id: "context-preferences", text: "Checking saved preferences and relationship context.", status },
@@ -1279,7 +1279,7 @@ export function RetailAssistHero({ state, liveLabel }: { state: RetailAssistStat
           </div>
           <h2 className="mt-2 text-lg font-semibold">Continuity-driven retail agent assist</h2>
           <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-            John gets remembered context, cross-store inventory, reservation help, summary SMS consent, and an associate-ready playbook.
+            Mayada gets remembered context, cross-store inventory, reservation help, summary SMS consent, and an associate-ready playbook.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">

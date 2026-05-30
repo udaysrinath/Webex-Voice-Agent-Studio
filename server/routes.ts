@@ -859,6 +859,7 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
   const webexProfileSchema = z.object({
     bearerToken: z.string().optional(),
     webexSpaceId: z.string().optional(),
+    demoCustomerPhone: z.string().optional(),
   });
 
   const demoCustomerSessionSchema = z.object({
@@ -870,6 +871,7 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
     res.json({
       hasBearerToken: !!profile.bearerToken,
       webexSpaceId: profile.webexSpaceId || "",
+      demoCustomerPhone: profile.demoCustomerPhone || "",
     });
   });
 
@@ -881,6 +883,7 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
         success: true,
         hasBearerToken: !!profile.bearerToken,
         webexSpaceId: profile.webexSpaceId || "",
+        demoCustomerPhone: profile.demoCustomerPhone || "",
       });
     } catch (error: any) {
       if (error.name === "ZodError") {

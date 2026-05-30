@@ -174,6 +174,7 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
       case "connected":
         setState("listening");
         setActivity("ready");
+        setError(null);
         break;
       case "interruptClear":
         clearPlayback();
@@ -415,7 +416,12 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
 
 function isBenignVoiceError(message: unknown): boolean {
   const text = String(message || "");
-  return /Tool call ID 'call_[^']+' not found in conversation/.test(text);
+  return (
+    /Tool call ID 'call_[^']+' not found in conversation/.test(text) ||
+    /already has an active response in progress/.test(text) ||
+    /Conversation already has an active response/.test(text) ||
+    /response in progress/.test(text)
+  );
 }
 
 function normalizeTranscriptForDedupe(text: string): string {
