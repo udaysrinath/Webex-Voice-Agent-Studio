@@ -122,6 +122,86 @@ const VOICE_END_CALL_TOOL = {
 const SMS_SUMMARY_MAX_CHARS = 1200;
 const STORE_MANAGER_WEBEX_TEMPLATE = "store_manager_webex_message";
 
+// --- Logger ---
+
+type VoiceLogChannel = "PSTN" | "Browser";
+type VoiceLogSpeaker = "User" | "Agent" | "Suppressed";
+
+function ts(): string {
+  return new Date().toISOString().replace("T", " ").slice(0, 23);
+}
+
+function compactJson(value: unknown): string {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return JSON.stringify({ unserializable: true });
+  }
+}
+
+function logChannelBoundary(channel: VoiceLogChannel, phase: "Start" | "End", meta: Record<string, unknown> = {}): void {
+  const label = channel === "Browser" ? "🌐 BROWSER" : "📞 PSTN";
+  if (phase === "Start") {
+    console.log("\n" + "─".repeat(60));
+    console.log(`  CALL STARTED  ${ts()}  [${label}]  ${compactJson(meta)}`);
+    console.log("─".repeat(60));
+  } else {
+    console.log("─".repeat(60));
+    console.log(`  CALL ENDED    ${ts()}  [${label}]  ${compactJson(meta)}`);
+    console.log("─".repeat(60) + "\n");
+  }
+}
+
+function logTranscriptLine(
+  channel: VoiceLogChannel,
+  speaker: VoiceLogSpeaker,
+  text: string,
+  meta: Record<string, unknown> = {}
+): void {
+  const icon = speaker === "User" ? "👤 Caller:   " : speaker === "Agent" ? "🤖 Agent:    " : "🔇 Suppressed:";
+  const metaStr = Object.keys(meta).length ? "  " + compactJson(meta) : "";
+  console.log(`  [${ts()}] [${channel}] ${icon} ${text}${metaStr}`);
+}
+
+function logToolLine(
+  kind: "Tool" | "ToolResult",
+  channel: VoiceLogChannel,
+  toolName: string,
+  payload: Record<string, unknown>
+): void {
+  if (kind === "Tool") {
+    const { args, ...rest } = payload;
+    const argsStr = args && Object.keys(args as object).length ? " " + compactJson(args) : "";
+    const metaStr = Object.keys(rest).length ? "  " + compactJson(rest) : "";
+    console.log(`  [${ts()}] [${channel}] 🔧 Tool:      ${toolName}${argsStr}${metaStr}`);
+  } else {
+    const { success, result, durationMs, error, ...rest } = payload;
+    const status = success ? "✓" : "✗";
+    const duration = typeof durationMs === "number" ? `  (${durationMs}ms)` : "";
+    const metaStr = Object.keys(rest).length ? "  " + compactJson(rest) : "";
+    console.log(`  [${ts()}] [${channel}] 🔧 Tool ${status}:   ${toolName}${duration}${metaStr}`);
+    if (result) console.log(`             └─ ${result}`);
+    if (error && !success) console.log(`             └─ ❌ ${error}`);
+  }
+}
+
+function logVoiceInfo(context: string, message: string, meta?: Record<string, unknown>): void {
+  const metaStr = meta ? "  " + compactJson(meta) : "";
+  console.log(`  [${ts()}] ℹ️  ${context}: ${message}${metaStr}`);
+}
+
+function logVoiceWarn(context: string, message: string, meta?: Record<string, unknown>): void {
+  const metaStr = meta ? "  " + compactJson(meta) : "";
+  console.warn(`  [${ts()}] ⚠️  ${context}: ${message}${metaStr}`);
+}
+
+function logVoiceError(context: string, message: string, meta?: Record<string, unknown>): void {
+  const metaStr = meta ? "  " + compactJson(meta) : "";
+  console.error(`  [${ts()}] ❌ ${context}: ${message}${metaStr}`);
+}
+
+// ---
+
 function canUseDemoSms(): boolean {
   return DEMO_ENABLE_SMS && isSmsConfigured();
 }
@@ -313,7 +393,7 @@ async function summarizeCallForStoreManager(transcriptText: string): Promise<Sto
       recommended_upsell: parsed.recommended_upsell || "Not specified",
     };
   } catch (error: any) {
-    console.error("[VoiceAgent/Twilio] Store manager summary failed:", error.message);
+    logVoiceError("VoiceAgent/PSTN", `Store manager summary failed: ${error.message}`);
     return fallbackStoreManagerSummary(transcriptText);
   }
 }
@@ -1095,11 +1175,11 @@ export function attachVoiceAgentWebSocket(server: Server): void {
   const wss = new WebSocketServer({ noServer: true });
 
   server.on("upgrade", (request, socket, head) => {
-    console.log(`[WebSocket] Upgrade request received for URL: ${request.url}`);
+    logVoiceInfo("WebSocket", `Upgrade request: ${request.url}`);
     const url = new URL(request.url || "", `http://${request.headers.host}`);
     if (url.pathname === "/ws/twilio-stream" || url.pathname === "/ws/twilio-monitor" || url.pathname === "/ws/voice-agent") {
       wss.handleUpgrade(request, socket, head, (ws) => {
-        console.log(`[WebSocket] Connection established for ${url.pathname}`);
+        logVoiceInfo("WebSocket", `Connection established for ${url.pathname}`);
         if (url.pathname === "/ws/twilio-stream") {
           handleTwilioSession(ws);
         } else if (url.pathname === "/ws/twilio-monitor") {
@@ -1151,7 +1231,7 @@ function handleTwilioMonitorSession(ws: WebSocket, url: URL): void {
 }
 
 function handleTwilioSession(ws: WebSocket): void {
-  console.log("[TwilioSession] New session started");
+  logVoiceInfo("TwilioSession", "New session started");
   let openai: OpenAIRealtimeClient | null = null;
   let streamSid: string | null = null;
   let activeCallSid: string | null = null;
@@ -1214,6 +1294,7 @@ function handleTwilioSession(ws: WebSocket): void {
         callStartedAt = Date.now();
         callSid = msg.start.callSid;
         activeCallSid = typeof callSid === "string" ? callSid : null;
+        logChannelBoundary("PSTN", "Start", { callSid, streamSid, agentId });
 
         let instructions = "You are a helpful voice assistant. Keep responses concise and conversational.";
         let voice = "marin";
@@ -1342,9 +1423,9 @@ ${startupRetailContext}`;
           pendingTwilioUserSpeechItemId = typeof event.item_id === "string" ? event.item_id : null;
           twilioTranscriptPreview = "";
           if (hasActiveTwilioAssistantPlayback()) {
-            console.debug("[VoiceAgent/Twilio] Candidate barge-in speech started", {
-              itemId: pendingTwilioUserSpeechItemId,
-              audioStartMs: pendingTwilioUserSpeechAudioStartMs,
+            logVoiceInfo("VoiceAgent/PSTN", "Candidate barge-in speech started", {
+              itemId: pendingTwilioUserSpeechItemId ?? undefined,
+              audioStartMs: pendingTwilioUserSpeechAudioStartMs ?? undefined,
             });
           }
         });
@@ -1360,11 +1441,10 @@ ${startupRetailContext}`;
         });
 
         const handleTwilioUserTranscript = async (text: string): Promise<void> => {
-          console.log(`[VoiceAgent/Twilio] User: ${text}`);
           const trimmed = text.trim();
           if (!trimmed) return;
           if (isIncompleteUserRequestTranscript(trimmed)) {
-            console.warn(`[VoiceAgent/Twilio] Suppressed incomplete user request fragment: ${trimmed}`);
+            logTranscriptLine("PSTN", "Suppressed", trimmed, { reason: "incomplete_user_request", callSid });
             releaseProvisionalTwilioBargeIn();
             clearPendingTwilioUserSpeechCandidate();
             return;
@@ -1377,7 +1457,7 @@ ${startupRetailContext}`;
               twilioResponseActive,
             })
           ) {
-            console.warn(`[VoiceAgent/Twilio] Suppressed likely phone-speaker echo transcript: ${trimmed}`);
+            logTranscriptLine("PSTN", "Suppressed", trimmed, { reason: "assistant_echo_or_overlap", callSid });
             releaseProvisionalTwilioBargeIn();
             clearPendingTwilioUserSpeechCandidate();
             return;
@@ -1389,16 +1469,21 @@ ${startupRetailContext}`;
             lastUserTranscript,
           });
           if (reviewed.action === "suppress") {
-            console.warn(`[VoiceAgent/Twilio] Suppressed suspicious user transcript: ${trimmed}`);
+            logTranscriptLine("PSTN", "Suppressed", trimmed, { reason: "transcript_review", callSid });
             releaseProvisionalTwilioBargeIn();
             clearPendingTwilioUserSpeechCandidate();
             return;
           }
           if (reviewed.action === "replace") {
-            console.warn(`[VoiceAgent/Twilio] Corrected user transcript: "${trimmed}" -> "${reviewed.text}"`);
+            logVoiceWarn("VoiceAgent/PSTN", `Corrected user transcript: "${trimmed}" -> "${reviewed.text}"`);
           }
 
           lastUserTranscript = reviewed.text;
+          logTranscriptLine("PSTN", "User", reviewed.text, {
+            rawText: reviewed.action === "replace" ? trimmed : undefined,
+            corrected: reviewed.action === "replace" || undefined,
+            callSid,
+          });
           transcriptEntries.push({
             role: "Customer",
             text: reviewed.text,
@@ -1472,14 +1557,13 @@ ${startupRetailContext}`;
         });
 
         openai.on("assistantTranscriptDone", (text: string) => {
-          console.log(`[VoiceAgent/Twilio] Agent: ${text}`);
           const trimmed = text.trim();
           if (suppressAssistantOutput) {
-            console.warn(`[VoiceAgent/Twilio] Suppressed assistant output after prior response cancellation: ${trimmed}`);
+            logVoiceWarn("VoiceAgent/PSTN", `Suppressed assistant output after prior response cancellation: ${trimmed}`);
             return;
           }
           if (isUnsafeAssistantOutput(trimmed)) {
-            console.warn(`[VoiceAgent/Twilio] Suppressed unsafe assistant output: ${trimmed}`);
+            logVoiceWarn("VoiceAgent/PSTN", `Suppressed unsafe assistant output: ${trimmed}`);
             suppressTwilioAssistantResponse("Unsafe assistant transcript");
             return;
           }
@@ -1487,6 +1571,7 @@ ${startupRetailContext}`;
             assistantTurnCount++;
             lastAssistantDoneAt = Date.now();
             lastAssistantTranscript = trimmed;
+            logTranscriptLine("PSTN", "Agent", trimmed, { callSid });
             transcriptEntries.push({
               role: "Assistant",
               text: trimmed,
@@ -1516,19 +1601,19 @@ ${startupRetailContext}`;
         });
 
         openai.on("error", (err: Error) => {
-          console.error("[VoiceAgent/Twilio] Error:", err.message);
+          logVoiceError("VoiceAgent/PSTN", err.message);
         });
 
         openai.on("functionCall", async ({ callId, name, arguments: argsString }) => {
           clearTwilioIdleFollowUp();
-          console.log(`[VoiceAgent/Twilio] Function call: ${name}`);
           try {
             const args = JSON.parse(argsString);
+            logToolLine("Tool", "PSTN", name, { args, callSid });
             if (name === VOICE_END_CALL_TOOL.name) {
               const reason = String(args.reason || "Caller asked to end the call");
               if (hasActiveShoppingIntent(lastUserTranscript)) {
                 const rejectedResult = createRejectedEndCallResult(reason, lastUserTranscript);
-                console.warn(`[VoiceAgent/Twilio] Rejected premature end-call request:`, rejectedResult);
+                logToolLine("ToolResult", "PSTN", VOICE_END_CALL_TOOL.name, { ...rejectedResult, callSid });
                 sendTwilioMonitorEvent(monitorAgentId, {
                   type: "toolCallStarted",
                   agentId: monitorAgentId,
@@ -1554,7 +1639,7 @@ ${startupRetailContext}`;
                 !canEndCallFromUserTranscript(lastUserTranscript, lastAssistantTranscript, twilioFinalCheckInAsked)
               ) {
                 const rejectedResult = createNeedsCheckInEndCallResult(reason, lastUserTranscript);
-                console.warn(`[VoiceAgent/Twilio] Rejected end-call before final check-in:`, rejectedResult);
+                logToolLine("ToolResult", "PSTN", VOICE_END_CALL_TOOL.name, { ...rejectedResult, callSid });
                 sendTwilioMonitorEvent(monitorAgentId, {
                   type: "toolCallStarted",
                   agentId: monitorAgentId,
@@ -1577,7 +1662,7 @@ ${startupRetailContext}`;
                 return;
               }
               const result = createEndCallResult(reason);
-              console.log(`[VoiceAgent/Twilio] Function result:`, result);
+              logToolLine("ToolResult", "PSTN", VOICE_END_CALL_TOOL.name, { ...result, callSid });
               sendTwilioFunctionOutput(callId, JSON.stringify(result), false);
               requestTwilioGracefulEndCall(reason, "tool");
               return;
@@ -1684,14 +1769,20 @@ ${startupRetailContext}`;
                 };
               }
             }
-            console.log(`[VoiceAgent/Twilio] Function result:`, result);
+            logToolLine("ToolResult", "PSTN", name, {
+              success: result.success,
+              result: result.result,
+              error: result.error,
+              durationMs: result.durationMs,
+              callSid,
+            });
             if (pendingEndCall || endingCall || suppressAssistantOutput) {
-              console.warn(`[VoiceAgent/Twilio] Skipping stale function output for ${name}`);
+              logVoiceWarn("VoiceAgent/PSTN", `Skipping stale function output for ${name}`);
               return;
             }
             sendTwilioFunctionOutput(callId, JSON.stringify(result));
           } catch (e: any) {
-            console.error(`[VoiceAgent/Twilio] Function execution failed:`, e);
+            logVoiceError("VoiceAgent/PSTN", `Function execution failed: ${e?.message ?? e}`);
             if (pendingEndCall || endingCall || suppressAssistantOutput) return;
             sendTwilioFunctionOutput(callId, JSON.stringify({ success: false, error: e.message }));
           }
@@ -1783,6 +1874,7 @@ ${startupRetailContext}`;
     if (callEndedSent) return;
     callEndedSent = true;
     const endedAt = Date.now();
+    logChannelBoundary("PSTN", "End", { callSid, streamSid, durationMs: callStartedAt ? endedAt - callStartedAt : undefined });
     void (async () => {
       await sendOrderConfirmation();
       await sendStoreManagerSummary(endedAt);
@@ -1840,9 +1932,9 @@ ${startupRetailContext}`;
         timestamp: Date.now(),
       });
       if (result.success) {
-        console.log("[VoiceAgent/Twilio] Store manager Webex summary sent", { callSid });
+        logVoiceInfo("VoiceAgent/PSTN", "Store manager Webex summary sent", { callSid });
       } else {
-        console.error("[VoiceAgent/Twilio] Store manager Webex summary failed:", result.error);
+        logVoiceError("VoiceAgent/PSTN", `Store manager Webex summary failed: ${result.error}`);
       }
     } catch (error: any) {
       sendTwilioMonitorEvent(monitorAgentId, {
@@ -1853,7 +1945,7 @@ ${startupRetailContext}`;
         error: error.message || "Failed to send Store Manager Summary.",
         timestamp: Date.now(),
       });
-      console.error("[VoiceAgent/Twilio] Store manager Webex summary error:", error.message);
+      logVoiceError("VoiceAgent/PSTN", `Store manager Webex summary error: ${error.message}`);
     }
   }
 
@@ -1898,9 +1990,9 @@ ${startupRetailContext}`;
       timestamp: Date.now(),
     });
     if (result.success) {
-      console.log("[VoiceAgent/Twilio] Post-call customer email confirmation sent", { callSid });
+      logVoiceInfo("VoiceAgent/PSTN", "Post-call customer email confirmation sent", { callSid });
     } else {
-      console.error("[VoiceAgent/Twilio] Post-call customer email confirmation failed:", result.error);
+      logVoiceError("VoiceAgent/PSTN", `Post-call customer email confirmation failed: ${result.error}`);
     }
   }
 
@@ -1926,10 +2018,7 @@ ${startupRetailContext}`;
         durationMs: 0,
         timestamp: Date.now(),
       });
-      console.error(
-        "[VoiceAgent/Twilio] Post-call customer SMS skipped: SMS is not enabled or configured",
-        { callSid }
-      );
+      logVoiceError("VoiceAgent/PSTN", "Post-call customer SMS skipped: SMS is not enabled or configured", { callSid });
       return;
     }
     const to = callerPhone !== "Unknown" ? callerPhone : RETAIL_STORE_ASSISTANT_USE_CASE.customer.phone;
@@ -1959,9 +2048,9 @@ ${startupRetailContext}`;
         to,
         timestamp: Date.now(),
       });
-      console.log("[VoiceAgent/Twilio] Post-call customer SMS sent", { callSid });
+      logVoiceInfo("VoiceAgent/PSTN", "Post-call customer SMS sent", { callSid });
     } else {
-      console.error("[VoiceAgent/Twilio] Post-call customer SMS failed:", result.error);
+      logVoiceError("VoiceAgent/PSTN", `Post-call customer SMS failed: ${result.error}`);
     }
   }
 
@@ -1987,10 +2076,7 @@ ${startupRetailContext}`;
         durationMs: 0,
         timestamp: Date.now(),
       });
-      console.error(
-        "[VoiceAgent/Twilio] Post-call customer WhatsApp skipped: WhatsApp is not configured",
-        { callSid }
-      );
+      logVoiceError("VoiceAgent/PSTN", "Post-call customer WhatsApp skipped: WhatsApp is not configured", { callSid });
       return;
     }
     const to = callerPhone !== "Unknown" ? callerPhone : RETAIL_STORE_ASSISTANT_USE_CASE.customer.phone;
@@ -2010,9 +2096,9 @@ ${startupRetailContext}`;
       timestamp: Date.now(),
     });
     if (result.success) {
-      console.log("[VoiceAgent/Twilio] Post-call customer WhatsApp sent", { callSid });
+      logVoiceInfo("VoiceAgent/PSTN", "Post-call customer WhatsApp sent", { callSid });
     } else {
-      console.error("[VoiceAgent/Twilio] Post-call customer WhatsApp failed:", result.error);
+      logVoiceError("VoiceAgent/PSTN", `Post-call customer WhatsApp failed: ${result.error}`);
     }
   }
 
@@ -2029,7 +2115,7 @@ ${startupRetailContext}`;
       ws.send(JSON.stringify({ event: "clear", streamSid }));
     }
     openai?.cancelResponse();
-    console.warn(`[VoiceAgent/Twilio] Response suppressed: ${reason}`);
+    logVoiceWarn("VoiceAgent/PSTN", `Response suppressed: ${reason}`);
   }
 
   function runTwilioEndCallTool(reason: string, source: "tool" | "intent"): { success: boolean; result: string; data: { reason: string } } {
@@ -2069,7 +2155,7 @@ ${startupRetailContext}`;
         return;
       }
       completeTwilioEndCall(reason).catch((error) => {
-        console.error("[VoiceAgent/Twilio] Scheduled end-call failed:", error);
+        logVoiceError("VoiceAgent/PSTN", `Scheduled end-call failed: ${error?.message ?? error}`);
       });
     }, delayMs);
   }
@@ -2084,7 +2170,7 @@ ${startupRetailContext}`;
     }
     twilioEndCallFallbackStartedAt = null;
 
-    console.log(`[VoiceAgent/Twilio] Ending call: ${reason}`);
+    logVoiceInfo("VoiceAgent/PSTN", `Ending call: ${reason}`);
     sendCallEnded();
 
     const accountSid = process.env.TWILIO_ACCOUNT_SID;
@@ -2095,7 +2181,7 @@ ${startupRetailContext}`;
         const client = twilioModule(accountSid, authToken);
         await client.calls(activeCallSid).update({ status: "completed" });
       } catch (error: any) {
-        console.error("[VoiceAgent/Twilio] Twilio REST hangup failed:", error.message || error);
+        logVoiceError("VoiceAgent/PSTN", "Twilio REST hangup failed", { message: error.message || String(error) });
       }
     }
 
@@ -2157,7 +2243,7 @@ ${startupRetailContext}`;
     userTurnResponseTimer = setTimeout(() => {
       userTurnResponseTimer = null;
       if (!openai || pendingEndCall || endingCall || twilioResponseActive) return;
-      console.warn(`[VoiceAgent/Twilio] Retrying stalled response after accepted user turn: ${reason}`);
+      logVoiceWarn("VoiceAgent/PSTN", `Retrying stalled response after accepted user turn: ${reason}`);
       openai.triggerResponse({
         input: [
           {
@@ -2230,7 +2316,7 @@ ${startupRetailContext}`;
     provisionalTwilioBargeInActive = true;
     suppressAssistantOutput = true;
     if (pendingTwilioUserSpeechStartedAt !== null) {
-      console.debug("[VoiceAgent/Twilio] Accepted provisional barge-in", {
+      logVoiceInfo("VoiceAgent/PSTN", "Accepted provisional barge-in", {
         elapsedMs: Date.now() - pendingTwilioUserSpeechStartedAt,
         itemId: pendingTwilioUserSpeechItemId,
         audioStartMs: pendingTwilioUserSpeechAudioStartMs,
@@ -2507,7 +2593,7 @@ ${startupRetailContext}`;
       if (pendingTwilioClosingReason) return;
       if (!pendingEndCall || endingCall || twilioResponseActive || markQueue.length > 0) return;
       completeTwilioEndCall(reason).catch((error) => {
-        console.error("[VoiceAgent/Twilio] End-call completion failed:", error);
+        logVoiceError("VoiceAgent/PSTN", "End-call completion failed", { error: String(error) });
       });
     }, 700);
   }
@@ -2611,6 +2697,7 @@ function handleBrowserSession(ws: WebSocket): void {
         lastAssistantTranscript = "";
         lastUserTranscript = "";
         browserCallStartedAt = Date.now();
+        logChannelBoundary("Browser", "Start", { agentId: msg.agentId });
         browserInputEnabled = true;
         browserCallEndedSent = false;
         latestReservation = null;
@@ -2731,7 +2818,7 @@ ${startupRetailContext}`;
           browserUserSpeechUiActive = true;
           sendEvent({ type: "userSpeechStarted", timestamp: Date.now() });
           if (hasActiveBrowserAssistantPlayback()) {
-            console.debug("[VoiceAgent/Browser] Candidate barge-in speech started", {
+            logVoiceInfo("VoiceAgent/Browser", "Candidate barge-in speech started", {
               itemId: pendingBrowserUserSpeechItemId,
               audioStartMs: pendingBrowserUserSpeechAudioStartMs,
             });
@@ -2749,7 +2836,7 @@ ${startupRetailContext}`;
           const trimmed = text.trim();
           if (!trimmed) return;
           if (isIncompleteUserRequestTranscript(trimmed)) {
-            console.warn(`[VoiceAgent/Browser] Suppressed incomplete user request fragment: ${trimmed}`);
+            logVoiceWarn("VoiceAgent/Browser", `Suppressed incomplete user request fragment: ${trimmed}`);
             releaseProvisionalBrowserBargeIn();
             clearPendingBrowserUserSpeechCandidate();
             browserUserSpeechUiActive = false;
@@ -2780,7 +2867,7 @@ ${startupRetailContext}`;
             lastUserTranscript,
           });
           if (reviewed.action === "suppress") {
-            console.warn(`[VoiceAgent/Browser] Suppressed suspicious user transcript: ${trimmed}`);
+            logVoiceWarn("VoiceAgent/Browser", `Suppressed suspicious user transcript: ${trimmed}`);
             releaseProvisionalBrowserBargeIn();
             clearPendingBrowserUserSpeechCandidate();
             browserUserSpeechUiActive = false;
@@ -2789,7 +2876,7 @@ ${startupRetailContext}`;
             return;
           }
           if (reviewed.action === "replace") {
-            console.warn(`[VoiceAgent/Browser] Corrected user transcript: "${trimmed}" -> "${reviewed.text}"`);
+            logVoiceWarn("VoiceAgent/Browser", `Corrected user transcript: "${trimmed}" -> "${reviewed.text}"`);
           }
 
           lastUserTranscript = reviewed.text;
@@ -2879,11 +2966,11 @@ ${startupRetailContext}`;
           const trimmed = text.trim();
           if (!trimmed) return;
           if (suppressAssistantOutput) {
-            console.warn(`[VoiceAgent/Browser] Suppressed assistant output after prior response cancellation: ${trimmed}`);
+            logVoiceWarn("VoiceAgent/Browser", `Suppressed assistant output after prior response cancellation: ${trimmed}`);
             return;
           }
           if (isUnsafeAssistantOutput(trimmed)) {
-            console.warn(`[VoiceAgent/Browser] Suppressed unsafe assistant output: ${trimmed}`);
+            logVoiceWarn("VoiceAgent/Browser", `Suppressed unsafe assistant output: ${trimmed}`);
             suppressBrowserAssistantResponse("Unsafe assistant transcript");
             return;
           }
@@ -2952,7 +3039,7 @@ ${startupRetailContext}`;
         });
 
         openai.once("sessionReady", () => {
-          console.log("[VoiceAgent/Browser] Realtime session ready; sending opening greeting");
+          logVoiceInfo("VoiceAgent/Browser", "Realtime session ready; sending opening greeting");
           initialGreetingActive = true;
           openai!.triggerResponse({
             input: [
@@ -2973,20 +3060,20 @@ ${startupRetailContext}`;
         });
 
         openai.on("error", (err: Error) => {
-          console.error("[VoiceAgent/Browser] Error:", err.message);
+          logVoiceError("VoiceAgent/Browser", "Error", { message: err.message });
           sendEvent({ type: "error", message: err.message });
         });
 
         openai.on("functionCall", async ({ callId, name, arguments: argsString }) => {
           clearBrowserIdleFollowUp();
-          console.log(`[VoiceAgent/Browser] Function call: ${name}`);
+          logVoiceInfo("VoiceAgent/Browser", `Function call: ${name}`);
           try {
             const args = JSON.parse(argsString);
             if (name === VOICE_END_CALL_TOOL.name) {
               const reason = String(args.reason || "User asked to end the call");
               if (hasActiveShoppingIntent(lastUserTranscript)) {
                 const rejectedResult = createRejectedEndCallResult(reason, lastUserTranscript);
-                console.warn(`[VoiceAgent/Browser] Rejected premature end-call request:`, rejectedResult);
+                logVoiceWarn("VoiceAgent/Browser", "Rejected premature end-call request", { result: rejectedResult });
                 sendEvent({
                   type: "toolCallStarted",
                   toolName: VOICE_END_CALL_TOOL.name,
@@ -3010,7 +3097,7 @@ ${startupRetailContext}`;
                 !canEndCallFromUserTranscript(lastUserTranscript, lastAssistantTranscript, browserFinalCheckInAsked)
               ) {
                 const rejectedResult = createNeedsCheckInEndCallResult(reason, lastUserTranscript);
-                console.warn(`[VoiceAgent/Browser] Rejected end-call before final check-in:`, rejectedResult);
+                logVoiceWarn("VoiceAgent/Browser", "Rejected end-call before final check-in", { result: rejectedResult });
                 sendEvent({
                   type: "toolCallStarted",
                   toolName: VOICE_END_CALL_TOOL.name,
@@ -3031,7 +3118,7 @@ ${startupRetailContext}`;
                 return;
               }
               const result = createEndCallResult(reason);
-              console.log(`[VoiceAgent/Browser] Function result:`, result);
+              logVoiceInfo("VoiceAgent/Browser", `Function result: ${name}`, { result });
               sendBrowserFunctionOutput(callId, JSON.stringify(result), false);
               requestBrowserGracefulEndCall(reason, "tool");
               return;
@@ -3129,14 +3216,14 @@ ${startupRetailContext}`;
                 };
               }
             }
-            console.log(`[VoiceAgent/Browser] Function result:`, result);
+            logVoiceInfo("VoiceAgent/Browser", `Function result: ${name}`, { result });
             if (pendingEndCall || endingCall || suppressAssistantOutput) {
-              console.warn(`[VoiceAgent/Browser] Skipping stale function output for ${name}`);
+              logVoiceWarn("VoiceAgent/Browser", `Skipping stale function output for ${name}`);
               return;
             }
             sendBrowserFunctionOutput(callId, JSON.stringify(result));
           } catch (e: any) {
-            console.error(`[VoiceAgent/Browser] Function execution failed:`, e);
+            logVoiceError("VoiceAgent/Browser", "Function execution failed", { name, error: e.message });
             if (pendingEndCall || endingCall || suppressAssistantOutput) return;
             sendBrowserFunctionOutput(callId, JSON.stringify({ success: false, error: e.message }));
           }
@@ -3245,6 +3332,7 @@ ${startupRetailContext}`;
     if (browserCallEndedSent) return;
     browserCallEndedSent = true;
     const endedAt = Date.now();
+    logChannelBoundary("Browser", "End", { reason, durationMs: browserCallStartedAt ? endedAt - browserCallStartedAt : undefined });
     await Promise.all([
       sendBrowserOrderConfirmation(),
       sendBrowserStoreManagerSummary(endedAt),
@@ -3296,9 +3384,9 @@ ${startupRetailContext}`;
         timestamp: Date.now(),
       });
       if (result.success) {
-        console.log("[VoiceAgent/Browser] Store manager Webex summary sent");
+        logVoiceInfo("VoiceAgent/Browser", "Store manager Webex summary sent");
       } else {
-        console.error("[VoiceAgent/Browser] Store manager Webex summary failed:", result.error);
+        logVoiceError("VoiceAgent/Browser", "Store manager Webex summary failed", { error: result.error });
       }
     } catch (error: any) {
       sendEvent({
@@ -3308,7 +3396,7 @@ ${startupRetailContext}`;
         error: error.message || "Failed to send Store Manager Summary.",
         timestamp: Date.now(),
       });
-      console.error("[VoiceAgent/Browser] Store manager Webex summary error:", error.message);
+      logVoiceError("VoiceAgent/Browser", "Store manager Webex summary error", { message: error.message });
     }
   }
 
@@ -3351,9 +3439,9 @@ ${startupRetailContext}`;
       timestamp: Date.now(),
     });
     if (result.success) {
-      console.log("[VoiceAgent/Browser] Post-call customer email confirmation sent");
+      logVoiceInfo("VoiceAgent/Browser", "Post-call customer email confirmation sent");
     } else {
-      console.error("[VoiceAgent/Browser] Post-call customer email confirmation failed:", result.error);
+      logVoiceError("VoiceAgent/Browser", "Post-call customer email confirmation failed", { error: result.error });
     }
   }
 
@@ -3377,9 +3465,7 @@ ${startupRetailContext}`;
         durationMs: 0,
         timestamp: Date.now(),
       });
-      console.error(
-        "[VoiceAgent/Browser] Post-call customer SMS skipped: SMS is not enabled or configured"
-      );
+      logVoiceError("VoiceAgent/Browser", "Post-call customer SMS skipped: SMS is not enabled or configured");
       return;
     }
     const to = RETAIL_STORE_ASSISTANT_USE_CASE.customer.phone;
@@ -3403,9 +3489,9 @@ ${startupRetailContext}`;
     });
     if (result.success) {
       sendEvent({ type: "smsSent", to, timestamp: Date.now() });
-      console.log("[VoiceAgent/Browser] Post-call customer SMS sent");
+      logVoiceInfo("VoiceAgent/Browser", "Post-call customer SMS sent");
     } else {
-      console.error("[VoiceAgent/Browser] Post-call customer SMS failed:", result.error);
+      logVoiceError("VoiceAgent/Browser", "Post-call customer SMS failed", { error: result.error });
     }
   }
 
@@ -3429,9 +3515,7 @@ ${startupRetailContext}`;
         durationMs: 0,
         timestamp: Date.now(),
       });
-      console.error(
-        "[VoiceAgent/Browser] Post-call customer WhatsApp skipped: WhatsApp is not configured"
-      );
+      logVoiceError("VoiceAgent/Browser", "Post-call customer WhatsApp skipped: WhatsApp is not configured");
       return;
     }
     const to = RETAIL_STORE_ASSISTANT_USE_CASE.customer.phone;
@@ -3450,9 +3534,9 @@ ${startupRetailContext}`;
       timestamp: Date.now(),
     });
     if (result.success) {
-      console.log("[VoiceAgent/Browser] Post-call customer WhatsApp sent");
+      logVoiceInfo("VoiceAgent/Browser", "Post-call customer WhatsApp sent");
     } else {
-      console.error("[VoiceAgent/Browser] Post-call customer WhatsApp failed:", result.error);
+      logVoiceError("VoiceAgent/Browser", "Post-call customer WhatsApp failed", { error: result.error });
     }
   }
 
@@ -3475,7 +3559,7 @@ ${startupRetailContext}`;
     userTurnResponseTimer = setTimeout(() => {
       userTurnResponseTimer = null;
       if (!openai || pendingEndCall || endingCall || responseActive) return;
-      console.warn(`[VoiceAgent/Browser] Retrying stalled response after accepted user turn: ${reason}`);
+      logVoiceWarn("VoiceAgent/Browser", `Retrying stalled response after accepted user turn: ${reason}`);
       openai.triggerResponse({
         input: [
           {
@@ -3549,7 +3633,7 @@ ${startupRetailContext}`;
     provisionalBrowserBargeInActive = true;
     suppressAssistantOutput = true;
     if (pendingBrowserUserSpeechStartedAt !== null) {
-      console.debug("[VoiceAgent/Browser] Accepted provisional barge-in", {
+      logVoiceInfo("VoiceAgent/Browser", "Accepted provisional barge-in", {
         elapsedMs: Date.now() - pendingBrowserUserSpeechStartedAt,
         itemId: pendingBrowserUserSpeechItemId,
         audioStartMs: pendingBrowserUserSpeechAudioStartMs,
@@ -3809,7 +3893,7 @@ ${startupRetailContext}`;
     openai?.cancelResponse();
     sendEvent({ type: "interruptClear", timestamp: Date.now() });
     sendEvent({ type: "responseDone" });
-    console.warn(`[VoiceAgent/Browser] Response suppressed: ${reason}`);
+    logVoiceWarn("VoiceAgent/Browser", `Response suppressed: ${reason}`);
   }
 
   function clearBrowserAssistantPlayback(): boolean {
