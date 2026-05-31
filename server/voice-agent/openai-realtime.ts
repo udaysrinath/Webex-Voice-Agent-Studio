@@ -107,6 +107,7 @@ export class OpenAIRealtimeClient extends EventEmitter {
       tool_choice: "auto",
     };
 
+    console.log(`[OpenAI] Session instructions:\n${this.config.instructions}`);
     this.send({
       type: "session.update",
       session,

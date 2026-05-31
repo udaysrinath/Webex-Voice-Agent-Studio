@@ -264,11 +264,6 @@ function TranscriptBubble({ entry, agentName }: { entry: TranscriptEntry; agentN
             : "pstn-message-assistant rounded-tl-none"
         }`}>
           {entry.text}
-          {entry.correctedText && (
-            <span className="block mt-1 text-xs text-muted-foreground italic">
-              (corrected from: {entry.correctedText})
-            </span>
-          )}
         </div>
       </div>
     </div>

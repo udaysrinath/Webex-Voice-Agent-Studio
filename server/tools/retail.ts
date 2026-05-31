@@ -1,6 +1,6 @@
 import {
   RETAIL_STORE_ASSISTANT_USE_CASE,
-  getRetailInventoryStatusLabel,
+  DEFAULT_STORE,
   getAccessoryForProduct,
   type RetailInventoryItem,
 } from "@shared/use-cases";
@@ -8,7 +8,6 @@ import OpenAI from "openai";
 
 type ToolResult = { success: boolean; result?: string; error?: string; data?: unknown };
 
-const generatedInventory = new Map<string, RetailInventoryItem>();
 const ENABLE_RETAIL_TIMEOUT = process.env.ENABLE_RETAIL_TIMEOUT === "true";
 const RETAIL_DYNAMIC_LOOKUP_TIMEOUT_MS = ENABLE_RETAIL_TIMEOUT ? 3500 : 0;
 
@@ -223,134 +222,46 @@ export const retailTools = [
   },
 ];
 
-export async function profile_lookup(args: Record<string, any>): Promise<ToolResult> {
-  const suppliedPhone = typeof args.phone === "string" ? args.phone.trim() : "";
-  const customer = RETAIL_STORE_ASSISTANT_USE_CASE.customer;
-
+export async function profile_lookup(_args: Record<string, any>): Promise<ToolResult> {
   return {
     success: true,
-    result: "Profile candidate found. Last-name confirmation is required before using customer details.",
-    data: {
-      customerId: "cust-mayada-042",
-      preferredName: "Mayada",
-      maskedFullName: "Mayada A.",
-      phone: suppliedPhone ? maskPhone(suppliedPhone) : maskPhone(customer.phone),
-      confirmationRequired: true,
-      confirmationPrompt: "Based on your phone number, I found a profile for Mayada. Can you confirm your last name?",
-    },
+    result: "Profile candidate found for Mayada. Ask the caller to confirm their last name before proceeding.",
+    data: { customerId: "cust-mayada-042", preferredName: "Mayada", confirmationRequired: true },
   };
 }
 
 export async function confirm_profile(args: Record<string, any>): Promise<ToolResult> {
   const suppliedLastName = String(args.lastName || "").trim();
-  const verified = suppliedLastName.length > 0;
-
-  if (!verified) {
+  if (!suppliedLastName) {
     return {
       success: true,
-      result: "Last-name confirmation is required before using the profile candidate.",
-      data: {
-        verified: false,
-        customerId: String(args.customerId || "cust-mayada-042"),
-        reason: "missing-last-name",
-      },
+      result: "Last name is required to confirm the profile.",
+      data: { verified: false },
     };
   }
-
   return {
     success: true,
-    result: "Profile confirmed for demo purposes. The caller is Mayada Abdelrahman.",
-    data: {
-      verified: true,
-      customerId: String(args.customerId || "cust-mayada-042"),
-      customerName: "Mayada Abdelrahman",
-      preferredName: "Mayada",
-      suppliedLastName,
-      verificationMode: "demo-any-last-name",
-      verifiedAt: Date.now(),
-    },
+    result: "Profile confirmed. The caller is Mayada Abdelrahman.",
+    data: { verified: true, customerId: "cust-mayada-042", preferredName: "Mayada" },
   };
 }
 
-export async function user_lookup(args: Record<string, any>): Promise<ToolResult> {
-  const suppliedPhone = typeof args.phone === "string" ? args.phone.trim() : "";
-  const customer = RETAIL_STORE_ASSISTANT_USE_CASE.customer;
-
+export async function user_lookup(_args: Record<string, any>): Promise<ToolResult> {
   return {
     success: true,
-    result: `User lookup complete: Mayada found as a returning Gold member.`,
-    data: {
-      customerId: "cust-mayada-042",
-      name: "Mayada",
-      fullName: "Mayada Abdelrahman",
-      preferredName: "Mayada",
-      phone: suppliedPhone ? maskPhone(suppliedPhone) : maskPhone(customer.phone),
-      email: "mayada.abdelrahman@example.com",
-      loyaltyTier: "Gold member",
-      preferredStore: "ask caller",
-      preferredPickupWindow: customer.preferredPickupTime,
-      consent: {
-        sms: true,
-        personalization: true,
-      },
-      accountSignals: {
-        returningCustomer: true,
-        lifetimeOrders: 14,
-        lastSeen: "May 10",
-      },
-    },
+    result: "Mayada Abdelrahman — returning Gold member. SMS consent on file.",
+    data: { customerId: "cust-mayada-042", name: "Mayada", loyaltyTier: "Gold" },
   };
 }
 
 export async function user_history_lookup(args: Record<string, any>): Promise<ToolResult> {
-  const conversationLimit = Number.isFinite(Number(args.conversationLimit))
-    ? Math.max(1, Math.min(500, Math.floor(Number(args.conversationLimit))))
-    : 500;
-
   return {
     success: true,
-    result: `Fetched ${conversationLimit} past conversations, previous orders, open issues, transactions, and engagement signals for Mayada. Context source: prior Webex/SMS conversations, order history, transaction activity, store visits, and browsing engagement.`,
+    result: `History loaded for Mayada. Key context: customer mentioned this purchase is a birthday gift for her daughter. Use this only when relevant — do not announce it.`,
     data: {
       customerId: String(args.customerId || "cust-mayada-042"),
-      conversationCount: conversationLimit,
-      contextSources: [
-        "Past Webex conversations",
-        "SMS conversations",
-        "Previous orders",
-        "Transaction activity",
-        "Open and resolved issues",
-        "Store visit notes",
-        "Product browsing engagement",
-      ],
-      previousOrder: {
-        orderId: "ORD-88421",
-        date: "May 3",
-        item: "iPad Pro 11-inch, 256GB, Blue",
-        status: "Not purchased yet; customer compared pickup options",
-      },
-      previousIssues: [
-        {
-          date: "May 6",
-          channel: "Webex",
-          summary: "Asked whether the tablet supported parental controls and durable kid-friendly cases.",
-          status: "Resolved",
-        },
-        {
-          date: "May 9",
-          channel: "SMS",
-          summary: "Checked purple case availability and asked about same-day pickup.",
-          status: "Open buying journey",
-        },
-      ],
-      engagements: [
-        "Viewed iPad product pages three times this week",
-        "Clicked pickup availability for San Jose and Palo Alto",
-        "Previously responded well to concise SMS follow-up",
-      ],
-      timelineSummary:
-        "Combined 500 past conversations with order history, transactions, issue records, store visit notes, and browsing engagement.",
-      usableLaterContext:
-        "Use this context only when it helps the current conversation. Do not announce the internal lookup.",
+      keyContext: "Customer is buying a birthday gift for her daughter.",
+      usableLaterContext: "Use this context only when it helps the current conversation. Do not announce the internal lookup.",
     },
   };
 }
@@ -409,7 +320,7 @@ export async function search_products(args: Record<string, any>): Promise<ToolRe
   const defaultStore = availableMatch?.store || "Palo Alto";
   return {
     success: true,
-    result: `Found ${catalogMatches.length} catalog match${catalogMatches.length === 1 ? "" : "es"} for ${query}: ${catalogMatches.map((item) => item.name).join("; ")}. This is product catalog information only. Now call retail_lookup_inventory immediately with preferredStore='${defaultStore}' to check availability — do not ask the customer for a store first.`,
+    result: `Found ${catalogMatches.length} catalog match${catalogMatches.length === 1 ? "" : "es"} for ${query}: ${catalogMatches.map((item) => item.name).join("; ")}. Do NOT speak to the customer yet. Call retail_lookup_inventory immediately with preferredStore='${defaultStore}' — then respond to the customer with availability, price, and pickup suggestion in one turn.`,
     data: {
       query,
       matches: catalogMatches,
@@ -422,128 +333,50 @@ export async function search_products(args: Record<string, any>): Promise<ToolRe
 export async function lookup_inventory(args: Record<string, any>): Promise<ToolResult> {
   const product = String(args.product || "").trim();
   const query = product.toLowerCase();
-  const preferredStore = String(args.preferredStore || "").trim();
+  const preferredStore = String(args.preferredStore || DEFAULT_STORE).trim();
   if (!query) {
     return { success: false, error: "Product is required for inventory lookup" };
   }
-  if (!preferredStore) {
-    return { 
-      success: false, 
-      error: "You MUST ask the customer what location they want to pick up the product from before checking inventory.",
-      data: { product }
-    };
-  }
 
-  const ENABLE_STATIC_INVENTORY = process.env.ENABLE_STATIC_INVENTORY !== "false";
+  const queryWords = getProductQueryWords(query);
+  const items = RETAIL_STORE_ASSISTANT_USE_CASE.inventory.filter(
+    (item) => item.category.toLowerCase() !== "accessory" && productMatchesQuery(item, query, queryWords)
+  );
 
-  if (ENABLE_STATIC_INVENTORY) {
-    const items = RETAIL_STORE_ASSISTANT_USE_CASE.inventory.filter((item) => {
-      const nameLower = item.name.toLowerCase();
-      const skuLower = item.sku.toLowerCase();
-      const catLower = item.category.toLowerCase();
-
-      const fastPathRegex = new RegExp(`\\b${query.replace(/[^a-z0-9\s]/g, " ").trim().replace(/\s+/g, "\\b.*\\b")}\\b`);
-      if (nameLower.includes(query) || fastPathRegex.test(catLower) || skuLower.includes(query) || query.includes(nameLower)) {
-        return true;
-      }
-
-      // Word-overlap match: ignore generation numbers, storage sizes, colours
-      // e.g. "iPad mini (6th Generation)" → ["ipad", "mini"] both appear in "iPad mini, 128GB, Silver"
-      const queryWords = getProductQueryWords(query);
-
-      if (queryWords.length >= 2) {
-        const significantMatches = queryWords.filter((w) => {
-          const regex = new RegExp(`\\b${w}\\b`);
-          return regex.test(nameLower) || regex.test(skuLower) || regex.test(catLower);
-        });
-        return significantMatches.length >= Math.min(2, queryWords.length);
-      }
-
-      return queryWords.length === 1 && (new RegExp(`\\b${queryWords[0]}\\b`).test(nameLower) || new RegExp(`\\b${queryWords[0]}\\b`).test(skuLower));
-    });
-
-    if (items.length > 0) {
-      const normalizedPreferredStore = /palo alto/i.test(preferredStore) ? "Palo Alto" : "San Jose";
-      const available = items.filter((item) => item.status !== "out_of_stock" && item.quantity > 0);
-      const unavailable = items.filter((item) => item.status === "out_of_stock" || item.quantity <= 0);
-
-      const preferredUnavailable = unavailable.find(item => item.store === normalizedPreferredStore) || unavailable[0];
-      const recommendation = available[0] || null;
-      // Use the caller's actual store name in the response, not the catalog's hardcoded store value
-      const callerStore = preferredStore.trim() || preferredUnavailable?.store || normalizedPreferredStore;
-
-      return {
-        success: true,
-        result: [
-          preferredUnavailable
-            ? `${preferredUnavailable.name} is out of stock at ${callerStore}.`
-            : null,
-          recommendation
-            ? `${recommendation.name} is ${getRetailInventoryStatusLabel(recommendation.status).toLowerCase()} at ${recommendation.store}.`
-            : null,
-        ]
-          .filter(Boolean)
-          .join(" ") || "Item found in static inventory but no availability formatting matched.",
-        data: {
-          query,
-          items,
-          available,
-          unavailable,
-          recommendation,
-          generatedBy: "static-catalog",
-        },
-      };
-    }
-  }
-
-  // Static is enabled but nothing matched — return fast not-found instead of calling OpenAI
-  if (ENABLE_STATIC_INVENTORY) {
+  if (items.length === 0) {
     return {
       success: false,
-      error: `${product} was not found in the current store catalog. Please let the customer know and offer to check a different product or store.${preferredStore ? ` (checked for: ${preferredStore})` : ""}`,
-      data: { query, generatedBy: "static-catalog" },
+      error: `${product} was not found in the current store catalog. Let the customer know and offer to check a different product.`,
+      data: { query },
     };
   }
 
-  // Static disabled — fall back to dynamic OpenAI lookup
-  const dynamicLookup = await generateInventoryLookup({ product, preferredStore });
-    if (dynamicLookup) {
-      dynamicLookup.items.forEach((item) => generatedInventory.set(item.sku, item));
+  const normalizedPreferredStore = preferredStore.toLowerCase().includes(DEFAULT_STORE.toLowerCase())
+    ? DEFAULT_STORE
+    : preferredStore;
 
-      return {
-        success: true,
-        result: [
-          dynamicLookup.unavailable[0]
-            ? `${dynamicLookup.unavailable[0].name} is out of stock at ${dynamicLookup.unavailable[0].store}.`
-            : null,
-          dynamicLookup.recommendation
-            ? `${dynamicLookup.recommendation.name} is ${getRetailInventoryStatusLabel(dynamicLookup.recommendation.status).toLowerCase()} at ${dynamicLookup.recommendation.store}.`
-            : null,
-        ]
-          .filter(Boolean)
-          .join(" "),
-        data: {
-          query,
-          items: dynamicLookup.items,
-          available: dynamicLookup.available,
-          unavailable: dynamicLookup.unavailable,
-          recommendation: dynamicLookup.recommendation,
-          generatedBy: dynamicLookup.generatedBy,
-        },
-      };
-    }
+  const available = items.filter((item) => item.status !== "out_of_stock" && item.quantity > 0);
+  const preferredAvailable = available.find((item) => item.store === normalizedPreferredStore);
+  const recommendation = preferredAvailable || available[0] || null;
+
+  if (!recommendation) {
+    const outOfStock = items[0];
+    return {
+      success: true,
+      result: `${outOfStock.name} is currently out of stock. Offer to check an alternative product.`,
+      data: { query, recommendation: null, available: [], unavailable: items },
+    };
+  }
+
+  const atPreferred = recommendation.store === normalizedPreferredStore;
+  const storeNote = atPreferred ? "" : ` (nearest available store — ${normalizedPreferredStore} is out of stock)`;
+  const priceNote = recommendation.price ? ` Price: ${recommendation.price}.` : "";
+  const result = `${recommendation.name} is in stock at ${recommendation.store}${storeNote}.${priceNote} SKU: ${recommendation.sku}. Tell the customer the product name and price, then suggest a pickup day and time in one turn. Call retail_reserve_item once they confirm.`;
 
   return {
     success: true,
-    result: `${product} is not showing as available in the current inventory right now. Similar products, nearby availability, or a back-in-stock notification may still be possible.`,
-    data: {
-      query,
-      items: [],
-      available: [],
-      unavailable: [],
-      recommendation: null,
-      noMatch: true,
-    },
+    result,
+    data: { query, recommendation, available, unavailable: items.filter((i) => !available.includes(i)) },
   };
 }
 
@@ -649,8 +482,9 @@ export async function reserve_item(args: Record<string, any>): Promise<ToolResul
   const pickupDate = rawPickupDate && hasPickupDateSignal(rawPickupDate)
     ? rawPickupDate
     : extractPickupDateFromCombined(combinedPickup);
+  // If rawPickupTime contains a date signal, extract just the clock portion to avoid "tomorrow at tomorrow at 2pm"
   const pickupClockTime = rawPickupTime && hasPickupTimeSignal(rawPickupTime)
-    ? rawPickupTime
+    ? (hasPickupDateSignal(rawPickupTime) ? extractPickupTimeFromCombined(rawPickupTime) || rawPickupTime : rawPickupTime)
     : extractPickupTimeFromCombined(combinedPickup);
   const pickupTime = [pickupDate, pickupClockTime].filter(Boolean).join(" at ").trim() || combinedPickup;
   const product = String(args.product || args.sku || "").trim();
@@ -685,7 +519,7 @@ export async function reserve_item(args: Record<string, any>): Promise<ToolResul
     };
   }
 
-  const item = findInventoryItem(product, store);
+  const item = findInventoryItem(product);
   if (!item || item.status === "out_of_stock" || item.quantity <= 0) {
     return {
       success: false,
@@ -721,46 +555,25 @@ export async function recommend_gift_accessory(args: Record<string, any>): Promi
   const store = String(args.store || "").trim();
   const recentConversationSummary = String(args.recentConversationSummary || "").trim();
 
-  const ENABLE_STATIC_INVENTORY = process.env.ENABLE_STATIC_INVENTORY !== "false";
+  const pairedAccessory = getAccessoryForProduct(product, RETAIL_STORE_ASSISTANT_USE_CASE.inventory);
+  if (!pairedAccessory) {
+    console.log(`[retail_recommend_gift_accessory] No paired accessory found for product: "${product}"`);
+  }
 
   let recommendation: AccessoryRecommendation | null = null;
-  if (ENABLE_STATIC_INVENTORY) {
-    // Direct catalog lookup: each product has an explicit pairedAccessorySku
-    const pairedAccessory = getAccessoryForProduct(product, RETAIL_STORE_ASSISTANT_USE_CASE.inventory);
-    const accessories = RETAIL_STORE_ASSISTANT_USE_CASE.inventory.filter(
-      (item) => item.category.toLowerCase() === "accessory" && item.status !== "out_of_stock"
-    );
-    const accessory = pairedAccessory ?? accessories[0];
-
-    if (accessory) {
-      const isPurple = accessory.name.toLowerCase().includes("purple");
-      const suggestedWording = isPurple
-        ? `In our previous conversations you mentioned this is a birthday gift for your daughter and that she loves purple — would you like me to add a ${accessory.name} to go along with it?`
-        : `In our previous conversations you mentioned this is a birthday gift for your daughter — I think a ${accessory.name} would be a great addition, would you like me to add that?`;
-      recommendation = {
-        item: accessory,
-        reason: isPurple
-          ? "it matches the customer's history indicating her daughter likes purple"
-          : "it is a compatible accessory for the reserved product",
-        source: "customer history plus product fit",
-        personalizationSignal: isPurple
-          ? "Customer previously mentioned the purchase is a birthday gift for their daughter who likes purple."
-          : `Compatible accessory for ${product} selected from current inventory.`,
-        suggestedWording,
-        generatedBy: "static-catalog",
-      };
-    }
-  } else {
-    recommendation = await generateGiftAccessoryRecommendation({
-      product,
-      originalRequest,
-      store,
-      recentConversationSummary,
-    });
+  if (pairedAccessory) {
+    const suggestedWording = `In our previous conversations you mentioned this is a birthday gift for your daughter — I think a ${pairedAccessory.name} would be a great addition, would you like me to add that?`;
+    recommendation = {
+      item: pairedAccessory,
+      reason: "it is a compatible accessory for the reserved product and the customer mentioned this is a birthday gift for their daughter",
+      source: "customer history plus product fit",
+      personalizationSignal: "Customer previously mentioned the purchase is a birthday gift for their daughter.",
+      suggestedWording,
+      generatedBy: "static-catalog",
+    };
   }
 
   const accessory = recommendation?.item;
-  if (accessory) generatedInventory.set(accessory.sku, accessory);
 
   return {
     success: true,
@@ -848,8 +661,8 @@ async function generateInventoryLookup(input: InventoryLookupInput): Promise<Inv
           availableStore: alternateStore,
           availableQuantity: 3,
           eta: "Back in X days",
-          unavailableNote: "one sentence",
-          availableNote: "one sentence",
+          unspec: "one sentence",
+          spec: "one sentence",
         },
       }),
     },
@@ -965,7 +778,7 @@ function buildInventoryPairFromGeneratedItem(item: any): RetailInventoryItem[] {
       quantity: 0,
       price,
       eta: sanitizeGeneratedText(item?.eta || "Back in 3-5 days"),
-      note: sanitizeGeneratedText(item?.unavailableNote || `${unavailableStore} is temporarily out of stock.`),
+      note: sanitizeGeneratedText(item?.unspec || `${unavailableStore} is temporarily out of stock.`),
     },
     {
       sku,
@@ -975,7 +788,7 @@ function buildInventoryPairFromGeneratedItem(item: any): RetailInventoryItem[] {
       status: "in_stock",
       quantity,
       price,
-      note: sanitizeGeneratedText(item?.availableNote || `Available for pickup at ${availableStore}.`),
+      note: sanitizeGeneratedText(item?.spec || `Available for pickup at ${availableStore}.`),
     },
   ];
 }
@@ -1157,25 +970,49 @@ function normStr(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
 }
 
-function findInventoryItem(productOrSku: string, store: string): RetailInventoryItem | undefined {
+function tokenizeForMatch(s: string): string[] {
+  return s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().split(/\s+/).filter(Boolean);
+}
+
+function tokenOverlapScore(catalogName: string, input: string): number {
+  const catalogTokens = tokenizeForMatch(catalogName);
+  const inputTokens = tokenizeForMatch(input);
+  const matches = catalogTokens.filter((t) => inputTokens.includes(t)).length;
+  return matches / catalogTokens.length;
+}
+
+function findInventoryItem(productOrSku: string): RetailInventoryItem | undefined {
   const query = productOrSku.toLowerCase();
   const queryNorm = normStr(productOrSku);
-  const normalizedStore = store.toLowerCase();
-  return [...Array.from(generatedInventory.values()), ...RETAIL_STORE_ASSISTANT_USE_CASE.inventory].find((item) => {
-    const nameLower = item.name.toLowerCase();
-    const nameNorm = normStr(item.name);
-    const skuLower = item.sku.toLowerCase();
+
+  const storeMatch = (item: RetailInventoryItem) => item.store.toLowerCase().includes(DEFAULT_STORE.toLowerCase());
+
+  // 1. Exact SKU or name match
+  const exact = RETAIL_STORE_ASSISTANT_USE_CASE.inventory.find((item) => {
     const matchesProduct =
-      skuLower === query ||
-      nameLower === query ||
-      nameNorm === queryNorm ||
-      nameNorm.includes(queryNorm);
-    return matchesProduct && item.store.toLowerCase().includes(normalizedStore);
+      item.sku.toLowerCase() === query ||
+      item.name.toLowerCase() === query ||
+      normStr(item.name) === queryNorm;
+    return matchesProduct && storeMatch(item);
   });
+  if (exact) return exact;
+
+  // 2. Best token overlap (≥50% of catalog item name tokens must match)
+  let best: RetailInventoryItem | undefined;
+  let bestScore = 0;
+  for (const item of RETAIL_STORE_ASSISTANT_USE_CASE.inventory) {
+    if (!storeMatch(item)) continue;
+    const score = tokenOverlapScore(item.name, productOrSku);
+    if (score > bestScore) {
+      bestScore = score;
+      best = item;
+    }
+  }
+  return bestScore >= 0.5 ? best : undefined;
 }
 
 function findAvailableInventoryItemBySku(sku: string): RetailInventoryItem | undefined {
-  return [...Array.from(generatedInventory.values()), ...RETAIL_STORE_ASSISTANT_USE_CASE.inventory].find(
+  return RETAIL_STORE_ASSISTANT_USE_CASE.inventory.find(
     (item) => item.sku === sku && item.status !== "out_of_stock" && item.quantity > 0
   );
 }

@@ -102,11 +102,6 @@ export function getReservationConfirmationEmailTimeoutMs(
 export function resolveReservationDeliveryChannel(
   requestedChannel?: string
 ): ReservationDeliveryChannel {
-  const requested = (requestedChannel || "").trim().toLowerCase();
-
-  if (requested === "email") return "email";
-  if (requested === "whatsapp") return "whatsapp";
-
   return "sms";
 }
 
