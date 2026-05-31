@@ -1714,7 +1714,10 @@ ${startupRetailContext}`;
               }
               const result = createEndCallResult(reason);
               logToolLine("ToolResult", "PSTN", VOICE_END_CALL_TOOL.name, { ...result, callSid });
-              sendTwilioFunctionOutput(callId, JSON.stringify(result), false);
+              openai?.sendFunctionOutput(callId, JSON.stringify(result), true, {
+                output_modalities: ["audio"],
+                instructions: `Say exactly this closing in en-US and no other words: "${FINAL_CLOSING_TEXT}" Do not ask another question.`,
+              });
               requestTwilioGracefulEndCall(reason, "tool");
               return;
             }
@@ -2610,7 +2613,9 @@ ${startupRetailContext}`;
     });
     const alreadySaidClosing = isAssistantClosingTranscript(lastAssistantTranscript);
     if (!alreadySaidClosing) {
-      if (twilioResponseActive) {
+      if (twilioResponseActive && source !== "tool") {
+        // Cancel in-progress response only for intent-driven end calls. When the tool fires,
+        // the farewell response.create was sent atomically with the function_call_output.
         pendingTwilioClosingReason = reason;
         suppressAssistantOutput = true;
         clearTwilioAssistantPlayback();
@@ -2621,9 +2626,10 @@ ${startupRetailContext}`;
           suppressAssistantOutput = false;
           startTwilioClosingResponse(reason);
         }, 700);
-      } else {
+      } else if (!twilioResponseActive) {
         startTwilioClosingResponse(reason);
       }
+      // source === "tool" && twilioResponseActive: farewell already in flight, just wait
     } else {
       scheduleTwilioEndCall(reason, END_CALL_FALLBACK_RECHECK_MS);
     }
@@ -3254,7 +3260,11 @@ ${startupRetailContext}`;
               }
               const result = createEndCallResult(reason);
               logVoiceInfo("VoiceAgent/Browser", `Function result: ${name}`, { result });
-              sendBrowserFunctionOutput(callId, JSON.stringify(result), false);
+              // Send function output + farewell response.create atomically — no dangling tool output
+              openai?.sendFunctionOutput(callId, JSON.stringify(result), true, {
+                output_modalities: ["audio"],
+                instructions: `Say exactly this closing in en-US and no other words: "${FINAL_CLOSING_TEXT}" Do not ask another question.`,
+              });
               requestBrowserGracefulEndCall(reason, "tool");
               return;
             }
@@ -3960,7 +3970,10 @@ ${startupRetailContext}`;
     });
     const alreadySaidClosing = isAssistantClosingTranscript(lastAssistantTranscript);
     if (!alreadySaidClosing) {
-      if (responseActive) {
+      if (responseActive && source !== "tool") {
+        // Cancel the in-progress response only when triggered by user intent, not by voice_end_call tool.
+        // When triggered by the tool, the farewell response.create was already sent atomically with the
+        // function_call_output, so cancelling here would kill the farewell itself.
         pendingBrowserClosingReason = reason;
         suppressAssistantOutput = true;
         clearBrowserAssistantPlayback();
@@ -3971,9 +3984,10 @@ ${startupRetailContext}`;
           suppressAssistantOutput = false;
           startBrowserClosingResponse(reason);
         }, 700);
-      } else {
+      } else if (!responseActive) {
         startBrowserClosingResponse(reason);
       }
+      // source === "tool" && responseActive: farewell already in flight, just wait for it
     } else {
       scheduleBrowserEndCall(reason, END_CALL_FALLBACK_RECHECK_MS);
     }
