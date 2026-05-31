@@ -129,7 +129,7 @@ export const retailTools = [
     type: "function" as const,
     name: "retail_lookup_inventory",
     description:
-      "Look up inventory by product or category across the current store and nearby stores. You must explicitly ask the user for their preferred pickup location before calling this tool.",
+      "Look up inventory by product or category across all stores. Call this immediately after the customer selects a product — do not ask for a store first. Use 'Palo Alto' as the default preferredStore. If the item is available there, present that store and a suggested pickup time in one turn. Only ask about store preference if the customer wants a different location.",
     parameters: {
       type: "object",
       properties: {
@@ -139,7 +139,7 @@ export const retailTools = [
         },
         preferredStore: {
           type: "string",
-          description: "The location the customer wants to pick up from. DO NOT guess or assume based on profile. You must ask the customer explicitly.",
+          description: "Preferred pickup store. Default to 'Palo Alto' unless the customer has specified otherwise.",
         },
       },
       required: ["product", "preferredStore"],
@@ -404,13 +404,16 @@ export async function search_products(args: Record<string, any>): Promise<ToolRe
     };
   }
 
+  const topMatch = catalogMatches[0];
+  const availableMatch = matches.find((item) => item.status === "in_stock" && item.quantity > 0);
+  const defaultStore = availableMatch?.store || "Palo Alto";
   return {
     success: true,
-    result: `Found ${catalogMatches.length} catalog match${catalogMatches.length === 1 ? "" : "es"} for ${query}: ${catalogMatches.map((item) => item.name).join("; ")}. This is product catalog information only; ask for pickup location before checking store availability.`,
+    result: `Found ${catalogMatches.length} catalog match${catalogMatches.length === 1 ? "" : "es"} for ${query}: ${catalogMatches.map((item) => item.name).join("; ")}. This is product catalog information only. Now call retail_lookup_inventory immediately with preferredStore='${defaultStore}' to check availability — do not ask the customer for a store first.`,
     data: {
       query,
       matches: catalogMatches,
-      topMatch: catalogMatches[0],
+      topMatch,
       availabilityChecked: false,
     },
   };

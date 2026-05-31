@@ -1114,12 +1114,17 @@ function hasHighAssistantEchoOverlap(userText: string, assistantText: string): b
 
 function isLikelyAssistantEchoTranscript(userText: string, assistantText: string): boolean {
   const normalizedUser = normalizeTranscript(userText)
-    .replace(/['’]/g, "")
+    .replace(/[‘’]/g, "")
     .replace(/\s+/g, " ");
   const normalizedAssistant = normalizeTranscript(assistantText)
-    .replace(/['’]/g, "")
+    .replace(/[‘’]/g, "")
     .replace(/\s+/g, " ");
   if (!normalizedUser || !normalizedAssistant) return false;
+
+  // If the agent just asked a question, the user’s short answer is a direct response,
+  // not an echo — even if it contains words the agent mentioned (e.g. city names, product names).
+  const assistantEndedWithQuestion = assistantText.trimEnd().endsWith("?");
+  if (assistantEndedWithQuestion) return false;
 
   const userWords = normalizedUser.split(/\s+/).filter(Boolean);
   if (userWords.length <= 5 && hasHighAssistantEchoOverlap(normalizedUser, normalizedAssistant)) {
@@ -1169,7 +1174,9 @@ export function shouldSuppressTwilioUserTranscript(
     now - context.lastAssistantDoneAt < TWILIO_TRANSCRIPT_ECHO_GUARD_MS ||
     now - context.lastAssistantAudioAt < TWILIO_TRANSCRIPT_ECHO_GUARD_MS;
   const words = normalized.split(/\s+/).filter(Boolean);
-  if (justAfterAssistant && words.length <= 2 && !isBriefButValidTranscript(normalized)) {
+  // Don't suppress short answers when the agent just asked a question — the user is directly responding.
+  const assistantEndedWithQuestion = context.lastAssistantTranscript.trimEnd().endsWith("?");
+  if (justAfterAssistant && words.length <= 2 && !isBriefButValidTranscript(normalized) && !assistantEndedWithQuestion) {
     return true;
   }
 
