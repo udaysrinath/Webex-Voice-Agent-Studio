@@ -1292,6 +1292,7 @@ function handleTwilioSession(ws: WebSocket): void {
   let callerPhone = "Unknown";
   let latestReservation: RetailReservationDetails | null = null;
   let latestRecommendedUpsell = "";
+  let reservedAccessoryName = "";
   let inventoryLookupSucceeded = false;
   let startupRetailContext = "";
   let twilioResponseActive = false;
@@ -1358,6 +1359,7 @@ function handleTwilioSession(ws: WebSocket): void {
           : "Unknown";
         latestReservation = null;
         latestRecommendedUpsell = "";
+        reservedAccessoryName = "";
         const canSendCallerSummarySms = callerPhone !== "Unknown" && canUseDemoSms();
 
         if (agentId && agentId !== "default") {
@@ -1735,7 +1737,13 @@ ${startupRetailContext}`;
               inventoryLookupSucceeded = true;
             }
             if (result.success && name === "retail_reserve_item") {
-              latestReservation = getReservationDetails(result.data);
+              const reservedCategory = (result.data as any)?.item?.category?.toLowerCase() || "";
+              if (reservedCategory === "accessory") {
+                reservedAccessoryName = (result.data as any)?.item?.name || latestRecommendedUpsell;
+                latestRecommendedUpsell = reservedAccessoryName;
+              } else {
+                latestReservation = getReservationDetails(result.data);
+              }
             }
             if (result.success && name === "retail_recommend_gift_accessory") {
               latestRecommendedUpsell = getRecommendedUpsell(result.data);
@@ -1824,9 +1832,16 @@ ${startupRetailContext}`;
               logVoiceWarn("VoiceAgent/PSTN", `Skipping stale function output for ${name}`);
               return;
             }
-            // After confirm_profile succeeds, suppress response so model silently calls history/context/search next
-            const suppressResponse = result.success && name === "retail_confirm_profile";
-            sendTwilioFunctionOutput(callId, JSON.stringify(result), !suppressResponse);
+            if (result.success && name === "retail_confirm_profile") {
+              // Send function output and fire a silent response.create — model must call tools only, no speaking yet
+              sendTwilioFunctionOutput(callId, JSON.stringify(result), false);
+              openai?.triggerResponse({
+                output_modalities: ["text"],
+                instructions: "Profile confirmed. Do NOT speak. Call retail_user_history_lookup and retail_get_customer_context now, then resume the caller's original request.",
+              });
+            } else {
+              sendTwilioFunctionOutput(callId, JSON.stringify(result));
+            }
           } catch (e: any) {
             logVoiceError("VoiceAgent/PSTN", `Function execution failed: ${e?.message ?? e}`);
             if (pendingEndCall || endingCall || suppressAssistantOutput) return;
@@ -2075,7 +2090,7 @@ ${startupRetailContext}`;
     const to = callerPhone !== "Unknown" ? callerPhone : RETAIL_STORE_ASSISTANT_USE_CASE.customer.phone;
     const body = truncateForSms(
       (() => {
-        const items = [latestReservation.itemName, latestRecommendedUpsell].filter(Boolean).join(" + ");
+        const items = [latestReservation.itemName, reservedAccessoryName].filter(Boolean).join(" + ");
         return `Here is your order confirmation: ${items} confirmed for pickup at ${latestReservation.store} on ${latestReservation.pickupTime}. Reservation ${latestReservation.reservationId}.`;
       })()
     );
@@ -2136,7 +2151,7 @@ ${startupRetailContext}`;
     const to = callerPhone !== "Unknown" ? callerPhone : RETAIL_STORE_ASSISTANT_USE_CASE.customer.phone;
     const body = truncateForSms(
       (() => {
-        const items = [latestReservation.itemName, latestRecommendedUpsell].filter(Boolean).join(" + ");
+        const items = [latestReservation.itemName, reservedAccessoryName].filter(Boolean).join(" + ");
         return `Here is your order confirmation: ${items} confirmed for pickup at ${latestReservation.store} on ${latestReservation.pickupTime}. Reservation ${latestReservation.reservationId}.`;
       })()
     );
@@ -2704,6 +2719,8 @@ function handleBrowserSession(ws: WebSocket): void {
   let browserCallEndedSent = false;
   let latestReservation: RetailReservationDetails | null = null;
   let latestRecommendedUpsell = "";
+  let reservedAccessoryName = "";
+  let pendingAccessoryOffer: { name: string; store: string; pickupTime: string } | null = null;
   let inventoryLookupSucceeded = false;
   let pendingInventorySuggestion: { product: string; store: string; pickupTime: string; originalRequest: string } | null = null;
   let lastConfirmedProductName = "";
@@ -2757,6 +2774,8 @@ function handleBrowserSession(ws: WebSocket): void {
         browserCallEndedSent = false;
         latestReservation = null;
         latestRecommendedUpsell = "";
+        reservedAccessoryName = "";
+        pendingAccessoryOffer = null;
         startupRetailContext = "";
         idleFollowUpSent = false;
         assistantTurnCount = 0;
@@ -3042,6 +3061,13 @@ ${startupRetailContext}`;
                   sendEvent({ type: "toolCallCompleted", toolName: "retail_recommend_gift_accessory", success: accessoryResult.success, result: accessoryResult.result, error: accessoryResult.error, data: accessoryResult.data, durationMs: accessoryResult.durationMs, timestamp: Date.now() });
                   if (accessoryResult.success) {
                     latestRecommendedUpsell = getRecommendedUpsell(accessoryResult.data);
+                    if (latestRecommendedUpsell && latestReservation) {
+                      pendingAccessoryOffer = {
+                        name: latestRecommendedUpsell,
+                        store: latestReservation.store,
+                        pickupTime: latestReservation.pickupTime,
+                      };
+                    }
                   }
                   const accessoryEventType = getRetailToolEventType("retail_recommend_gift_accessory");
                   if (accessoryEventType && accessoryResult.data !== undefined) {
@@ -3063,6 +3089,31 @@ ${startupRetailContext}`;
                 // Reservation failed — let model handle normally
                 respondToAcceptedBrowserUserTurn();
               }
+            })();
+          } else if (pendingAccessoryOffer && isPickupTimeAgreement(reviewed.text)) {
+            // Model skipped retail_reserve_item for the accessory after user agreed — execute server-side
+            const offer = pendingAccessoryOffer;
+            pendingAccessoryOffer = null;
+            logVoiceInfo("VoiceAgent/Browser", `Server-side accessory reservation intercept for "${offer.name}"`);
+            void (async () => {
+              const reserveArgs = { product: offer.name, store: offer.store, pickupTime: offer.pickupTime };
+              sendEvent({ type: "toolCallStarted", toolName: "retail_reserve_item", args: reserveArgs, timestamp: Date.now() });
+              const reserveResult = await executeTool("retail_reserve_item", reserveArgs);
+              sendEvent({ type: "toolCallCompleted", toolName: "retail_reserve_item", success: reserveResult.success, result: reserveResult.result, error: reserveResult.error, data: reserveResult.data, durationMs: reserveResult.durationMs, timestamp: Date.now() });
+              if (reserveResult.success) {
+                reservedAccessoryName = (reserveResult.data as any)?.item?.name || offer.name;
+                latestRecommendedUpsell = reservedAccessoryName;
+              }
+              openai?.injectToolCall(
+                "retail_reserve_item",
+                reserveArgs,
+                JSON.stringify(reserveResult),
+                {
+                  output_modalities: ["audio"],
+                  instructions: `The accessory ${offer.name} has been added to the reservation. Confirm briefly and ask: "Is there anything else I can help with?"`,
+                }
+              );
+              scheduleBrowserUserTurnResponseWatchdog("server-side accessory reservation inject response did not start");
             })();
           } else {
             respondToAcceptedBrowserUserTurn();
@@ -3312,8 +3363,15 @@ ${startupRetailContext}`;
               }
             }
             if (result.success && name === "retail_reserve_item") {
-              latestReservation = getReservationDetails(result.data);
-              pendingInventorySuggestion = null;
+              const reservedCategory = (result.data as any)?.item?.category?.toLowerCase() || "";
+              if (reservedCategory === "accessory") {
+                reservedAccessoryName = (result.data as any)?.item?.name || latestRecommendedUpsell;
+                latestRecommendedUpsell = reservedAccessoryName;
+                pendingAccessoryOffer = null;
+              } else {
+                latestReservation = getReservationDetails(result.data);
+                pendingInventorySuggestion = null;
+              }
             }
             if (result.success && name === "retail_recommend_gift_accessory") {
               latestRecommendedUpsell = getRecommendedUpsell(result.data);
@@ -3358,6 +3416,14 @@ ${startupRetailContext}`;
               const accessoryResult = await executeTool("retail_recommend_gift_accessory", accessoryArgs);
               if (accessoryResult.success) {
                 latestRecommendedUpsell = getRecommendedUpsell(accessoryResult.data);
+                // Track the pending offer so server can intercept if model skips reserve_item
+                if (latestRecommendedUpsell && latestReservation) {
+                  pendingAccessoryOffer = {
+                    name: latestRecommendedUpsell,
+                    store: latestReservation.store,
+                    pickupTime: latestReservation.pickupTime,
+                  };
+                }
               }
               sendEvent({
                 type: "toolCallCompleted",
@@ -3390,9 +3456,16 @@ ${startupRetailContext}`;
               logVoiceWarn("VoiceAgent/Browser", `Skipping stale function output for ${name}`);
               return;
             }
-            // After confirm_profile succeeds, suppress response so model silently calls history/context/search next
-            const suppressResponse = result.success && name === "retail_confirm_profile";
-            sendBrowserFunctionOutput(callId, JSON.stringify(result), !suppressResponse);
+            if (result.success && name === "retail_confirm_profile") {
+              // Send function output and fire a silent response.create — model must call tools only, no speaking yet
+              sendBrowserFunctionOutput(callId, JSON.stringify(result), false);
+              openai?.triggerResponse({
+                output_modalities: ["text"],
+                instructions: "Profile confirmed. Do NOT speak. Call retail_user_history_lookup and retail_get_customer_context now, then resume the caller's original request.",
+              });
+            } else {
+              sendBrowserFunctionOutput(callId, JSON.stringify(result));
+            }
           } catch (e: any) {
             logVoiceError("VoiceAgent/Browser", "Function execution failed", { name, error: e.message });
             if (pendingEndCall || endingCall || suppressAssistantOutput) return;
@@ -3626,7 +3699,7 @@ ${startupRetailContext}`;
     const to = getWebexProfile().demoCustomerPhone || RETAIL_STORE_ASSISTANT_USE_CASE.customer.phone;
     const body = truncateForSms(
       (() => {
-        const items = [latestReservation.itemName, latestRecommendedUpsell].filter(Boolean).join(" + ");
+        const items = [latestReservation.itemName, reservedAccessoryName].filter(Boolean).join(" + ");
         return `Here is your order confirmation: ${items} confirmed for pickup at ${latestReservation.store} on ${latestReservation.pickupTime}. Reservation ${latestReservation.reservationId}.`;
       })()
     );
@@ -3679,7 +3752,7 @@ ${startupRetailContext}`;
     const to = getWebexProfile().demoCustomerPhone || RETAIL_STORE_ASSISTANT_USE_CASE.customer.phone;
     const body = truncateForSms(
       (() => {
-        const items = [latestReservation.itemName, latestRecommendedUpsell].filter(Boolean).join(" + ");
+        const items = [latestReservation.itemName, reservedAccessoryName].filter(Boolean).join(" + ");
         return `Here is your order confirmation: ${items} confirmed for pickup at ${latestReservation.store} on ${latestReservation.pickupTime}. Reservation ${latestReservation.reservationId}.`;
       })()
     );
