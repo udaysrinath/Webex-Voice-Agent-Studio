@@ -9,6 +9,10 @@ import { storage } from "../storage";
 import { realtimeTools, executeTool, type ToolExecutionResult } from "../tools";
 import { isSmsConfigured } from "../tools/twilio";
 import { buildRetailRuntimePrompt } from "@shared/prompt-builder";
+import { buildRetailRuntimePromptV2 } from "@shared/prompt-builder-v2";
+
+// Set PROMPT_VERSION=v2 in env to use the lean v2 prompt (~1100 tokens) instead of the full v1 (~3900 tokens)
+const USE_PROMPT_V2 = process.env.PROMPT_VERSION === "v2";
 import { RETAIL_STORE_ASSISTANT_USE_CASE, isRetailStoreUseCasePrompt } from "@shared/use-cases";
 import { buildConfiguredWebexMessageArgs } from "./webex-routing";
 import { getWebexProfile } from "../webex-profile";
@@ -480,7 +484,7 @@ Never end the call because an item is unavailable, unsupported, or not in invent
 }
 
 function buildRuntimeInstructions(_baseInstructions: string, _agentName?: string): string {
-  return buildRetailRuntimePrompt("");
+  return USE_PROMPT_V2 ? buildRetailRuntimePromptV2() : buildRetailRuntimePrompt("");
 }
 
 function resolveAgentRealtimeVoice(voiceModel: string, gender?: string): string {
@@ -1820,7 +1824,9 @@ ${startupRetailContext}`;
               logVoiceWarn("VoiceAgent/PSTN", `Skipping stale function output for ${name}`);
               return;
             }
-            sendTwilioFunctionOutput(callId, JSON.stringify(result));
+            // After confirm_profile succeeds, suppress response so model silently calls history/context/search next
+            const suppressResponse = result.success && name === "retail_confirm_profile";
+            sendTwilioFunctionOutput(callId, JSON.stringify(result), !suppressResponse);
           } catch (e: any) {
             logVoiceError("VoiceAgent/PSTN", `Function execution failed: ${e?.message ?? e}`);
             if (pendingEndCall || endingCall || suppressAssistantOutput) return;
@@ -3384,7 +3390,9 @@ ${startupRetailContext}`;
               logVoiceWarn("VoiceAgent/Browser", `Skipping stale function output for ${name}`);
               return;
             }
-            sendBrowserFunctionOutput(callId, JSON.stringify(result));
+            // After confirm_profile succeeds, suppress response so model silently calls history/context/search next
+            const suppressResponse = result.success && name === "retail_confirm_profile";
+            sendBrowserFunctionOutput(callId, JSON.stringify(result), !suppressResponse);
           } catch (e: any) {
             logVoiceError("VoiceAgent/Browser", "Function execution failed", { name, error: e.message });
             if (pendingEndCall || endingCall || suppressAssistantOutput) return;
