@@ -273,6 +273,20 @@ export function getOpeningGreetingInstructions(agentName?: string): string {
   return `${identity}Reply in en-US with a warm store greeting: '${OPENING_GREETING_TEXT}' Do not use a customer name, prior customer memory, or internal context. Do not repeat this greeting later.`;
 }
 
+export function getAcceptedUserTurnInputText(lastUserTranscript: string): string {
+  return lastUserTranscript.trim();
+}
+
+export function getAcceptedUserTurnResponseInstructions(lastAssistantTranscript = ""): string {
+  return [
+    "The latest input_text message is the server-accepted transcript of the caller's latest utterance.",
+    "Treat that text as authoritative for this turn, even if earlier audio or transcription context differs.",
+    "Do not mention transcripts, correction, or server handling to the caller.",
+    "Continue the retail flow naturally from that exact caller utterance.",
+    lastAssistantTranscript ? `The last assistant prompt was: "${lastAssistantTranscript}"` : "",
+  ].filter(Boolean).join(" ");
+}
+
 export function getRetryAcceptedUserTurnPrompt(lastUserTranscript: string): string {
   return `The caller just said: "${lastUserTranscript}". Continue the retail flow with one concise, helpful response. If they selected a product option, proceed with the selected option and the next required action.`;
 }

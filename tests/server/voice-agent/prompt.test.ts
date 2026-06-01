@@ -9,6 +9,8 @@ import {
   buildOpenAIVoiceAgentInstructions,
   buildRetailTranscriptionKeywords,
   buildPhoneTranscriptionPrompt,
+  getAcceptedUserTurnInputText,
+  getAcceptedUserTurnResponseInstructions,
   getProfileConfirmationPrompt,
 } from "../../../server/voice-agent/prompt";
 
@@ -35,6 +37,13 @@ assert.equal(browserProfilePrompt, twilioProfilePrompt);
 assert.match(browserProfilePrompt, /pre-confirmation intent/i);
 assert.match(browserProfilePrompt, /keep it as the active request after profile confirmation/i);
 assert.match(browserProfilePrompt, /without asking what they want to shop for again/i);
+
+assert.equal(getAcceptedUserTurnInputText(" iPad Air "), "iPad Air");
+const acceptedTurnInstructions = getAcceptedUserTurnResponseInstructions("Which one would you like?");
+assert.match(acceptedTurnInstructions, /server-accepted transcript/i);
+assert.match(acceptedTurnInstructions, /authoritative/i);
+assert.match(acceptedTurnInstructions, /Which one would you like/i);
+assert.doesNotMatch(acceptedTurnInstructions, /ASR/i);
 
 const browserCallInstructions = buildOpenAIVoiceAgentInstructions({
   confirmationSpokenRoute: "sms",
