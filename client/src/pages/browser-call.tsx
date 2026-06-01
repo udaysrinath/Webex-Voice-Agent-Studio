@@ -221,7 +221,7 @@ export default function BrowserCall() {
                   <Bot className="h-4 w-4" />
                 </div>
                 <div className="min-w-0">
-                  <h2 className="text-[15px] font-bold leading-5 tracking-normal">Agent assist timeline</h2>
+                  <h2 className="text-[15px] font-bold leading-5 tracking-normal">Acme electronics Agent Timeline</h2>
                   <p className="mt-0.5 text-xs text-muted-foreground">Live tool progress and handoff context</p>
                 </div>
               </div>
