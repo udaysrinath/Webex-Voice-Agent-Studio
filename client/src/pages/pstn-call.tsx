@@ -210,9 +210,9 @@ export default function PstnCall() {
               <PhoneCall className="w-5 h-5 text-foreground" />
             </div>
             <div className="min-w-0">
-              <h1 className="truncate text-2xl font-bold leading-8 tracking-normal">Acme electronics Agent</h1>
+              <h1 className="truncate text-2xl font-bold leading-8 tracking-normal">Live customer and agent conversation</h1>
               <p className="truncate text-[13px] leading-5 text-muted-foreground">
-                {agent?.name || "Loading agent..."}
+                Acme electronics Agent
               </p>
             </div>
           </div>
@@ -253,7 +253,7 @@ export default function PstnCall() {
                     )}
                   </div>
                   <div>
-                    <h2 className="text-[15px] font-bold leading-5 tracking-normal">Live customer and agent conversation</h2>
+                    <h2 className="text-[15px] font-bold leading-5 tracking-normal">Live Transcript</h2>
                     <p className="text-xs text-muted-foreground">{statusLabel}</p>
                   </div>
                 </div>
