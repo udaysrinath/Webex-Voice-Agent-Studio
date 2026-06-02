@@ -84,7 +84,7 @@ export default function BrowserCall() {
               <Mic className="w-5 h-5 text-foreground" />
             </div>
             <div className="min-w-0">
-              <h1 className="truncate text-2xl font-bold leading-8 tracking-normal">Browser Voice Call</h1>
+              <h1 className="truncate text-2xl font-bold leading-8 tracking-normal">Acme electronics Agent</h1>
               <p className="truncate text-[13px] leading-5 text-muted-foreground">
                 {agentLoading ? "Loading agent..." : agent?.name || "Agent"}
               </p>
@@ -132,13 +132,10 @@ export default function BrowserCall() {
                     )}
                   </div>
                   <div>
-                    <h2 className="text-[15px] font-bold leading-5 tracking-normal">Live Browser Transcript</h2>
+                    <h2 className="text-[15px] font-bold leading-5 tracking-normal">Live customer and agent conversation</h2>
                     <p className="text-xs text-muted-foreground">{statusLabel}</p>
                   </div>
                 </div>
-                <Badge variant="outline" className="pstn-chip">
-                  Browser call
-                </Badge>
               </div>
 
               <div ref={transcriptRef} className="pstn-transcript-pane min-h-0 flex-1 overflow-y-auto p-5 space-y-4">
