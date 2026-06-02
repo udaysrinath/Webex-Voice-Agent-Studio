@@ -5,7 +5,6 @@ import {
   ArrowLeft,
   Bot,
   Loader2,
-  MessageSquare,
   Mic,
   PhoneCall,
   Radio,
@@ -218,10 +217,6 @@ export default function PstnCall() {
           </div>
           <div className="pstn-header-actions flex shrink-0 items-center gap-3">
             <div className="pstn-webex-stack flex min-w-0 flex-col items-end gap-1">
-              <Button variant="outline" size="sm" onClick={() => setLocation("/demo-setup")}>
-                <MessageSquare className="h-4 w-4" />
-                Webex setup
-              </Button>
               {phoneHref ? (
                 <a className="pstn-header-phone" href={phoneHref} aria-label={`Call ${displayPhoneNumber}`}>
                   <PhoneCall className="h-3 w-3" />
