@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 
 import { buildHrLiveFrontendInstructions } from "../../../server/voice-agent/index";
 import { buildLiveSessionConfig, buildLiveSessionStart } from "../../../server/voice-agent/openai-live";
+import { getAgentRuntimeProfile } from "../../../server/agents/registry";
 import type { RealtimeSessionConfig } from "../../../server/voice-agent/openai-realtime";
 
 const config: RealtimeSessionConfig = {
@@ -48,6 +49,22 @@ const frontendPrompt = buildHrLiveFrontendInstructions("360 Feedback Interviewer
 assert.match(frontendPrompt, /ignore room noise/i);
 assert.match(frontendPrompt, /delegate only when the HR feedback delivery tool must run/i);
 assert.match(frontendPrompt, /compensation/i);
-assert.match(frontendPrompt, /explicitly confirms the exact summary/i);
+assert.match(frontendPrompt, /high-pressure situation/i);
+assert.match(frontendPrompt, /sample dialogue/i);
+assert.match(frontendPrompt, /Opening turn \(highest priority\)/i);
+assert.match(frontendPrompt, /Do not say “Great,” ask who the feedback is about/i);
+assert.match(frontendPrompt, /ask the next scripted development question/i);
+assert.match(frontendPrompt, /Do not probe further/i);
+assert.match(frontendPrompt, /obtain explicit confirmation before sending/i);
+
+const hrProfile = getAgentRuntimeProfile({
+  name: "360 Feedback Interviewer",
+  profileId: "hr-feedback",
+  systemPrompt: "Ask what makes the leader good at their job.",
+});
+const hrBackendPrompt = hrProfile?.instructions("Ask what makes the leader good at their job.") || "";
+assert.match(hrBackendPrompt, /Can you describe a time \[NAME\] handled a high-pressure situation/i);
+assert.match(hrBackendPrompt, /Do not ask follow-up probes/i);
+assert.doesNotMatch(hrBackendPrompt, /Ask what makes the leader good at their job\./i);
 
 console.log("openai GPT-Live session configuration regression passed");

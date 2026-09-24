@@ -44,13 +44,13 @@ export const hrTools = [
       type: "object",
       properties: {
         colleague: { type: "string", description: "Name of the colleague receiving feedback." },
-        relationship: { type: "string", description: "How the caller works with the colleague." },
+        relationship: { type: "string", description: "How the caller works with the colleague, if volunteered; otherwise use 'Not specified'. Do not ask solely to fill this field." },
         strengths: { type: "array", items: { type: "string" }, description: "Constructive strengths supported by observable work behavior." },
         developmentAreas: { type: "array", items: { type: "string" }, description: "Constructive development areas supported by observable work behavior." },
         examples: { type: "array", items: { type: "string" }, description: "Optional observable examples." },
         consentConfirmed: { type: "boolean", description: "True only when the caller explicitly approved this exact summary." },
       },
-      required: ["colleague", "relationship", "strengths", "developmentAreas", "consentConfirmed"],
+      required: ["colleague", "strengths", "developmentAreas", "consentConfirmed"],
     },
   },
 ];
@@ -65,12 +65,14 @@ export async function submit_feedback(args: Record<string, unknown>): Promise<{ 
   }
 
   const colleague = typeof args.colleague === "string" ? args.colleague.trim() : "";
-  const relationship = typeof args.relationship === "string" ? args.relationship.trim() : "";
+  const relationship = typeof args.relationship === "string" && args.relationship.trim()
+    ? args.relationship.trim()
+    : "Not specified";
   const strengths = stringList(args.strengths);
   const developmentAreas = stringList(args.developmentAreas);
   const examples = stringList(args.examples);
-  if (!colleague || !relationship || (strengths.length === 0 && developmentAreas.length === 0)) {
-    return { success: false, error: "Colleague, relationship, and at least one feedback point are required." };
+  if (!colleague || (strengths.length === 0 && developmentAreas.length === 0)) {
+    return { success: false, error: "Colleague and at least one feedback point are required." };
   }
 
   const restricted = classifyHrRestrictedTopic([colleague, relationship, ...strengths, ...developmentAreas, ...examples].join("\n"));

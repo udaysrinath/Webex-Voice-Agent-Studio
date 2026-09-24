@@ -224,12 +224,6 @@ export function useGptLiveVoiceAgent(options: UseGptLiveVoiceAgentOptions) {
         setState("listening");
         setActivity("ready");
         onEventRef.current?.({ type: "liveSessionReady", timestamp: Date.now() });
-        sendEvent({
-          type: "session.instructions.append",
-          event_id: `greeting_${Date.now()}`,
-          delegation_id: null,
-          content: "Speak this greeting now, beginning with ‘Hi’: ‘Hi, I’m the 360 Feedback Interviewer. I’m here to collect constructive feedback about a colleague. Who are you sharing feedback about?’ Do not say ‘Ready’ or mention session status. Then pause and listen.",
-        });
         sendEvent({ type: "response.create", event_id: `greeting_response_${Date.now()}` });
         break;
       case "session.output_transcript.delta":
