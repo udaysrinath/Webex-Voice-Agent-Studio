@@ -20,6 +20,7 @@ export type User = typeof users.$inferSelect;
 export const agents = pgTable("agents", {
   id: serial("id").primaryKey(),
   name: text("name").notNull(),
+  profileId: text("profile_id").notNull().default("generic"),
   systemPrompt: text("system_prompt").notNull().default(""),
   llmModel: text("llm_model").notNull(),
   voiceModel: text("voice_model").notNull(),

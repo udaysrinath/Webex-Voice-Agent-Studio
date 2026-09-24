@@ -15,6 +15,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { agentsApi, evaluationsApi, ttsApi, chatApi, anamApi, ocrApi, type TTSRequest } from "@/lib/api";
 import type { InsertEvaluation } from "@shared/schema";
+import { resolveAgentProfileId } from "@shared/agent-profiles";
 import type { ChatMessage } from "@/lib/api";
 import { VoiceAgentPanel } from "@/components/voice-agent-panel";
 import { VoiceMonitorPage } from "@/components/voice-monitor-page";
@@ -23,6 +24,7 @@ import {
   getRetailAssistEventTypeForTool,
   updateRetailAssistState,
 } from "@/components/retail-agent-assist";
+import { createHrAssistState, HrProgressTimeline, updateHrAssistState } from "@/components/hr-agent-assist";
 
 export default function Evaluate() {
   const search = useSearch();
@@ -50,6 +52,7 @@ export default function Evaluate() {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState("");
   const [retailAssistState, setRetailAssistState] = useState(createRetailAssistState);
+  const [hrAssistState, setHrAssistState] = useState(createHrAssistState);
   
   const [isRecording, setIsRecording] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
@@ -89,6 +92,10 @@ export default function Evaluate() {
 
   const handleRetailRealtimeEvent = useCallback((event: any) => {
     setRetailAssistState((current) => updateRetailAssistState(current, event));
+  }, []);
+
+  const handleHrRealtimeEvent = useCallback((event: any) => {
+    setHrAssistState((current) => updateHrAssistState(current, event));
   }, []);
 
   const [ocrOpen, setOcrOpen] = useState(false);
@@ -191,6 +198,7 @@ export default function Evaluate() {
   useEffect(() => {
     if (agent?.id) {
       setRetailAssistState(createRetailAssistState());
+      setHrAssistState(createHrAssistState());
     }
   }, [agent?.id]);
 
@@ -923,12 +931,12 @@ export default function Evaluate() {
         / (evaluations.length * 4)
       )
     : null;
-  const isStoreAssistant =
-    agent.name.toLowerCase().includes("store") ||
-    agent.systemPrompt.toLowerCase().includes("retail store assistant");
-  const showEvaluationControls = !isStoreAssistant;
+  const agentProfileId = resolveAgentProfileId(agent);
+  const isStoreAssistant = agentProfileId === "retail";
+  const isHrFeedbackAgent = agentProfileId === "hr-feedback";
+  const showEvaluationControls = !isStoreAssistant && !isHrFeedbackAgent;
 
-  if (isStoreAssistant) {
+  if (isStoreAssistant || isHrFeedbackAgent) {
     return (
       <VoiceMonitorPage
         title={agent.name}
@@ -941,9 +949,14 @@ export default function Evaluate() {
           systemPrompt={agent.systemPrompt || undefined}
           voice={agent.voiceModel}
           gender={agent.gender}
-          onRealtimeEvent={handleRetailRealtimeEvent}
-          onSessionStart={() => setRetailAssistState(createRetailAssistState())}
-          assistState={retailAssistState}
+          onRealtimeEvent={isHrFeedbackAgent ? handleHrRealtimeEvent : handleRetailRealtimeEvent}
+          onSessionStart={() => isHrFeedbackAgent ? setHrAssistState(createHrAssistState()) : setRetailAssistState(createRetailAssistState())}
+          assistState={isStoreAssistant ? retailAssistState : undefined}
+          timelineContent={isHrFeedbackAgent ? <HrProgressTimeline state={hrAssistState} /> : undefined}
+          timelineTitle={isHrFeedbackAgent ? "HR safety timeline" : undefined}
+          timelineSubtitle={isHrFeedbackAgent ? "Guardrails, confirmation, and delivery" : undefined}
+          timelineEmptyTitle={isHrFeedbackAgent ? "Waiting for feedback" : undefined}
+          timelineEmptyText={isHrFeedbackAgent ? "Guardrail and delivery events will appear here. Feedback content is not retained in the timeline." : undefined}
           layout="split"
         />
       </VoiceMonitorPage>

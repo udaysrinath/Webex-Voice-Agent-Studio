@@ -1,6 +1,7 @@
 import * as webex from "./webex";
 import * as twilio from "./twilio";
 import * as retail from "./retail";
+import * as hr from "./hr";
 
 export type ToolExecutionResult = {
   success: boolean;
@@ -31,6 +32,7 @@ export const chatTools: any[] = realtimeTools.map(t => ({
 
 const providers: Record<string, any> = {
   retail,
+  hr,
   webex,
   twilio,
 };

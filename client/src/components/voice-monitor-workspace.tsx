@@ -17,7 +17,8 @@ interface VoiceMonitorWorkspaceProps {
   transcriptTitle?: string;
   transcriptSubtitle?: string;
   emptyText?: string;
-  assistState: RetailAssistState;
+  assistState?: RetailAssistState;
+  timelineContent?: ReactNode;
   timelineTitle?: string;
   timelineSubtitle?: string;
   timelineEmptyTitle?: string;
@@ -36,6 +37,7 @@ export function VoiceMonitorWorkspace({
   transcriptSubtitle = "Ready for voice monitor",
   emptyText = "Waiting for call activity. The live transcript will appear here.",
   assistState,
+  timelineContent,
   timelineTitle = "Agent assist timeline",
   timelineSubtitle = "Live tool progress and handoff context",
   timelineEmptyTitle = "Waiting for call activity",
@@ -108,7 +110,7 @@ export function VoiceMonitorWorkspace({
         </div>
         <div className="pstn-timeline-shell min-h-0 flex-1 overflow-y-auto p-4">
           <div className="pstn-timeline-content">
-            <RetailProgressTimeline className="pstn-progress-timeline" state={assistState} />
+            {timelineContent || (assistState ? <RetailProgressTimeline className="pstn-progress-timeline" state={assistState} /> : null)}
           </div>
           <div className="pstn-rail-empty flex h-full min-h-[320px] flex-col items-center justify-center rounded-lg p-6 text-center">
             <Radio className="mb-3 h-5 w-5 text-foreground" />

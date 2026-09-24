@@ -1,10 +1,6 @@
 import type { RealtimeSessionConfig } from "./openai-realtime";
 import { realtimeTools } from "../tools";
 import { twilioCallerSummaryTool, voiceEndCallTool } from "../tools/twilio";
-import {
-  buildBrowserTranscriptionPrompt,
-  buildPhoneTranscriptionPrompt,
-} from "./prompt";
 
 export type RealtimeTool = NonNullable<RealtimeSessionConfig["tools"]>[number];
 
@@ -57,7 +53,7 @@ export function buildBrowserRealtimeConfig(options: {
   voice: string;
   transcriptionLanguage: string;
   transcriptionModel: string;
-  retailTranscriptionKeywords: string;
+  transcriptionPrompt: string;
   tools: RealtimeTool[];
 }): RealtimeSessionConfig {
   return buildRealtimeVoiceConfig({
@@ -66,7 +62,7 @@ export function buildBrowserRealtimeConfig(options: {
     inputAudioFormat: "pcm16",
     transcriptionLanguage: options.transcriptionLanguage,
     transcriptionModel: options.transcriptionModel,
-    transcriptionPrompt: buildBrowserTranscriptionPrompt(options.retailTranscriptionKeywords),
+    transcriptionPrompt: options.transcriptionPrompt,
     inputAudioNoiseReduction: { type: "far_field" },
     tools: options.tools,
   });
@@ -77,7 +73,7 @@ export function buildPhoneRealtimeConfig(options: {
   voice: string;
   transcriptionLanguage: string;
   transcriptionModel: string;
-  retailTranscriptionKeywords: string;
+  transcriptionPrompt: string;
   tools: RealtimeTool[];
 }): RealtimeSessionConfig {
   return buildRealtimeVoiceConfig({
@@ -86,7 +82,7 @@ export function buildPhoneRealtimeConfig(options: {
     inputAudioFormat: "g711_ulaw",
     transcriptionLanguage: options.transcriptionLanguage,
     transcriptionModel: options.transcriptionModel,
-    transcriptionPrompt: buildPhoneTranscriptionPrompt(options.retailTranscriptionKeywords),
+    transcriptionPrompt: options.transcriptionPrompt,
     inputAudioNoiseReduction: { type: "near_field" },
     tools: options.tools,
   });

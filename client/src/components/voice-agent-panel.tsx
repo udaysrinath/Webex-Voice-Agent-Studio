@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, type RefObject } from "react";
+import { useCallback, useEffect, useMemo, useRef, type ReactNode, type RefObject } from "react";
 import { Activity, Bot, MessageSquare, Phone, PhoneOff, Loader2, Mic, UserRound, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -17,6 +17,11 @@ interface VoiceAgentPanelProps {
   onRealtimeEvent?: (event: any) => void;
   onSessionStart?: () => void;
   assistState?: RetailAssistState;
+  timelineContent?: ReactNode;
+  timelineTitle?: string;
+  timelineSubtitle?: string;
+  timelineEmptyTitle?: string;
+  timelineEmptyText?: string;
   layout?: "compact" | "split";
 }
 
@@ -30,6 +35,11 @@ export function VoiceAgentPanel({
   onRealtimeEvent,
   onSessionStart,
   assistState,
+  timelineContent,
+  timelineTitle,
+  timelineSubtitle,
+  timelineEmptyTitle,
+  timelineEmptyText,
   layout = "compact",
 }: VoiceAgentPanelProps) {
   const { state, activity, transcript, userPartial, assistantPartial, start, stop } = useVoiceAgent({
@@ -80,6 +90,11 @@ export function VoiceAgentPanel({
           transcriptSubtitle={state === "idle" ? "Ready for voice monitor" : getStateLabel(state, activity)}
           emptyText="Waiting for call activity. The live transcript will appear here."
           assistState={assistState || createRetailAssistState()}
+          timelineContent={timelineContent}
+          timelineTitle={timelineTitle}
+          timelineSubtitle={timelineSubtitle}
+          timelineEmptyTitle={timelineEmptyTitle}
+          timelineEmptyText={timelineEmptyText}
           callerLabel="Caller"
           loading={state === "connecting"}
           headerBadge={<MonitorBadge>{state === "idle" ? "Voice monitor" : getStateLabel(state, activity)}</MonitorBadge>}

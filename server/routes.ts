@@ -10,7 +10,8 @@ import * as path from "path";
 import * as os from "os";
 import multer from "multer";
 import { createClient } from "@deepgram/sdk";
-import { chatTools, executeTool, realtimeTools } from "./tools";
+import { chatTools, executeTool } from "./tools";
+import { getImplementedToolsForProfile } from "./agents/registry";
 import { getSmsProvider, isSmsConfigured } from "./tools/twilio";
 import { buildRetailRuntimePrompt } from "@shared/prompt-builder";
 import { VOICE_USE_CASES, isRetailStoreUseCasePrompt } from "@shared/use-cases";
@@ -226,12 +227,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return res.status(404).json({ error: "Use case not found" });
     }
 
-    if (useCase.id !== "retail-customer-cross-store") {
-      return res.json([]);
-    }
-
+    const recommendedNames = new Set(useCase.recommendedTools.map((tool) => tool.name));
     res.json(
-      realtimeTools.map((tool) => ({
+      getImplementedToolsForProfile(useCase.profileId)
+        .filter((tool) => recommendedNames.has(tool.name))
+        .map((tool) => ({
         name: tool.name,
         description: tool.description,
         provider: tool.name.split("_")[0],

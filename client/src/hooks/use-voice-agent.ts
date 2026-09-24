@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from "react";
+import { calculateAdaptiveMicThreshold, MIC_NOISE_WINDOW_SIZE } from "@/lib/microphone-noise-gate";
 
 export type VoiceAgentState = "idle" | "connecting" | "listening" | "speaking";
 export type VoiceActivity = "idle" | "connecting" | "ready" | "user_speaking" | "agent_speaking" | "barge_in";
@@ -20,7 +21,6 @@ interface UseVoiceAgentOptions {
 
 const ASSISTANT_PLAYBACK_MIC_COOLDOWN_MS = 120;
 const TRANSIENT_ACTIVITY_MS = 900;
-const MIC_RMS_THRESHOLD = 0.008;
 const MIC_SPEECH_HANGOVER_MS = 900;
 
 export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
@@ -43,6 +43,7 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
   const assistantPlaybackStartedAtRef = useRef(0);
   const assistantPlaybackBlockedUntilRef = useRef(0);
   const micSpeechActiveUntilRef = useRef(0);
+  const recentMicRmsRef = useRef<number[]>([]);
   const transientActivityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const playbackEndTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onEventRef = useRef(options.onEvent);
@@ -67,6 +68,7 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
     try {
       setError(null);
       closingRequestedRef.current = false;
+      recentMicRmsRef.current = [];
       setState("connecting");
       setActivity("connecting");
       setTranscript([]);
@@ -333,6 +335,7 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
     assistantPlaybackStartedAtRef.current = 0;
     assistantPlaybackBlockedUntilRef.current = 0;
     micSpeechActiveUntilRef.current = 0;
+    recentMicRmsRef.current = [];
     clearTransientActivityTimer();
     if (playbackEndTimerRef.current) {
       clearTimeout(playbackEndTimerRef.current);
@@ -423,8 +426,12 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
     }
 
     const rms = Math.sqrt(sumSquares / Math.max(1, input.length));
+    const recentRms = recentMicRmsRef.current;
+    recentRms.push(rms);
+    if (recentRms.length > MIC_NOISE_WINDOW_SIZE) recentRms.shift();
+    const threshold = calculateAdaptiveMicThreshold(recentRms);
     const now = Date.now();
-    const hasSpeechEnergy = rms >= MIC_RMS_THRESHOLD || peak >= MIC_RMS_THRESHOLD * 4;
+    const hasSpeechEnergy = rms >= threshold || peak >= threshold * 3;
     if (hasSpeechEnergy) {
       micSpeechActiveUntilRef.current = now + MIC_SPEECH_HANGOVER_MS;
       return true;

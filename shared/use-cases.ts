@@ -42,6 +42,7 @@ export interface RetailActionPlan {
 
 export interface VoiceUseCase {
   id: string;
+  profileId: "generic" | "retail" | "hr-feedback";
   title: string;
   agentName: string;
   description: string;
@@ -663,6 +664,7 @@ export function getAccessoryForProduct(
 
 export const RETAIL_STORE_ASSISTANT_USE_CASE: VoiceUseCase = {
   id: "retail-customer-cross-store",
+  profileId: "retail",
   title: "Retail Store Assistant",
   agentName: "Store Assistant",
   description:
@@ -765,7 +767,56 @@ export const RETAIL_STORE_ASSISTANT_USE_CASE: VoiceUseCase = {
   },
 };
 
-export const VOICE_USE_CASES = [RETAIL_STORE_ASSISTANT_USE_CASE];
+export const HR_FEEDBACK_USE_CASE: VoiceUseCase = {
+  id: "hr-colleague-feedback",
+  profileId: "hr-feedback",
+  title: "HR Feedback Agent",
+  agentName: "HR Agent",
+  description: "Collects constructive colleague feedback, deflects restricted HR topics, and sends a consent-confirmed summary without retaining it.",
+  category: "HR demo",
+  defaultLLM: "gpt-4o",
+  defaultVoice: "marin",
+  language: "en-US",
+  gender: "neutral",
+  heroMetric: "Safe feedback collection",
+  demoGoal: "Gather specific, work-related feedback while visibly enforcing HR privacy and scope guardrails.",
+  capabilityChips: ["Structured feedback", "Deterministic guardrails", "Consent gate", "Webex summary", "Ephemeral session"],
+  recommendedTools: [
+    {
+      name: "hr_submit_feedback",
+      description: "Send a consent-confirmed feedback summary to the configured Webex space, then forget the session feedback.",
+    },
+  ],
+  customer: {
+    name: "Team member",
+    phone: "Not collected",
+    loyaltyTier: "Not applicable",
+    intent: "Share constructive colleague feedback",
+    preferredPickupTime: "Not applicable",
+    relationshipContext: "The caller works with the colleague they are discussing.",
+    preferences: [],
+    pastChats: [],
+  },
+  inventory: [],
+  decisionTrace: [
+    { title: "Establish scope", detail: "Ask who the feedback concerns and how the caller works with them." },
+    { title: "Collect examples", detail: "Gather strengths, development areas, and observable examples." },
+    { title: "Apply guardrails", detail: "Deflect compensation, ratings, medical, legal, protected-class, discipline, and private-feedback topics." },
+    { title: "Confirm summary", detail: "Read back the concise summary and obtain explicit consent before sending." },
+    { title: "Forget feedback", detail: "Clear session feedback after delivery or disconnect; do not persist it in PostgreSQL." },
+  ],
+  associatePlaybook: {
+    customerName: "Team member",
+    intent: "Collect colleague feedback",
+    reservedItem: "Not applicable",
+    reservedStore: "Configured Webex space",
+    pickupTime: "After explicit confirmation",
+    recommendedUpsell: "None",
+    associateMessage: "Send only the confirmed feedback summary.",
+  },
+};
+
+export const VOICE_USE_CASES = [RETAIL_STORE_ASSISTANT_USE_CASE, HR_FEEDBACK_USE_CASE];
 
 export function getRetailInventoryStatusLabel(status: InventoryStatus): string {
   switch (status) {

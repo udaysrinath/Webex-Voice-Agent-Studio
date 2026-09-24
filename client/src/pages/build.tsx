@@ -15,6 +15,7 @@ import { agentsApi, ttsApi, webexApi, knowledgeBaseApi, useCaseToolsApi, type Ag
 import type { InsertAgent } from "@shared/schema";
 import { VOICE_USE_CASES } from "@shared/use-cases";
 import { buildUseCaseSystemPrompt } from "@shared/prompt-builder";
+import { resolveAgentProfileId, type AgentProfileId } from "@shared/agent-profiles";
 
 const FALLBACK_LLMS = [
   { id: "gpt-4o", name: "GPT-4o", provider: "OpenAI", desc: "Best for reasoning & nuance" },
@@ -656,6 +657,7 @@ export default function Build() {
   const [buildMode, setBuildMode] = useState<'choice' | 'scratch' | 'template'>(urlAgentId ? 'scratch' : 'choice');
   const [selectedTemplate, setSelectedTemplate] = useState<string | null>(null);
   const [selectedUseCaseId, setSelectedUseCaseId] = useState<string | null>(null);
+  const [selectedProfileId, setSelectedProfileId] = useState<AgentProfileId>("generic");
 
   const [agentName, setAgentName] = useState("Agent Alpha-1");
   const [systemPrompt, setSystemPrompt] = useState(DEFAULT_SYSTEM_PROMPT);
@@ -762,6 +764,7 @@ export default function Build() {
       setSelectedVoice(existingAgent.voiceModel);
       setLanguage(existingAgent.language);
       setGender(existingAgent.gender || "neutral");
+      setSelectedProfileId(resolveAgentProfileId(existingAgent));
     }
   }, [existingAgent]);
 
@@ -851,6 +854,7 @@ export default function Build() {
       setSelectedVoice(agent.voiceModel);
       setLanguage(agent.language);
       setGender(agent.gender || "neutral");
+      setSelectedProfileId(resolveAgentProfileId(agent));
       setActiveKbTab('sources');
       queryClient.invalidateQueries({ queryKey: ["agents"] });
       queryClient.invalidateQueries({ queryKey: ["agent", agent.id] });
@@ -879,6 +883,7 @@ export default function Build() {
       voiceModel: selectedVoice,
       language,
       gender,
+      profileId: selectedProfileId,
     });
     setSavedAgentId(agent.id);
     queryClient.invalidateQueries({ queryKey: ["agents"] });
@@ -944,6 +949,7 @@ export default function Build() {
       voiceModel: selectedVoice,
       language,
       gender,
+      profileId: selectedProfileId,
     });
   };
 
@@ -961,6 +967,7 @@ export default function Build() {
       setTools(template.config.tools);
       setSelectedTemplate(templateId);
       setSelectedUseCaseId(null);
+      setSelectedProfileId("generic");
       setBuildMode('template');
       toast({
         title: "Template Applied",
@@ -984,6 +991,7 @@ export default function Build() {
     setTools([]);
     setSelectedTemplate(null);
     setSelectedUseCaseId(useCase.id);
+    setSelectedProfileId(useCase.profileId);
     setBuildMode("template");
     toast({
       title: "Use Case Applied",
@@ -1198,6 +1206,7 @@ export default function Build() {
         voiceModel: selectedVoice,
         language,
         gender,
+        profileId: "generic",
       });
 
       // Copy the Retail DB KB item to the new agent

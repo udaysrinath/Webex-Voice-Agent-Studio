@@ -40,6 +40,8 @@ import {
   PROFILE_CONFIRMATION_TEXT,
   TRANSCRIPT_REVIEW_SYSTEM_PROMPT,
   buildOpenAIVoiceAgentInstructions,
+  buildBrowserTranscriptionPrompt,
+  buildPhoneTranscriptionPrompt,
   buildRetailTranscriptionKeywords,
   getAddOnAnswerCheckInPrompt,
   getClosingInstruction,
@@ -65,6 +67,10 @@ import {
   getDemoRetailAssociatePlaybook,
 } from "./dto";
 import { RETAIL_STORE_ASSISTANT_USE_CASE } from "@shared/use-cases";
+import type { AgentProfileId } from "@shared/agent-profiles";
+import { resolveAgentProfileId } from "@shared/agent-profiles";
+import { getAgentRuntimeProfile, type AgentRuntimeProfile } from "../agents/registry";
+import { classifyHrRestrictedTopic } from "../tools/hr";
 import {
   getDemoConfirmationChannel,
   sendReservationConfirmationEmail,
@@ -1155,7 +1161,7 @@ function handleTwilioSession(ws: WebSocket): void {
           voice,
           transcriptionLanguage: REALTIME_TRANSCRIPTION_LANGUAGE,
           transcriptionModel: REALTIME_TRANSCRIPTION_MODEL,
-          retailTranscriptionKeywords: buildRetailTranscriptionKeywords(),
+          transcriptionPrompt: buildPhoneTranscriptionPrompt(buildRetailTranscriptionKeywords()),
           tools,
         }));
 
@@ -2447,6 +2453,8 @@ function handleBrowserSession(ws: WebSocket): void {
   let currentAssistantAudioSentMs = 0;
   let browserPlaybackStartedAt = 0;
   let agentName = "Store Assistant";
+  let runtimeProfileId: AgentProfileId = "retail";
+  let runtimeProfile: AgentRuntimeProfile | null = null;
   let lastUserTranscript = "";
   let suppressAssistantOutput = false;
   let assistantTranscriptGuard = "";
@@ -2502,6 +2510,9 @@ function handleBrowserSession(ws: WebSocket): void {
         let voice = "marin";
         language = config?.language || language;
         agentName = "Store Assistant";
+        runtimeProfileId = "retail";
+        runtimeProfile = null;
+        let savedSystemPrompt = "";
         lastAssistantTranscript = "";
         lastUserTranscript = "";
         browserCallStartedAt = Date.now();
@@ -2545,34 +2556,42 @@ function handleBrowserSession(ws: WebSocket): void {
             agentName = agent.name;
             voice = resolveRealtimeVoice(agent.voiceModel, agent.gender);
             language = agent.language || language;
+            savedSystemPrompt = agent.systemPrompt || "";
+            runtimeProfileId = resolveAgentProfileId(agent);
+            runtimeProfile = getAgentRuntimeProfile(agent);
           }
         }
 
-        startupRetailContext = await runStartupRetailProfileLookup();
+        startupRetailContext = runtimeProfileId === "retail" ? await runStartupRetailProfileLookup() : "";
         const returningCallerName = startupRetailContext ? getDemoCustomerProfile().firstName : undefined;
         browserProfileCandidateAvailable = Boolean(startupRetailContext);
         const smsRecipientPhone = resolveDemoSmsRecipientPhone();
         const canSendCallerSummarySms = canSendCallSummarySms();
 
-        const tools = buildRealtimeVoiceTools({
+        const tools = runtimeProfile?.tools || buildRealtimeVoiceTools({
           smsEnabled: canUseDemoSms(),
           callerSummarySmsEnabled: canSendCallerSummarySms,
         });
 
-        instructions = buildOpenAIVoiceAgentInstructions({
+        instructions = runtimeProfile?.instructions(savedSystemPrompt) || buildOpenAIVoiceAgentInstructions({
           confirmationSpokenRoute: getDemoConfirmationChannel(),
           returningCallerName,
           startupRetailContext,
         });
 
-        console.log("[VoiceAgent/Browser] Instructions sent to OpenAI:", instructions);
+        if (runtimeProfile?.privacySensitive) {
+          console.log("[VoiceAgent/Browser] Privacy-sensitive profile configured", { profileId: runtimeProfileId, sessionId: browserSessionId });
+          sendEvent({ type: "hrSessionStarted", profileId: runtimeProfileId, timestamp: Date.now() });
+        } else {
+          console.log("[VoiceAgent/Browser] Instructions sent to OpenAI:", instructions);
+        }
 
         openai = new OpenAIRealtimeClient(process.env.OPENAI_API_KEY || "", buildBrowserRealtimeConfig({
           instructions,
           voice,
           transcriptionLanguage: REALTIME_TRANSCRIPTION_LANGUAGE,
           transcriptionModel: REALTIME_TRANSCRIPTION_MODEL,
-          retailTranscriptionKeywords: buildRetailTranscriptionKeywords(),
+          transcriptionPrompt: runtimeProfile?.transcriptionPrompt || buildBrowserTranscriptionPrompt(buildRetailTranscriptionKeywords()),
           tools,
         }));
 
@@ -2633,6 +2652,32 @@ function handleBrowserSession(ws: WebSocket): void {
         const handleBrowserUserTranscript = async (text: string): Promise<void> => {
           const trimmed = text.trim();
           if (!trimmed) return;
+          if (runtimeProfileId === "hr-feedback") {
+            lastUserTranscript = trimmed;
+            sendEvent({ type: "userTranscript", text: trimmed });
+            releaseProvisionalBrowserBargeIn();
+            clearPendingBrowserUserSpeechCandidate();
+            browserUserSpeechUiActive = false;
+            const restricted = classifyHrRestrictedTopic(trimmed);
+            if (restricted) {
+              sendEvent({
+                type: "guardrailTriggered",
+                category: restricted.category,
+                title: restricted.label,
+                detail: "Restricted content was excluded from the feedback summary.",
+                timestamp: Date.now(),
+              });
+              console.log("[VoiceAgent/Browser] HR guardrail triggered", { category: restricted.category, sessionId: browserSessionId });
+              openai?.triggerResponse({
+                input: [{ type: "message", role: "user", content: [{ type: "input_text", text: "A deterministic HR guardrail was triggered. Deliver the required deflection exactly." }] }],
+                output_modalities: ["audio"],
+                instructions: getExactTextResponseInstructions(restricted.response),
+              });
+              return;
+            }
+            respondToAcceptedBrowserUserTurn();
+            return;
+          }
           if (isIncompleteUserRequestTranscript(trimmed)) {
             logTranscriptLine("Browser", "Suppressed", trimmed, {
               reason: "incomplete_user_request",
@@ -2795,13 +2840,18 @@ function handleBrowserSession(ws: WebSocket): void {
           lastAssistantDoneAt = Date.now();
           assistantTurnCount++;
           lastAssistantTranscript = trimmed;
-          logTranscriptLine("Browser", "Agent", trimmed, { sessionId: browserSessionId });
-          transcriptEntries.push({
-            role: "Assistant",
-            text: trimmed,
-            timestamp: Date.now(),
-          });
+          if (runtimeProfileId !== "hr-feedback") {
+            logTranscriptLine("Browser", "Agent", trimmed, { sessionId: browserSessionId });
+            transcriptEntries.push({
+              role: "Assistant",
+              text: trimmed,
+              timestamp: Date.now(),
+            });
+          }
           sendEvent({ type: "assistantTranscriptDone", text: trimmed });
+          if (runtimeProfileId === "hr-feedback") {
+            return;
+          }
           const transcriptEffects = getAssistantTranscriptEffects(trimmed);
           if (transcriptEffects.pendingAddOnOffer) {
             browserPendingAddOnOffer = true;
@@ -2869,13 +2919,15 @@ function handleBrowserSession(ws: WebSocket): void {
                 content: [
                   {
                     type: "input_text",
-                    text: getVoiceSessionStartedPrompt("browser"),
+                    text: runtimeProfile
+                      ? "The live voice session has started. Follow the profile-specific opening instructions now."
+                      : getVoiceSessionStartedPrompt("browser"),
                   },
                 ],
               },
             ],
             output_modalities: ["audio"],
-            instructions: getOpeningGreetingInstructions(agentName || "the store assistant"),
+            instructions: runtimeProfile?.openingInstructions(agentName) || getOpeningGreetingInstructions(agentName || "the store assistant"),
           });
         });
 
@@ -2888,6 +2940,39 @@ function handleBrowserSession(ws: WebSocket): void {
           clearBrowserIdleFollowUp();
           try {
             const args = JSON.parse(argsString);
+            if (runtimeProfileId === "hr-feedback") {
+              if (name === voiceEndCallTool.name) {
+                const reason = String(args.reason || "User asked to end the call");
+                sendBrowserFunctionOutput(callId, JSON.stringify(createEndCallResult(reason)), false);
+                pendingEndCall = true;
+                openai?.triggerResponse({
+                  input: [{ type: "message", role: "user", content: [{ type: "input_text", text: "End this HR feedback session now." }] }],
+                  output_modalities: ["audio"],
+                  instructions: getExactTextResponseInstructions("Thank you for sharing your feedback. Take care."),
+                });
+                scheduleBrowserEndCall(reason, BROWSER_END_CALL_MAX_WAIT_MS);
+                return;
+              }
+              sendEvent({ type: "toolCallStarted", toolName: name, args: {}, timestamp: Date.now() });
+              const result = await executeTool(name, args);
+              sendEvent({
+                type: "toolCallCompleted",
+                toolName: name,
+                success: result.success,
+                result: result.result,
+                error: result.error,
+                data: result.data,
+                durationMs: result.durationMs,
+                timestamp: Date.now(),
+              });
+              if (result.success && name === "hr_submit_feedback") {
+                sendEvent({ type: "feedbackDelivered", timestamp: Date.now() });
+              }
+              if (!pendingEndCall && !endingCall && !suppressAssistantOutput) {
+                sendBrowserFunctionOutput(callId, JSON.stringify(result));
+              }
+              return;
+            }
             logToolLine("Tool", "Browser", name, {
               args,
               sessionId: browserSessionId,
@@ -3260,10 +3345,15 @@ function handleBrowserSession(ws: WebSocket): void {
       sessionId: browserSessionId,
       durationMs: browserCallStartedAt ? endedAt - browserCallStartedAt : undefined,
     });
-    await Promise.all([
-      sendBrowserOrderConfirmation(),
-      sendBrowserStoreManagerSummary(endedAt),
-    ]);
+    if (runtimeProfileId === "retail") {
+      await Promise.all([
+        sendBrowserOrderConfirmation(),
+        sendBrowserStoreManagerSummary(endedAt),
+      ]);
+    }
+    transcriptEntries.length = 0;
+    lastUserTranscript = "";
+    lastAssistantTranscript = "";
     sendEvent({ type: "callEnded", reason, timestamp: Date.now() });
   }
 
