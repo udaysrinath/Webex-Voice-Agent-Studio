@@ -770,8 +770,8 @@ export const RETAIL_STORE_ASSISTANT_USE_CASE: VoiceUseCase = {
 export const HR_FEEDBACK_USE_CASE: VoiceUseCase = {
   id: "hr-colleague-feedback",
   profileId: "hr-feedback",
-  title: "HR Feedback Agent",
-  agentName: "HR Agent",
+  title: "360 Feedback Interviewer",
+  agentName: "360 Feedback Interviewer",
   description: "Collects constructive colleague feedback, deflects restricted HR topics, and sends a consent-confirmed summary without retaining it.",
   category: "HR demo",
   defaultLLM: "gpt-4o",

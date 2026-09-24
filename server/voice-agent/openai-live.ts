@@ -10,9 +10,10 @@ export interface LiveSessionOptions {
   backendModel?: string;
 }
 
-export function buildLiveSessionStart(
+export function buildLiveSessionConfig(
   config: RealtimeSessionConfig,
-  options: LiveSessionOptions
+  options: LiveSessionOptions,
+  transport: "websocket" | "webrtc" = "websocket"
 ): Record<string, any> {
   const tools = (config.tools || []).map((tool) => ({
     type: "function",
@@ -21,26 +22,33 @@ export function buildLiveSessionStart(
     parameters: tool.parameters,
   }));
   return {
-    type: "session.start",
-    event_id: "voice_agent_session_start",
-    session: {
-      model: "gpt-live-1",
-      instructions: options.frontendInstructions,
-      audio: {
-        format: { type: "audio/pcm", rate: 24000 },
-        output: { voice: config.voice || "marin" },
-      },
-      delegation: {
-        type: "responses",
-        responses: {
-          model: options.backendModel || process.env.OPENAI_LIVE_BACKEND_MODEL || "gpt-5.6-luna",
-          instructions: options.backendInstructions,
-          tools,
-          tool_choice: "auto",
-          parallel_tool_calls: false,
-        },
+    model: "gpt-live-1",
+    instructions: options.frontendInstructions,
+    audio: {
+      ...(transport === "websocket" ? { format: { type: "audio/pcm", rate: 24000 } } : {}),
+      output: { voice: config.voice || "marin" },
+    },
+    delegation: {
+      type: "responses",
+      responses: {
+        model: options.backendModel || process.env.OPENAI_LIVE_BACKEND_MODEL || "gpt-5.6-luna",
+        instructions: options.backendInstructions,
+        tools,
+        tool_choice: "auto",
+        parallel_tool_calls: false,
       },
     },
+  };
+}
+
+export function buildLiveSessionStart(
+  config: RealtimeSessionConfig,
+  options: LiveSessionOptions
+): Record<string, any> {
+  return {
+    type: "session.start",
+    event_id: "voice_agent_session_start",
+    session: buildLiveSessionConfig(config, options, "websocket"),
   };
 }
 
@@ -175,7 +183,7 @@ export class OpenAILiveClient extends EventEmitter {
 
   startWithGreeting(): void {
     this.appendInstruction(
-      "Greet the caller now in English with one short sentence. Introduce yourself as the HR Agent, explain that you will help collect constructive colleague feedback, and ask who they are sharing feedback about. Begin immediately, then pause and listen."
+      "Greet the caller now in English with one short sentence. Introduce yourself as the 360 Feedback Interviewer, explain that you will help collect constructive colleague feedback, and ask who they are sharing feedback about. Begin immediately, then pause and listen."
     );
   }
 

@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { useVoiceAgent, type VoiceActivity, type VoiceAgentState, type TranscriptEntry } from "@/hooks/use-voice-agent";
+import { useGptLiveVoiceAgent } from "@/hooks/use-gpt-live-voice-agent";
 import { RetailProgressTimeline, createRetailAssistState, type RetailAssistState } from "@/components/retail-agent-assist";
 import { MonitorBadge, VoiceMonitorWorkspace } from "@/components/voice-monitor-workspace";
 
@@ -23,9 +24,35 @@ interface VoiceAgentPanelProps {
   timelineEmptyTitle?: string;
   timelineEmptyText?: string;
   layout?: "compact" | "split";
+  transport?: "websocket" | "gpt-live-webrtc";
 }
 
-export function VoiceAgentPanel({
+export function VoiceAgentPanel(props: VoiceAgentPanelProps) {
+  return props.transport === "gpt-live-webrtc"
+    ? <GptLiveVoiceAgentPanel {...props} />
+    : <WebSocketVoiceAgentPanel {...props} />;
+}
+
+function GptLiveVoiceAgentPanel(props: VoiceAgentPanelProps) {
+  const controller = useGptLiveVoiceAgent({
+    agentId: props.agentId,
+    onEvent: props.onRealtimeEvent,
+  });
+  return <VoiceAgentPanelContent {...props} controller={controller} />;
+}
+
+function WebSocketVoiceAgentPanel(props: VoiceAgentPanelProps) {
+  const controller = useVoiceAgent({
+    agentId: props.agentId,
+    systemPrompt: props.systemPrompt,
+    voice: props.voice,
+    gender: props.gender,
+    onEvent: props.onRealtimeEvent,
+  });
+  return <VoiceAgentPanelContent {...props} controller={controller} />;
+}
+
+function VoiceAgentPanelContent({
   agentId,
   agentName,
   systemPrompt,
@@ -41,14 +68,9 @@ export function VoiceAgentPanel({
   timelineEmptyTitle,
   timelineEmptyText,
   layout = "compact",
-}: VoiceAgentPanelProps) {
-  const { state, activity, transcript, userPartial, assistantPartial, start, stop } = useVoiceAgent({
-    agentId,
-    systemPrompt,
-    voice,
-    gender,
-    onEvent: onRealtimeEvent,
-  });
+  controller,
+}: VoiceAgentPanelProps & { controller: ReturnType<typeof useVoiceAgent> }) {
+  const { state, activity, transcript, userPartial, assistantPartial, error, start, stop } = controller;
 
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -68,7 +90,7 @@ export function VoiceAgentPanel({
   }, [onSessionStart, start]);
 
   const isActive = state !== "idle";
-  const hasTranscript = transcript.length > 0 || Boolean(userPartial) || Boolean(assistantPartial);
+  const hasTranscript = transcript.length > 0 || Boolean(userPartial) || Boolean(assistantPartial) || Boolean(error);
   const monitorTranscript = useMemo(() => {
     const entries = [...transcript];
     if (userPartial.trim()) {
@@ -77,8 +99,11 @@ export function VoiceAgentPanel({
     if (assistantPartial.trim()) {
       entries.push({ role: "assistant", text: assistantPartial, timestamp: Date.now() });
     }
+    if (error) {
+      entries.push({ role: "system", text: `Voice session error: ${error}`, timestamp: Number.MAX_SAFE_INTEGER });
+    }
     return entries;
-  }, [assistantPartial, transcript, userPartial]);
+  }, [assistantPartial, error, transcript, userPartial]);
 
   if (layout === "split") {
     return (

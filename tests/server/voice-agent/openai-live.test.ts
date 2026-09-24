@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 
 import { buildHrLiveFrontendInstructions } from "../../../server/voice-agent/index";
-import { buildLiveSessionStart } from "../../../server/voice-agent/openai-live";
+import { buildLiveSessionConfig, buildLiveSessionStart } from "../../../server/voice-agent/openai-live";
 import type { RealtimeSessionConfig } from "../../../server/voice-agent/openai-realtime";
 
 const config: RealtimeSessionConfig = {
@@ -35,9 +35,18 @@ assert.equal(start.session.delegation.responses.model, "gpt-5.6-luna");
 assert.equal(start.session.delegation.responses.parallel_tool_calls, false);
 assert.equal(start.session.delegation.responses.tools[0].name, "hr_submit_feedback");
 
-const frontendPrompt = buildHrLiveFrontendInstructions("HR Agent");
+const webRtcSession = buildLiveSessionConfig(config, {
+  frontendInstructions: "frontend",
+  backendInstructions: "backend",
+  backendModel: "gpt-5.6-luna",
+}, "webrtc") as any;
+assert.equal(webRtcSession.model, "gpt-live-1");
+assert.equal(webRtcSession.audio.format, undefined);
+assert.equal(webRtcSession.audio.output.voice, "marin");
+
+const frontendPrompt = buildHrLiveFrontendInstructions("360 Feedback Interviewer");
 assert.match(frontendPrompt, /ignore room noise/i);
-assert.match(frontendPrompt, /delegate task decisions and all tool use/i);
+assert.match(frontendPrompt, /delegate only when the HR feedback delivery tool must run/i);
 assert.match(frontendPrompt, /compensation/i);
 assert.match(frontendPrompt, /explicitly confirms the exact summary/i);
 

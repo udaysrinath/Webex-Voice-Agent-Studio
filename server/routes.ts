@@ -11,7 +11,7 @@ import * as os from "os";
 import multer from "multer";
 import { createClient } from "@deepgram/sdk";
 import { chatTools, executeTool } from "./tools";
-import { getImplementedToolsForProfile } from "./agents/registry";
+import { buildHrLiveFrontendInstructions, getAgentRuntimeProfile, getImplementedToolsForProfile } from "./agents/registry";
 import { getSmsProvider, isSmsConfigured } from "./tools/twilio";
 import { buildRetailRuntimePrompt } from "@shared/prompt-builder";
 import { VOICE_USE_CASES, isRetailStoreUseCasePrompt } from "@shared/use-cases";
@@ -25,6 +25,10 @@ import {
   getDemoCustomerProfile,
   updateDemoCustomerProfile,
 } from "./voice-agent/dto";
+import { resolveAgentProfileId } from "@shared/agent-profiles";
+import { buildLiveSessionConfig } from "./voice-agent/openai-live";
+import { resolveRealtimeVoice } from "./voice-agent/voice";
+import { classifyHrRestrictedTopic } from "./tools/hr";
 
 const upload = multer({ 
   dest: os.tmpdir(),
@@ -219,6 +223,80 @@ export async function registerRoutes(app: Express): Promise<Server> {
       llmModels,
       voices,
     });
+  });
+
+  app.post("/api/live/hr/session", async (req, res) => {
+    try {
+      const request = z.object({
+        agentId: z.number().int().positive(),
+        sdp: z.string().min(1).max(1_000_000),
+      }).parse(req.body);
+      if (!process.env.OPENAI_API_KEY) {
+        return res.status(503).json({ error: "OpenAI is not configured." });
+      }
+
+      const agent = await storage.getAgent(request.agentId);
+      if (!agent || resolveAgentProfileId(agent) !== "hr-feedback") {
+        return res.status(404).json({ error: "HR agent not found." });
+      }
+      const profile = getAgentRuntimeProfile(agent);
+      if (!profile) {
+        return res.status(400).json({ error: "HR agent profile is unavailable." });
+      }
+
+      const instructions = profile.instructions(agent.systemPrompt || "");
+      const session = buildLiveSessionConfig({
+        instructions,
+        inputAudioFormat: "pcm16",
+        outputAudioFormat: "pcm16",
+        voice: resolveRealtimeVoice(agent.voiceModel, agent.gender),
+        tools: profile.tools.filter((tool) => tool.name === "hr_submit_feedback" || tool.name === "voice_end_call").map((tool) =>
+          tool.name === "voice_end_call"
+            ? { ...tool, description: "End the HR feedback call after the summary was delivered and the caller confirms they are done, or when the caller explicitly says goodbye or asks to end the call. Never end with an unanswered question or pending delivery." }
+            : tool,
+        ),
+      }, {
+        frontendInstructions: buildHrLiveFrontendInstructions(agent.name),
+        backendInstructions: instructions,
+      }, "webrtc");
+
+      const openAIResponse = await fetch("https://api.openai.com/v1/live/sessions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          session,
+          transport: { type: "webrtc", sdp: request.sdp },
+        }),
+      });
+      const result = await openAIResponse.json().catch(() => null) as any;
+      if (!openAIResponse.ok) {
+        console.error("GPT-Live WebRTC session creation failed", openAIResponse.status, result?.error?.message || "Unknown error");
+        return res.status(openAIResponse.status).json({ error: result?.error?.message || "Unable to start the voice session." });
+      }
+      return res.status(201).json(result);
+    } catch (error: any) {
+      if (error?.name === "ZodError") return res.status(400).json({ error: "A valid agent and SDP offer are required." });
+      console.error("GPT-Live WebRTC session creation error", error?.message || error);
+      return res.status(500).json({ error: "Unable to start the voice session." });
+    }
+  });
+
+  app.post("/api/live/hr/guardrail", (req, res) => {
+    const parsed = z.object({ text: z.string().max(10_000) }).safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: "A transcript is required." });
+    return res.json({ match: classifyHrRestrictedTopic(parsed.data.text) });
+  });
+
+  app.post("/api/live/hr/tool", async (req, res) => {
+    const parsed = z.object({
+      name: z.literal("hr_submit_feedback"),
+      arguments: z.record(z.any()),
+    }).safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: "Unsupported HR tool request." });
+    return res.json(await executeTool(parsed.data.name, parsed.data.arguments));
   });
 
   app.get("/api/use-cases/:id/tools", (req, res) => {

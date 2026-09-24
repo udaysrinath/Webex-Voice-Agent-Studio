@@ -958,6 +958,7 @@ export default function Evaluate() {
           timelineEmptyTitle={isHrFeedbackAgent ? "Waiting for feedback" : undefined}
           timelineEmptyText={isHrFeedbackAgent ? "Guardrail and delivery events will appear here. Feedback content is not retained in the timeline." : undefined}
           layout="split"
+          transport={isHrFeedbackAgent ? "gpt-live-webrtc" : "websocket"}
         />
       </VoiceMonitorPage>
     );
