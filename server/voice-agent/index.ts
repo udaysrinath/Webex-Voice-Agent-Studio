@@ -3303,7 +3303,11 @@ function handleBrowserSession(ws: WebSocket): void {
       } else if (msg.type === "assistantPlaybackEnded") {
         browserPlaybackActive = false;
         browserPlaybackStartedAt = 0;
-        if (initialGreetingActive) {
+        if (usingGptLive && openai instanceof OpenAILiveClient) {
+          initialGreetingActive = false;
+          responseActive = false;
+          openai.flushOutputTranscript();
+        } else if (initialGreetingActive) {
           scheduleInitialGreetingRelease(650);
         }
         maybeCompleteBrowserPendingEndCall("End-call audio playback ended");

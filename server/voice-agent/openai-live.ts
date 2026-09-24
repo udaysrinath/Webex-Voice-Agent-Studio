@@ -3,7 +3,6 @@ import { EventEmitter } from "events";
 import type { RealtimeSessionConfig } from "./openai-realtime";
 
 const TRANSCRIPT_IDLE_MS = 250;
-const OUTPUT_IDLE_MS = 300;
 
 export interface LiveSessionOptions {
   frontendInstructions: string;
@@ -52,8 +51,6 @@ export class OpenAILiveClient extends EventEmitter {
   private inputTranscript = "";
   private outputTranscript = "";
   private inputTimer: ReturnType<typeof setTimeout> | null = null;
-  private outputTimer: ReturnType<typeof setTimeout> | null = null;
-  private outputAudioTimer: ReturnType<typeof setTimeout> | null = null;
   private outputActive = false;
 
   constructor(
@@ -131,13 +128,6 @@ export class OpenAILiveClient extends EventEmitter {
     if (!delta) return;
     this.outputTranscript += delta;
     this.emit("assistantTranscriptDelta", delta);
-    if (this.outputTimer) clearTimeout(this.outputTimer);
-    this.outputTimer = setTimeout(() => {
-      const transcript = this.outputTranscript.trim();
-      this.outputTranscript = "";
-      this.outputTimer = null;
-      if (transcript) this.emit("assistantTranscriptDone", transcript);
-    }, TRANSCRIPT_IDLE_MS);
   }
 
   private handleOutputAudioDelta(delta: string): void {
@@ -146,13 +136,15 @@ export class OpenAILiveClient extends EventEmitter {
       this.emit("responseStarted");
     }
     this.emit("audio", delta, "gpt-live-output");
-    if (this.outputAudioTimer) clearTimeout(this.outputAudioTimer);
-    this.outputAudioTimer = setTimeout(() => {
-      this.outputActive = false;
-      this.outputAudioTimer = null;
-      this.emit("audioDone", "gpt-live-output");
-      this.emit("responseDone");
-    }, OUTPUT_IDLE_MS);
+  }
+
+  flushOutputTranscript(): void {
+    const transcript = this.outputTranscript.trim();
+    this.outputTranscript = "";
+    if (transcript) this.emit("assistantTranscriptDone", transcript);
+    this.outputActive = false;
+    this.emit("audioDone", "gpt-live-output");
+    this.emit("responseDone");
   }
 
   private handleDelegatedResponseEvent(envelope: any): void {
@@ -233,8 +225,6 @@ export class OpenAILiveClient extends EventEmitter {
 
   private clearTimers(): void {
     if (this.inputTimer) clearTimeout(this.inputTimer);
-    if (this.outputTimer) clearTimeout(this.outputTimer);
-    if (this.outputAudioTimer) clearTimeout(this.outputAudioTimer);
   }
 
   private send(event: object): void {
