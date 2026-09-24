@@ -2,8 +2,8 @@ import WebSocket from "ws";
 import { EventEmitter } from "events";
 import type { RealtimeSessionConfig } from "./openai-realtime";
 
-const TRANSCRIPT_IDLE_MS = 1200;
-const OUTPUT_IDLE_MS = 450;
+const TRANSCRIPT_IDLE_MS = 250;
+const OUTPUT_IDLE_MS = 300;
 
 export interface LiveSessionOptions {
   frontendInstructions: string;
@@ -173,6 +173,12 @@ export class OpenAILiveClient extends EventEmitter {
   appendAudio(base64Audio: string): void {
     if (!this.started || this.closing) return;
     this.send({ type: "session.input_audio.append", audio: base64Audio });
+  }
+
+  startWithGreeting(): void {
+    this.appendInstruction(
+      "Greet the caller now in English with one short sentence. Introduce yourself as the HR Agent, explain that you will help collect constructive colleague feedback, and ask who they are sharing feedback about. Begin immediately, then pause and listen."
+    );
   }
 
   appendInstruction(content: string): void {

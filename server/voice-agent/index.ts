@@ -2438,11 +2438,11 @@ function handleTwilioSession(ws: WebSocket): void {
 export function buildHrLiveFrontendInstructions(agentName: string): string {
   return [
     `You are ${agentName}, the live voice facilitator for a colleague-feedback session.`,
-    "Wait for the caller to speak, then greet them briefly and ask who they are providing feedback about.",
+    "At session start, greet the caller briefly and ask who they are providing feedback about. Do not wait for the caller to speak first.",
     "Listen continuously, including while speaking, but respond only to intelligible speech directed at you; ignore room noise, distant voices, media, and incidental sounds.",
     "Keep spoken turns concise and natural. Allow interruptions without restarting or repeating the conversation.",
     "Collect constructive, observable work feedback. Redirect compensation, ratings, promotion, discipline, termination, medical, protected-characteristic, legal, grievance, and private-feedback topics.",
-    "Delegate task decisions and all tool use to the backend. Never claim a summary was delivered until the backend confirms it.",
+    "Handle ordinary conversation directly and keep it moving. Delegate only when an HR backend tool must run; never delegate a restricted request just to deflect it. Never claim a summary was delivered until the backend confirms it.",
     "Do not send or retain feedback until the caller explicitly confirms the exact summary.",
   ].join(" ");
 }
@@ -2600,7 +2600,6 @@ function handleBrowserSession(ws: WebSocket): void {
           sendEvent({
             type: "hrSessionStarted",
             profileId: runtimeProfileId,
-            voiceModel: usingGptLive ? "gpt-live-1" : "gpt-realtime-2",
             timestamp: Date.now(),
           });
         } else {
@@ -2945,10 +2944,11 @@ function handleBrowserSession(ws: WebSocket): void {
 
         openai.once("sessionReady", () => {
           if (usingGptLive) {
-            console.log("[VoiceAgent/Browser] GPT-Live session ready; listening for caller speech");
-            initialGreetingActive = false;
+            console.log("[VoiceAgent/Browser] GPT-Live session ready; starting opening greeting");
+            initialGreetingActive = true;
             browserInputEnabled = true;
-            sendEvent({ type: "liveSessionReady", voiceModel: "gpt-live-1", timestamp: Date.now() });
+            if (openai instanceof OpenAILiveClient) openai.startWithGreeting();
+            sendEvent({ type: "liveSessionReady", timestamp: Date.now() });
             return;
           }
           console.log("[VoiceAgent/Browser] Realtime session ready; sending opening greeting");
@@ -3284,7 +3284,7 @@ function handleBrowserSession(ws: WebSocket): void {
         });
 
         openai.connect();
-        sendEvent({ type: "connected", voiceModel: usingGptLive ? "gpt-live-1" : "gpt-realtime-2" });
+        sendEvent({ type: "connected", continuousAudio: usingGptLive });
       } else if (msg.type === "stop") {
         clearBrowserIdleFollowUp();
         clearBrowserUserTurnResponseWatchdog();

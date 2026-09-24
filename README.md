@@ -433,7 +433,7 @@ This returns TwiML with `<Connect><Stream>` to pipe live audio into the OpenAI R
 
 The app includes browser-based voice agents powered by OpenAI. The HR feedback profile uses **GPT-Live 1** with a delegated Responses backend. Retail browser calls and phone calls remain on the **OpenAI Realtime API**, preserving their established turn-taking and telephony behavior.
 
-GPT-Live requires a continuous 24 kHz PCM stream, so the HR path relies on browser echo cancellation/noise suppression plus GPT-Live's own speech understanding instead of the app's local energy gate. It starts in listening mode; speak to begin the conversation.
+GPT-Live requires a continuous 24 kHz PCM stream, so the HR path relies on browser echo cancellation/noise suppression plus GPT-Live's own speech understanding instead of the app's local energy gate. It greets as soon as the voice session is ready, then listens for the caller.
 
 ### How It Works
 

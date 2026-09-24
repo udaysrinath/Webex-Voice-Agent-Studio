@@ -190,7 +190,7 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
 
     switch (msg.type) {
       case "connected":
-        streamContinuousAudioRef.current = msg.voiceModel === "gpt-live-1";
+        streamContinuousAudioRef.current = msg.continuousAudio === true;
         setState("listening");
         setActivity("ready");
         break;
