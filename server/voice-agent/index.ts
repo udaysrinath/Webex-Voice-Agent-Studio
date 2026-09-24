@@ -3306,7 +3306,6 @@ function handleBrowserSession(ws: WebSocket): void {
         if (usingGptLive && openai instanceof OpenAILiveClient) {
           initialGreetingActive = false;
           responseActive = false;
-          openai.flushOutputTranscript();
         } else if (initialGreetingActive) {
           scheduleInitialGreetingRelease(650);
         }
