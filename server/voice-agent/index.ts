@@ -1,6 +1,7 @@
 import { WebSocketServer, WebSocket } from "ws";
 import type { Server } from "http";
 import { OpenAIRealtimeClient, type RealtimeSpeechEvent } from "./openai-realtime";
+import { OpenAILiveClient } from "./openai-live";
 import {
   getG711DurationMs,
   getPcm16DurationMs,
@@ -2434,8 +2435,21 @@ function handleTwilioSession(ws: WebSocket): void {
   }
 }
 
+export function buildHrLiveFrontendInstructions(agentName: string): string {
+  return [
+    `You are ${agentName}, the live voice facilitator for a colleague-feedback session.`,
+    "Wait for the caller to speak, then greet them briefly and ask who they are providing feedback about.",
+    "Listen continuously, including while speaking, but respond only to intelligible speech directed at you; ignore room noise, distant voices, media, and incidental sounds.",
+    "Keep spoken turns concise and natural. Allow interruptions without restarting or repeating the conversation.",
+    "Collect constructive, observable work feedback. Redirect compensation, ratings, promotion, discipline, termination, medical, protected-characteristic, legal, grievance, and private-feedback topics.",
+    "Delegate task decisions and all tool use to the backend. Never claim a summary was delivered until the backend confirms it.",
+    "Do not send or retain feedback until the caller explicitly confirms the exact summary.",
+  ].join(" ");
+}
+
 function handleBrowserSession(ws: WebSocket): void {
-  let openai: OpenAIRealtimeClient | null = null;
+  let openai: OpenAIRealtimeClient | OpenAILiveClient | null = null;
+  let usingGptLive = false;
   let responseActive = false;
   let browserPlaybackActive = false;
   let lastAssistantAudioAt = 0;
@@ -2512,6 +2526,7 @@ function handleBrowserSession(ws: WebSocket): void {
         agentName = "Store Assistant";
         runtimeProfileId = "retail";
         runtimeProfile = null;
+        usingGptLive = false;
         let savedSystemPrompt = "";
         lastAssistantTranscript = "";
         lastUserTranscript = "";
@@ -2579,21 +2594,33 @@ function handleBrowserSession(ws: WebSocket): void {
           startupRetailContext,
         });
 
+        usingGptLive = runtimeProfileId === "hr-feedback";
         if (runtimeProfile?.privacySensitive) {
           console.log("[VoiceAgent/Browser] Privacy-sensitive profile configured", { profileId: runtimeProfileId, sessionId: browserSessionId });
-          sendEvent({ type: "hrSessionStarted", profileId: runtimeProfileId, timestamp: Date.now() });
+          sendEvent({
+            type: "hrSessionStarted",
+            profileId: runtimeProfileId,
+            voiceModel: usingGptLive ? "gpt-live-1" : "gpt-realtime-2",
+            timestamp: Date.now(),
+          });
         } else {
           console.log("[VoiceAgent/Browser] Instructions sent to OpenAI:", instructions);
         }
 
-        openai = new OpenAIRealtimeClient(process.env.OPENAI_API_KEY || "", buildBrowserRealtimeConfig({
+        const browserRealtimeConfig = buildBrowserRealtimeConfig({
           instructions,
           voice,
           transcriptionLanguage: REALTIME_TRANSCRIPTION_LANGUAGE,
           transcriptionModel: REALTIME_TRANSCRIPTION_MODEL,
           transcriptionPrompt: runtimeProfile?.transcriptionPrompt || buildBrowserTranscriptionPrompt(buildRetailTranscriptionKeywords()),
           tools,
-        }));
+        });
+        openai = usingGptLive
+          ? new OpenAILiveClient(process.env.OPENAI_API_KEY || "", browserRealtimeConfig, {
+              frontendInstructions: buildHrLiveFrontendInstructions(agentName),
+              backendInstructions: instructions,
+            })
+          : new OpenAIRealtimeClient(process.env.OPENAI_API_KEY || "", browserRealtimeConfig);
 
         openai.on("audio", (base64: string, itemId: string) => {
           if (suppressAssistantOutput) return;
@@ -2668,14 +2695,22 @@ function handleBrowserSession(ws: WebSocket): void {
                 timestamp: Date.now(),
               });
               console.log("[VoiceAgent/Browser] HR guardrail triggered", { category: restricted.category, sessionId: browserSessionId });
-              openai?.triggerResponse({
-                input: [{ type: "message", role: "user", content: [{ type: "input_text", text: "A deterministic HR guardrail was triggered. Deliver the required deflection exactly." }] }],
-                output_modalities: ["audio"],
-                instructions: getExactTextResponseInstructions(restricted.response),
-              });
+              if (usingGptLive && openai instanceof OpenAILiveClient) {
+                openai.appendInstruction([
+                  `An application guardrail blocked the caller's ${restricted.label.toLowerCase()} request.`,
+                  `Say exactly: "${restricted.response}"`,
+                  "Do not discuss the restricted topic or include it in a summary.",
+                ].join(" "));
+              } else {
+                openai?.triggerResponse({
+                  input: [{ type: "message", role: "user", content: [{ type: "input_text", text: "A deterministic HR guardrail was triggered. Deliver the required deflection exactly." }] }],
+                  output_modalities: ["audio"],
+                  instructions: getExactTextResponseInstructions(restricted.response),
+                });
+              }
               return;
             }
-            respondToAcceptedBrowserUserTurn();
+            if (!usingGptLive) respondToAcceptedBrowserUserTurn();
             return;
           }
           if (isIncompleteUserRequestTranscript(trimmed)) {
@@ -2909,6 +2944,13 @@ function handleBrowserSession(ws: WebSocket): void {
         });
 
         openai.once("sessionReady", () => {
+          if (usingGptLive) {
+            console.log("[VoiceAgent/Browser] GPT-Live session ready; listening for caller speech");
+            initialGreetingActive = false;
+            browserInputEnabled = true;
+            sendEvent({ type: "liveSessionReady", voiceModel: "gpt-live-1", timestamp: Date.now() });
+            return;
+          }
           console.log("[VoiceAgent/Browser] Realtime session ready; sending opening greeting");
           initialGreetingActive = true;
           openai!.triggerResponse({
@@ -2943,13 +2985,17 @@ function handleBrowserSession(ws: WebSocket): void {
             if (runtimeProfileId === "hr-feedback") {
               if (name === voiceEndCallTool.name) {
                 const reason = String(args.reason || "User asked to end the call");
-                sendBrowserFunctionOutput(callId, JSON.stringify(createEndCallResult(reason)), false);
+                sendBrowserFunctionOutput(callId, JSON.stringify(createEndCallResult(reason)), usingGptLive);
                 pendingEndCall = true;
-                openai?.triggerResponse({
-                  input: [{ type: "message", role: "user", content: [{ type: "input_text", text: "End this HR feedback session now." }] }],
-                  output_modalities: ["audio"],
-                  instructions: getExactTextResponseInstructions("Thank you for sharing your feedback. Take care."),
-                });
+                if (usingGptLive && openai instanceof OpenAILiveClient) {
+                  openai.appendInstruction('Briefly close the session by saying: "Thank you for sharing your feedback. Take care."');
+                } else {
+                  openai?.triggerResponse({
+                    input: [{ type: "message", role: "user", content: [{ type: "input_text", text: "End this HR feedback session now." }] }],
+                    output_modalities: ["audio"],
+                    instructions: getExactTextResponseInstructions("Thank you for sharing your feedback. Take care."),
+                  });
+                }
                 scheduleBrowserEndCall(reason, BROWSER_END_CALL_MAX_WAIT_MS);
                 return;
               }
@@ -3238,7 +3284,7 @@ function handleBrowserSession(ws: WebSocket): void {
         });
 
         openai.connect();
-        sendEvent({ type: "connected" });
+        sendEvent({ type: "connected", voiceModel: usingGptLive ? "gpt-live-1" : "gpt-realtime-2" });
       } else if (msg.type === "stop") {
         clearBrowserIdleFollowUp();
         clearBrowserUserTurnResponseWatchdog();

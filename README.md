@@ -39,7 +39,7 @@ Open http://localhost:3000. That's it — Postgres, schema, and the app all star
 
 - **Agent Builder** - Create voice agents from scratch or choose from turnkey templates (Banking, IT Support, Personal OS, and more)
 - **AI Prompt Generation** - Generate and refine agent personalities using AI
-- **Real-Time Voice Calls** - Live voice conversations using OpenAI Realtime API with barge-in and VAD
+- **Real-Time Voice Calls** - Live voice conversations using OpenAI GPT-Live or the Realtime API with barge-in and VAD
 - **Voice Synthesis** - Preview agents with 6 distinct voices via OpenAI TTS
 - **Speech-to-Text** - Talk to your agent using Deepgram real-time transcription
 - **Knowledge Base** - Add URLs, upload PDFs, or write custom text to ground agent responses
@@ -185,6 +185,7 @@ Replit stores env vars as **Secrets** (encrypted, not in source control):
 |-----|----------|---------|
 | `DATABASE_URL` | **Yes** | Neon PostgreSQL connection string |
 | `OPENAI_API_KEY` | Strongly recommended | TTS, chat, prompt generation |
+| `OPENAI_LIVE_BACKEND_MODEL` | Optional | Responses backend for the GPT-Live HR browser agent; defaults to `gpt-5.6-luna` |
 | `WEBEX_ACCESS_TOKEN` | For Webex features | Server-owned bot or personal access token |
 | `WEBEX_SPACE_ID` | Webex room for demo | Configured manager room used for store-manager summaries |
 | `DEEPGRAM_API_KEY` | For voice input | Speech-to-text |
@@ -300,7 +301,7 @@ After deployment, pushing to `main` on GitHub auto-redeploys.
 | Database | PostgreSQL (local Docker or Neon serverless) |
 | Voice (STT) | Deepgram |
 | Voice (TTS) | OpenAI |
-| Voice (Realtime) | OpenAI Realtime API (gpt-4o-realtime-preview) |
+| Voice (Live) | OpenAI GPT-Live 1 with Responses delegation for the HR browser agent; Realtime API for retail and phone agents |
 | LLM | OpenAI GPT-4o |
 
 ---
@@ -430,12 +431,14 @@ This returns TwiML with `<Connect><Stream>` to pipe live audio into the OpenAI R
 
 ## Real-Time Voice Agent
 
-The app includes a browser-based real-time voice agent powered by the **OpenAI Realtime API**. When you click "Chat" on any agent, a voice call panel appears where you can have a live conversation with the agent.
+The app includes browser-based voice agents powered by OpenAI. The HR feedback profile uses **GPT-Live 1** with a delegated Responses backend. Retail browser calls and phone calls remain on the **OpenAI Realtime API**, preserving their established turn-taking and telephony behavior.
+
+GPT-Live requires a continuous 24 kHz PCM stream, so the HR path relies on browser echo cancellation/noise suppression plus GPT-Live's own speech understanding instead of the app's local energy gate. It starts in listening mode; speak to begin the conversation.
 
 ### How It Works
 
 1. **Browser captures microphone** at 24kHz, encodes PCM16, sends binary frames over WebSocket
-2. **Server relays audio** to OpenAI Realtime API (`wss://api.openai.com/v1/realtime`)
+2. **Server relays audio** to GPT-Live (`wss://api.openai.com/v1/live/sessions`) for HR or the Realtime API for other profiles
 3. **OpenAI handles STT + LLM + TTS** in a single connection with built-in VAD and barge-in
 4. **Audio streams back** through the WebSocket as PCM16 binary, played via Web Audio API
 
@@ -455,6 +458,8 @@ The app includes a browser-based real-time voice agent powered by the **OpenAI R
 | `ws://host/ws/twilio-stream` | Twilio Media Streams (G.711 u-law, 8kHz) |
 
 ### Realtime Voice Flow And Code Map
+
+The diagram below describes the retained retail and phone Realtime path. The HR browser profile instead uses [`OpenAILiveClient`](server/voice-agent/openai-live.ts), which delegates reasoning and tools to the Responses API. Its deterministic application guardrails still run in the browser session handler before any HR tool result is accepted.
 
 Browser and phone calls intentionally share the retail behavior, tool definitions, Realtime client, and post-call confirmation semantics. The remaining browser-specific and Twilio-specific functions are transport adapters: they translate different audio formats, websocket payloads, UI/monitor events, and call shutdown mechanics into the same OpenAI Realtime flow.
 
@@ -510,7 +515,7 @@ The browser path still has browser-named helpers because it must emit UI events,
 
 ### Requirements
 
-- `OPENAI_API_KEY` with access to `gpt-4o-realtime-preview` model
+- `OPENAI_API_KEY` with access to `gpt-live-1` for the HR browser agent and the configured Realtime model for retail/phone agents
 - Browser with microphone access (HTTPS required in production)
 
 ---

@@ -44,6 +44,7 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
   const assistantPlaybackBlockedUntilRef = useRef(0);
   const micSpeechActiveUntilRef = useRef(0);
   const recentMicRmsRef = useRef<number[]>([]);
+  const streamContinuousAudioRef = useRef(false);
   const transientActivityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const playbackEndTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onEventRef = useRef(options.onEvent);
@@ -68,6 +69,7 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
     try {
       setError(null);
       closingRequestedRef.current = false;
+      streamContinuousAudioRef.current = false;
       recentMicRmsRef.current = [];
       setState("connecting");
       setActivity("connecting");
@@ -188,6 +190,7 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
 
     switch (msg.type) {
       case "connected":
+        streamContinuousAudioRef.current = msg.voiceModel === "gpt-live-1";
         setState("listening");
         setActivity("ready");
         break;
@@ -336,6 +339,7 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
     assistantPlaybackBlockedUntilRef.current = 0;
     micSpeechActiveUntilRef.current = 0;
     recentMicRmsRef.current = [];
+    streamContinuousAudioRef.current = false;
     clearTransientActivityTimer();
     if (playbackEndTimerRef.current) {
       clearTimeout(playbackEndTimerRef.current);
@@ -417,6 +421,8 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
   }
 
   function shouldSendMicFrame(input: Float32Array): boolean {
+    if (streamContinuousAudioRef.current) return true;
+
     let sumSquares = 0;
     let peak = 0;
     for (let i = 0; i < input.length; i++) {

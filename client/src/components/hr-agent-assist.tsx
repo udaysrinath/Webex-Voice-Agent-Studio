@@ -21,7 +21,10 @@ export function updateHrAssistState(state: HrAssistState, event: any): HrAssistS
   const timestamp = Number(event?.timestamp) || Date.now();
   let next: HrTimelineEvent | null = null;
   if (event?.type === "hrSessionStarted") {
-    next = { id: `session-${timestamp}`, kind: "session", title: "Feedback session started", detail: "Feedback stays in this live session until a confirmed summary is delivered.", timestamp };
+    const model = event.voiceModel === "gpt-live-1" ? " with GPT-Live" : "";
+    next = { id: `session-${timestamp}`, kind: "session", title: `Feedback session started${model}`, detail: "Feedback stays in this live session until a confirmed summary is delivered.", timestamp };
+  } else if (event?.type === "liveSessionReady") {
+    next = { id: `live-${timestamp}`, kind: "session", title: "GPT-Live ready", detail: "Continuous listening is active. Speak to begin the feedback conversation.", timestamp };
   } else if (event?.type === "guardrailTriggered") {
     next = { id: `guardrail-${timestamp}`, kind: "guardrail", title: `Guardrail: ${event.title || "Restricted HR topic"}`, detail: event.detail || "Restricted content was excluded and the conversation was redirected.", timestamp };
   } else if (event?.type === "feedbackDelivered") {

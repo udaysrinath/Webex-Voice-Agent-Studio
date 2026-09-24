@@ -940,7 +940,7 @@ export default function Evaluate() {
     return (
       <VoiceMonitorPage
         title={agent.name}
-        subtitle={getAgentMonitorSubtitle(agent)}
+        subtitle={getAgentMonitorSubtitle(agent, isHrFeedbackAgent ? "gpt-live-1" : undefined)}
         onBack={() => setLocation("/")}
       >
         <VoiceAgentPanel
@@ -1651,9 +1651,9 @@ function getAgentMonitorSubtitle(agent: {
   llmModel?: string | null;
   voiceModel?: string | null;
   language?: string | null;
-}): string {
+}, modelOverride?: string): string {
   return [
-    agent.llmModel || "gpt-4o",
+    modelOverride || agent.llmModel || "gpt-4o",
     agent.voiceModel || "voice",
     agent.language || "en-US",
   ].join(" • ");
