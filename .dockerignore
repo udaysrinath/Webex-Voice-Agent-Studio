@@ -5,4 +5,8 @@ dist
 .claude
 .env
 *.md
+!server/data/
+!server/data/webexone/
+!server/data/webexone/*.md
+!server/data/webexone/embeddings.json
 *.tar.gz

@@ -373,18 +373,36 @@ export interface AnamPersonaConfig {
   systemPrompt?: string;
 }
 
+export type AnamVoiceMode = "anam-native" | "deepgram-anam" | "gpt-live-anam";
+
 export const anamApi = {
-  getSessionToken: async (personaConfig?: AnamPersonaConfig, agentId?: number): Promise<AnamSessionResponse> => {
+  getSessionToken: async (personaConfig?: AnamPersonaConfig, agentId?: number, mode: AnamVoiceMode = "anam-native"): Promise<AnamSessionResponse> => {
     const res = await fetch(`${API_BASE}/anam/session-token`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ personaConfig, agentId }),
+      body: JSON.stringify({ personaConfig, agentId, mode }),
     });
     if (!res.ok) {
       const error = await res.json();
       throw new Error(error.error || "Failed to get Anam session token");
     }
     return res.json();
+  },
+
+  createGPTLiveSession: async (agentId: number, sdp: string): Promise<string> => {
+    const res = await fetch(`${API_BASE}/live/webexone/session`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ agentId, sdp }),
+    });
+    if (!res.ok) {
+      const error = await res.json().catch(() => ({}));
+      throw new Error(error.error || "Failed to start the GPT-Live session");
+    }
+    const result = await res.json();
+    const answerSdp = result?.transport?.sdp;
+    if (typeof answerSdp !== "string" || !answerSdp) throw new Error("GPT-Live returned an invalid WebRTC answer.");
+    return answerSdp;
   },
 
   getStatus: async (): Promise<{ configured: boolean }> => {

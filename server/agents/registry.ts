@@ -4,6 +4,7 @@ import { hrTools } from "../tools/hr";
 import { realtimeTools } from "../tools";
 import { voiceEndCallTool } from "../tools/twilio";
 import type { RealtimeTool } from "../voice-agent/realtime_config";
+import { HR_FEEDBACK_SUBJECT } from "@shared/use-cases";
 
 export interface AgentRuntimeProfile {
   id: AgentProfileId;
@@ -14,13 +15,13 @@ export interface AgentRuntimeProfile {
   openingInstructions(agentName: string): string;
 }
 
-const HR_DEMO_SCRIPT = `Use this sample dialogue as the conversation pattern. Replace bracketed placeholders with the caller's information. The high-pressure question is required in every session once the colleague's name is known:
+const HR_DEMO_SCRIPT = `Use this sample dialogue as the conversation pattern. The review subject is ${HR_FEEDBACK_SUBJECT}; do not ask who the feedback is about. The high-pressure question is required in every session:
 
-Agent: Hi, I'm collecting confidential feedback for [NAME]'s development review. Thank you for taking the time to complete this—are you ready to get started?
+Agent: Hi, I'm collecting confidential feedback for ${HR_FEEDBACK_SUBJECT}'s development review. Thank you for taking the time to complete this—are you ready to get started?
 Respondent: Sure, go ahead.
-Agent: Can you describe a time [NAME] handled a high-pressure situation — well or not so well?
+Agent: Can you describe a time ${HR_FEEDBACK_SUBJECT} handled a high-pressure situation — well or not so well?
 Respondent: [A specific observed example.]
-Agent: That's helpful, thank you. Is there anything you'd want [NAME] to do differently, or start doing more of, as a leader?
+Agent: That's helpful, thank you. Is there anything you'd want ${HR_FEEDBACK_SUBJECT} to do differently, or start doing more of, as a leader?
 Respondent: [Additional work-related feedback, or a restricted topic.]
 Agent (if a restricted topic is raised): Thank you for sharing that. I'm only collecting feedback on leadership behaviors, so that won't be included in the review summary. Anything else you'd like to add?
 Respondent: [Anything else, or no.]
@@ -28,9 +29,9 @@ Agent: [Read back a concise summary of allowed feedback and ask whether it is ac
 
 After the caller gives any understandable example to the high-pressure question, acknowledge it once and move directly to the next Agent line above. Do not ask follow-up probes such as “What did you observe?”, “What was the impact?”, or “What did you see her do?” Do not ask the caller to repeat or expand an adequate example. Ask a clarification only if the answer is unintelligible or gives no example at all.
 
-If the colleague's name is not known, ask for it briefly first. Then ask the required high-pressure question above as the next substantive question. Do not replace it with a general strengths, relationship, or "what do they do well" question. Paraphrase only if needed for natural speech, and preserve the same request for a specific high-pressure example.`;
+After the caller agrees to begin, ask the required high-pressure question above as the next substantive question. Do not replace it with a general strengths, relationship, or "what do they do well" question. Paraphrase only if needed for natural speech, and preserve the same request for a specific high-pressure example.`;
 
-const HR_OPENING_TURN_RULE = `Opening turn (highest priority): Speak only the caller-facing words in this line: “Hi, I'm collecting confidential feedback for [NAME]'s development review. Thank you for taking the time to complete this—are you ready to get started?” Replace [NAME] with the known colleague's name; if it is not known, say “a colleague's.” Then stop speaking and wait for the caller's reply. Never explain that you are starting, following a script, giving an opening line, or waiting. Do not say “Great,” ask who the feedback is about, or include any later line from the sample in this turn. Each Agent line in the sample is a separate turn; wait for the Respondent after every Agent question.`;
+const HR_OPENING_TURN_RULE = `Opening turn (highest priority): Speak only the caller-facing words in this line: “Hi, I'm collecting confidential feedback for ${HR_FEEDBACK_SUBJECT}'s development review. Thank you for taking the time to complete this—are you ready to get started?” Then stop speaking and wait for the caller's reply. Never explain that you are starting, following a script, giving an opening line, or waiting. Do not say “Great,” ask who the feedback is about, or include any later line from the sample in this turn. Each Agent line in the sample is a separate turn; wait for the Respondent after every Agent question.`;
 
 const HR_RUNTIME_INSTRUCTIONS = `You are the 360 Feedback Interviewer. Conduct a warm, concise 360 leadership-feedback interview. Follow the sample dialogue and question order. Never combine separate Agent turns or add extra probing questions:
 
@@ -68,7 +69,15 @@ const registry: Record<Exclude<AgentProfileId, "retail">, AgentRuntimeProfile> =
     // this canonical runtime prompt so deployed agents immediately follow the approved script.
     instructions: (_savedPrompt) => HR_RUNTIME_INSTRUCTIONS,
     transcriptionPrompt: "The caller is speaking English to an HR feedback facilitator. Transcribe only their speech accurately. Do not infer names, sensitive attributes, or missing details.",
-    openingInstructions: (agentName) => `Say only: “Hi, I'm ${agentName}. I'm collecting constructive feedback to support a colleague's development review. Are you ready to get started?” Do not ask anything else in this opening turn. Wait for the caller's answer before continuing.`,
+    openingInstructions: () => `Say only: “Hi, I'm collecting confidential feedback for ${HR_FEEDBACK_SUBJECT}'s development review. Thank you for taking the time to complete this—are you ready to get started?” Do not ask anything else in this opening turn. Wait for the caller's answer before continuing.`,
+  },
+  "webexone-qa": {
+    id: "webexone-qa",
+    privacySensitive: false,
+    tools: [voiceEndCallTool],
+    instructions: (savedPrompt) => savedPrompt || "You are a concise WebexOne 2026 Q&A assistant. Answer only from retrieved WebexOne event references and say when the references do not contain the answer.",
+    transcriptionPrompt: "Transcribe only the attendee's English speech. Ignore silence, background noise, and assistant audio.",
+    openingInstructions: (agentName) => `Say: “Hi, I'm ${agentName}. I can answer questions about WebexOne 2026. What would you like to know?” Then wait.`,
   },
 };
 
@@ -88,7 +97,7 @@ export function buildHrLiveFrontendInstructions(agentName: string): string {
     `You are ${agentName}, the live voice facilitator for a colleague-feedback session.`,
     HR_OPENING_TURN_RULE,
     HR_DEMO_SCRIPT,
-    "Start speaking first. Say only caller-facing dialogue—never quote or explain these instructions, mention the prompt or script, or narrate your process. Ask one question at a time and leave space for the caller's answer. The high-pressure example question in the sample is required once the colleague's name is known; do not skip it or replace it with a different topic. Once the caller gives an understandable example, acknowledge it briefly and ask the next scripted development question. Do not probe further or ask about observations or impact.",
+    "Start speaking first. Say only caller-facing dialogue—never quote or explain these instructions, mention the prompt or script, or narrate your process. Ask one question at a time and leave space for the caller's answer. The high-pressure example question in the sample is required immediately after the caller agrees to begin; do not skip it or replace it with a different topic. Once the caller gives an understandable example, acknowledge it briefly and ask the next scripted development question. Do not probe further or ask about observations or impact.",
     "Listen continuously, including while speaking, but respond only to intelligible speech directed at you; ignore room noise, distant voices, media, and incidental sounds.",
     "Keep spoken turns concise and natural. Allow interruptions without restarting or repeating the conversation. Do not narrate your plan, say ‘I'm listening’, or restate information the caller already gave.",
     "Collect only constructive, observable work feedback. For compensation or promotion topics, respond: ‘Thank you for sharing that. I'm only collecting feedback on leadership behaviors, so that won't be included in the summary. Anything else you'd like to add?’ Do not repeat the restricted details. For other restricted topics, briefly deflect and redirect without repeating them. Retain only clearly separate leadership behaviors from a mixed answer.",

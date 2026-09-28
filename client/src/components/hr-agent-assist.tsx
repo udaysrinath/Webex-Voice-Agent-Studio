@@ -1,4 +1,5 @@
 import { CheckCircle2, MessageSquareText, Send, ShieldAlert } from "lucide-react";
+import type { TranscriptEntry } from "@/hooks/use-voice-agent";
 
 export interface HrTimelineEvent {
   id: string;
@@ -34,11 +35,41 @@ export function updateHrAssistState(state: HrAssistState, event: any): HrAssistS
   return next ? { events: [...state.events, next] } : state;
 }
 
-export function HrProgressTimeline({ state }: { state: HrAssistState }) {
-  if (state.events.length === 0) return null;
+function getInterviewCards(transcript: TranscriptEntry[]): HrTimelineEvent[] {
+  const cards: HrTimelineEvent[] = [];
+  const seen = new Set<string>();
+  let awaiting: "example" | "development" | null = null;
+  const addCard = (id: string, title: string, detail: string, timestamp: number) => {
+    if (seen.has(id)) return;
+    seen.add(id);
+    cards.push({ id, kind: "session", title, detail, timestamp });
+  };
+  for (const entry of transcript) {
+    if (entry.role === "assistant") {
+      if (/high.pressure situation/i.test(entry.text)) {
+        awaiting = "example";
+      } else if (/do differently|start doing more/i.test(entry.text)) {
+        awaiting = "development";
+      }
+    } else if (entry.role === "user") {
+      const answer = entry.text.trim();
+      if (awaiting === "example" && answer) {
+        addCard("high-pressure-response", "High-pressure response received", "The caller responded to the high-pressure question.", entry.timestamp);
+      } else if (awaiting === "development" && answer) {
+        addCard("development-response", "Development response received", "The caller responded to the leadership-development question.", entry.timestamp);
+      }
+      awaiting = null;
+    }
+  }
+  return cards;
+}
+
+export function HrProgressTimeline({ state, transcript }: { state: HrAssistState; transcript: TranscriptEntry[] }) {
+  const events = [...state.events, ...getInterviewCards(transcript)].sort((a, b) => a.timestamp - b.timestamp);
+  if (events.length === 0) return null;
   return (
     <div className="space-y-3" data-testid="hr-assist-timeline">
-      {state.events.map((event) => {
+      {events.map((event) => {
         const Icon = event.kind === "guardrail" ? ShieldAlert : event.kind === "delivery" ? Send : event.kind === "session" ? MessageSquareText : CheckCircle2;
         const tone = event.kind === "guardrail"
           ? "border-amber-500/35 bg-amber-500/10 text-amber-200"

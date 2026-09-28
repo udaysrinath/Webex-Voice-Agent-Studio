@@ -42,7 +42,7 @@ export interface RetailActionPlan {
 
 export interface VoiceUseCase {
   id: string;
-  profileId: "generic" | "retail" | "hr-feedback";
+  profileId: "generic" | "retail" | "hr-feedback" | "webexone-qa";
   title: string;
   agentName: string;
   description: string;
@@ -767,6 +767,8 @@ export const RETAIL_STORE_ASSISTANT_USE_CASE: VoiceUseCase = {
   },
 };
 
+export const HR_FEEDBACK_SUBJECT = "Alex Morgan";
+
 export const HR_FEEDBACK_USE_CASE: VoiceUseCase = {
   id: "hr-colleague-feedback",
   profileId: "hr-feedback",
@@ -816,7 +818,40 @@ export const HR_FEEDBACK_USE_CASE: VoiceUseCase = {
   },
 };
 
-export const VOICE_USE_CASES = [RETAIL_STORE_ASSISTANT_USE_CASE, HR_FEEDBACK_USE_CASE];
+export const WEBEXONE_QA_USE_CASE: VoiceUseCase = {
+  id: "webexone-qa",
+  profileId: "webexone-qa",
+  title: "WebexOne Guide",
+  agentName: "WebexOne Guide",
+  description: "Answers attendee questions about WebexOne 2026 using the event website, FAQ, agenda, speakers, training, tickets, and venue information.",
+  category: "Event Q&A",
+  defaultLLM: "gpt-4o",
+  defaultVoice: "marin",
+  language: "en-US",
+  gender: "neutral",
+  heroMetric: "Grounded event answers",
+  demoGoal: "Answer WebexOne attendee questions accurately from the supplied event reference material.",
+  capabilityChips: ["WebexOne 2026", "FAQ and logistics", "Agenda and speakers", "ANAM avatar"],
+  recommendedTools: [],
+  customer: {
+    name: "Attendee", phone: "Not collected", loyaltyTier: "Not applicable",
+    intent: "Get information about WebexOne", preferredPickupTime: "Not applicable",
+    relationshipContext: "Attendee or prospective attendee", preferences: [], pastChats: [],
+  },
+  inventory: [],
+  decisionTrace: [
+    { title: "Understand the question", detail: "Identify the event detail the attendee is asking about." },
+    { title: "Search event references", detail: "Retrieve the closest matching FAQ, agenda, speaker, or logistics excerpts." },
+    { title: "Answer accurately", detail: "Give a concise answer grounded in the supplied WebexOne source material." },
+  ],
+  associatePlaybook: {
+    customerName: "Attendee", intent: "Answer WebexOne questions", reservedItem: "Not applicable",
+    reservedStore: "Not applicable", pickupTime: "Not applicable", recommendedUpsell: "None",
+    associateMessage: "Use the WebexOne event reference material.",
+  },
+};
+
+export const VOICE_USE_CASES = [RETAIL_STORE_ASSISTANT_USE_CASE, HR_FEEDBACK_USE_CASE, WEBEXONE_QA_USE_CASE];
 
 export function getRetailInventoryStatusLabel(status: InventoryStatus): string {
   switch (status) {

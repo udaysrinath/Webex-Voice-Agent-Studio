@@ -1,6 +1,7 @@
 import WebSocket from "ws";
 import { EventEmitter } from "events";
 import type { RealtimeSessionConfig } from "./openai-realtime";
+import { HR_FEEDBACK_SUBJECT } from "@shared/use-cases";
 
 const TRANSCRIPT_GROUPING_MS = 900;
 
@@ -183,7 +184,7 @@ export class OpenAILiveClient extends EventEmitter {
 
   startWithGreeting(): void {
     this.appendInstruction(
-      "Greet the caller now in English with one short sentence. Introduce yourself as the 360 Feedback Interviewer, explain that you will help collect constructive colleague feedback, and ask who they are sharing feedback about. Begin immediately, then pause and listen."
+      `Greet the caller now in English. Say only: “Hi, I'm collecting confidential feedback for ${HR_FEEDBACK_SUBJECT}'s development review. Thank you for taking the time to complete this—are you ready to get started?” Then pause and listen.`
     );
   }
 

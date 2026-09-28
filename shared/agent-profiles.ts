@@ -1,4 +1,4 @@
-export const AGENT_PROFILE_IDS = ["generic", "retail", "hr-feedback"] as const;
+export const AGENT_PROFILE_IDS = ["generic", "retail", "hr-feedback", "webexone-qa"] as const;
 
 export type AgentProfileId = (typeof AGENT_PROFILE_IDS)[number];
 
@@ -19,6 +19,7 @@ export function resolveAgentProfileId(agent: AgentProfileLike): AgentProfileId {
 
   const text = `${agent.name || ""}\n${agent.systemPrompt || ""}`.toLowerCase();
   if (text.includes("hr feedback") || text.includes("colleague feedback")) return "hr-feedback";
+  if (text.includes("webexone") || text.includes("webex one")) return "webexone-qa";
   if (
     text.includes("store assistant") ||
     text.includes("retail store assistant") ||

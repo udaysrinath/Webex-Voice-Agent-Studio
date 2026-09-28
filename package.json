@@ -9,11 +9,12 @@
     "build": "npm run check && vite build && esbuild server/index.ts --platform=node --packages=external --bundle --format=esm --outdir=dist && node scripts/create-cjs-entry.mjs",
     "start": "NODE_ENV=production node dist/index.cjs",
     "check": "tsc",
+    "kb:index": "node --env-file=.env --import tsx scripts/build-webexone-index.ts",
     "db:push": "npm exec --package=drizzle-kit@0.31.10 -- drizzle-kit push"
   },
   "notes": "removed framer motion dependency",
   "dependencies": {
-    "@anam-ai/js-sdk": "^4.8.0",
+    "@anam-ai/js-sdk": "^4.27.1",
     "@deepgram/sdk": "^4.11.2",
     "@hookform/resolvers": "^3.10.0",
     "@jridgewell/trace-mapping": "^0.3.25",

@@ -1,9 +1,9 @@
 import { Link, useLocation } from "wouter";
 import { motion } from "framer-motion";
-import { Mic, BarChart2, ArrowRight, Radio, Layers, Bot, Trash2, User, Globe, Cpu, MessageSquare, Pencil, PhoneCall } from "lucide-react";
+import { Mic, Video, BarChart2, ArrowRight, Radio, Layers, Bot, Trash2, User, Globe, MessageSquare, Pencil, PhoneCall } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { agentsApi } from "@/lib/api";
+import { agentsApi, type AnamVoiceMode } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -13,6 +13,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import type { Agent, InsertAgent } from "@shared/schema";
+import { resolveAgentProfileId } from "@shared/agent-profiles";
 import heroBg from "@assets/generated_images/Abstract_sound_waves_visualization_010bae0d.png";
 
 const FALLBACK_LLM_OPTIONS = [
@@ -38,11 +39,6 @@ const GENDER_OPTIONS = [
   { value: "female", label: "Female" },
   { value: "neutral", label: "Neutral" },
 ];
-
-function getModelLabel(agent: Agent, providerConfig: any): string {
-  const model = providerConfig?.llmModels?.find((item: any) => item.id === agent.llmModel);
-  return model ? `${model.name} (${model.provider})` : agent.llmModel;
-}
 
 function getVoiceDisplay(agent: Agent, providerConfig: any): { name: string; detail: string } {
   const voice = providerConfig?.voices?.find((item: any) => item.id === agent.voiceModel);
@@ -71,6 +67,7 @@ export default function Home() {
   const [, setLocation] = useLocation();
   
   const [editingAgent, setEditingAgent] = useState<Agent | null>(null);
+  const [avatarModes, setAvatarModes] = useState<Record<number, AnamVoiceMode>>({});
   const [editForm, setEditForm] = useState({
     name: "",
     systemPrompt: "",
@@ -252,9 +249,9 @@ export default function Home() {
             
             <div className="grid gap-4">
               {agents.map((agent) => {
-                const modelLabel = getModelLabel(agent, providerConfig);
                 const voiceDisplay = getVoiceDisplay(agent, providerConfig);
                 const promptPreview = getPromptPreview(agent.systemPrompt || "");
+                const usesVideoAvatar = resolveAgentProfileId(agent) === "webexone-qa";
 
                 return (
                 <Card 
@@ -276,14 +273,7 @@ export default function Home() {
                         </div>
                       </div>
                       
-                      <div className="grid gap-3 text-sm md:grid-cols-2 xl:grid-cols-4">
-                        <div className="flex min-h-[86px] items-start gap-2 rounded-lg border border-white/10 bg-white/[0.03] p-3 text-muted-foreground">
-                          <Cpu className="mt-0.5 h-4 w-4 shrink-0" />
-                          <div className="min-w-0">
-                            <p className="text-[11px] uppercase tracking-wide text-muted-foreground/80">Model</p>
-                            <p className="break-words font-medium text-foreground/90" data-testid={`text-agent-llm-${agent.id}`}>{modelLabel}</p>
-                          </div>
-                        </div>
+                      <div className="grid gap-3 text-sm md:grid-cols-3">
                         <div className="flex min-h-[86px] items-start gap-2 rounded-lg border border-white/10 bg-white/[0.03] p-3 text-muted-foreground">
                           <Mic className="mt-0.5 h-4 w-4 shrink-0" />
                           <div className="min-w-0">
@@ -329,22 +319,46 @@ export default function Home() {
                         <Pencil className="h-4 w-4 shrink-0" />
                         Edit
                       </Button>
-                      <Link href={`/evaluate?agentId=${agent.id}`} className="w-full">
+                      {usesVideoAvatar && (
+                        <div className="space-y-1.5">
+                          <Label htmlFor={`avatar-mode-${agent.id}`} className="text-xs text-muted-foreground">Speech mode</Label>
+                          <Select
+                            value={avatarModes[agent.id] || "gpt-live-anam"}
+                            onValueChange={(value: AnamVoiceMode) => setAvatarModes((current) => ({ ...current, [agent.id]: value }))}
+                          >
+                            <SelectTrigger id={`avatar-mode-${agent.id}`} aria-label="Speech mode" className="w-full">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="gpt-live-anam">S2S + ANAM</SelectItem>
+                              <SelectItem value="anam-native">ANAM native</SelectItem>
+                              <SelectItem value="deepgram-anam">ASR + ANAM</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      )}
+                      <Link href={usesVideoAvatar
+                        ? `/webexone-avatar?agentId=${agent.id}&mode=${avatarModes[agent.id] || "gpt-live-anam"}`
+                        : `/evaluate?agentId=${agent.id}`}
+                        onClick={() => {
+                          if (usesVideoAvatar) void document.documentElement.requestFullscreen?.().catch(() => {});
+                        }}
+                        className="w-full">
                         <Button 
                           variant="outline" 
                           className="min-h-[82px] w-full justify-start gap-3 px-3 py-3 text-left"
                           data-testid={`button-evaluate-agent-${agent.id}`}
                         >
-                          <Mic className="h-5 w-5 shrink-0" />
+                          {usesVideoAvatar ? <Video className="h-5 w-5 shrink-0" /> : <Mic className="h-5 w-5 shrink-0" />}
                           <span className="min-w-0">
-                            <span className="block text-sm font-semibold">Call in browser</span>
+                            <span className="block text-sm font-semibold">{usesVideoAvatar ? "Start video avatar" : "Call in browser"}</span>
                             <span className="block whitespace-normal text-xs font-normal text-muted-foreground">
-                              Use this browser microphone and live transcript.
+                              {usesVideoAvatar ? "Start the avatar and speak using this browser's microphone." : "Use this browser microphone and live transcript."}
                             </span>
                           </span>
                         </Button>
                       </Link>
-                      <Link href="/pstn-call?agentId=1" className="w-full">
+                      {!usesVideoAvatar && <Link href={`/pstn-call?agentId=${agent.id}`} className="w-full">
                         <Button
                           variant="outline"
                           className="min-h-[82px] w-full justify-start gap-3 border-green-500/30 px-3 py-3 text-left text-green-300"
@@ -358,7 +372,7 @@ export default function Home() {
                             </span>
                           </span>
                         </Button>
-                      </Link>
+                      </Link>}
                       <Button 
                         variant="ghost" 
                         className="h-11 w-full justify-start gap-3 text-destructive hover:text-destructive hover:bg-destructive/10"

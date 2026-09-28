@@ -18,7 +18,7 @@ interface VoiceAgentPanelProps {
   onRealtimeEvent?: (event: any) => void;
   onSessionStart?: () => void;
   assistState?: RetailAssistState;
-  timelineContent?: ReactNode;
+  timelineContent?: ReactNode | ((transcript: TranscriptEntry[]) => ReactNode);
   timelineTitle?: string;
   timelineSubtitle?: string;
   timelineEmptyTitle?: string;
@@ -115,7 +115,7 @@ function VoiceAgentPanelContent({
           transcriptSubtitle={state === "idle" ? "Ready for voice monitor" : getStateLabel(state, activity)}
           emptyText="Waiting for call activity. The live transcript will appear here."
           assistState={assistState || createRetailAssistState()}
-          timelineContent={timelineContent}
+          timelineContent={typeof timelineContent === "function" ? timelineContent(transcript) : timelineContent}
           timelineTitle={timelineTitle}
           timelineSubtitle={timelineSubtitle}
           timelineEmptyTitle={timelineEmptyTitle}

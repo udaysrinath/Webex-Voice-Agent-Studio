@@ -953,13 +953,15 @@ export function attachVoiceAgentWebSocket(server: Server): void {
   server.on("upgrade", (request, socket, head) => {
     console.log(`[WebSocket] Upgrade request received for URL: ${request.url}`);
     const url = new URL(request.url || "", `http://${request.headers.host}`);
-    if (url.pathname === "/ws/twilio-stream" || url.pathname === "/ws/twilio-monitor" || url.pathname === "/ws/voice-agent") {
+    if (url.pathname === "/ws/twilio-stream" || url.pathname === "/ws/twilio-monitor" || url.pathname === "/ws/voice-agent" || url.pathname === "/ws/deepgram") {
       wss.handleUpgrade(request, socket, head, (ws) => {
         console.log(`[WebSocket] Connection established for ${url.pathname}`);
         if (url.pathname === "/ws/twilio-stream") {
           handleTwilioSession(ws);
         } else if (url.pathname === "/ws/twilio-monitor") {
           handleTwilioMonitorSession(ws, url);
+        } else if (url.pathname === "/ws/deepgram") {
+          void handleDeepgramProxy(ws, url);
         } else {
           handleBrowserSession(ws);
         }
@@ -969,6 +971,75 @@ export function attachVoiceAgentWebSocket(server: Server): void {
       return;
     }
   });
+}
+
+async function handleDeepgramProxy(client: WebSocket, url: URL): Promise<void> {
+  const apiKey = process.env.DEEPGRAM_API_KEY;
+  if (!apiKey) {
+    client.send(JSON.stringify({ type: "proxy_error", error: "Deepgram is not configured on the server." }));
+    client.close(1011, "Deepgram is not configured");
+    return;
+  }
+
+  try {
+    const grant = await fetch("https://api.deepgram.com/v1/auth/grant", {
+      method: "POST",
+      headers: { Authorization: `Token ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ ttl_seconds: 60 }),
+    });
+    const payload = await grant.json().catch(() => ({}));
+    if (!grant.ok || typeof payload?.access_token !== "string") {
+      console.error("Deepgram proxy token grant failed:", grant.status, payload?.err_code || payload?.err_msg || "Unknown error");
+      client.send(JSON.stringify({ type: "proxy_error", error: "Could not authorize the Deepgram speech connection." }));
+      client.close(1011, "Deepgram authorization failed");
+      return;
+    }
+
+    const upstreamUrl = new URL("wss://api.deepgram.com/v1/listen");
+    url.searchParams.forEach((value, key) => upstreamUrl.searchParams.append(key, value));
+    const upstream = new WebSocket(upstreamUrl, {
+      headers: { Authorization: `Bearer ${payload.access_token}` },
+    });
+
+    client.on("message", (data, isBinary) => {
+      if (upstream.readyState === WebSocket.OPEN) upstream.send(data, { binary: isBinary });
+    });
+    client.on("close", () => {
+      if (upstream.readyState === WebSocket.OPEN || upstream.readyState === WebSocket.CONNECTING) upstream.close();
+    });
+    client.on("error", () => upstream.close());
+
+    upstream.on("open", () => {
+      if (client.readyState === WebSocket.OPEN) client.send(JSON.stringify({ type: "proxy_ready" }));
+      else upstream.close();
+    });
+    upstream.on("message", (data, isBinary) => {
+      if (client.readyState === WebSocket.OPEN) client.send(data, { binary: isBinary });
+    });
+    upstream.on("unexpected-response", (_request, response) => {
+      console.error("Deepgram upstream handshake rejected:", response.statusCode, response.headers["dg-error"] || "No provider detail");
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(JSON.stringify({ type: "proxy_error", error: "Deepgram rejected the speech connection. Check streaming access for this project." }));
+        client.close(1011, "Deepgram rejected connection");
+      }
+    });
+    upstream.on("close", (code, reason) => {
+      if (client.readyState === WebSocket.OPEN) client.close(code === 1000 ? 1000 : 1011, reason.toString().slice(0, 100));
+    });
+    upstream.on("error", (error) => {
+      console.error("Deepgram upstream socket error:", error.message);
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(JSON.stringify({ type: "proxy_error", error: "Could not connect to Deepgram streaming." }));
+        client.close(1011, "Deepgram connection failed");
+      }
+    });
+  } catch (error: any) {
+    console.error("Deepgram proxy setup failed:", error?.message || "Unknown error");
+    if (client.readyState === WebSocket.OPEN) {
+      client.send(JSON.stringify({ type: "proxy_error", error: "Could not start the Deepgram speech connection." }));
+      client.close(1011, "Deepgram setup failed");
+    }
+  }
 }
 
 function normalizeTwilioAgentId(agentId: unknown): string {

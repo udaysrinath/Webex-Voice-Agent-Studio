@@ -56,6 +56,7 @@ export default function Evaluate() {
   
   const [isRecording, setIsRecording] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
+  const [avatarCallError, setAvatarCallError] = useState<string | null>(null);
   const [autoPlayVoice, setAutoPlayVoice] = useState(true);
   const deepgramSocketRef = useRef<WebSocket | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -74,6 +75,10 @@ export default function Evaluate() {
   const avatarContainerRef = useRef<HTMLDivElement | null>(null);
   const anamClientRef = useRef<any>(null);
   const avatarStreamingRef = useRef(false);
+  const autoAvatarStartAttemptedRef = useRef(false);
+  const webexOneListenRef = useRef<(() => void) | null>(null);
+  const stopWebexOneListenRef = useRef<(() => void) | null>(null);
+  const webexOneSpeechFinalRef = useRef("");
 
   useEffect(() => {
     const onFsChange = () => setAvatarFullscreen(!!document.fullscreenElement);
@@ -184,6 +189,9 @@ export default function Evaluate() {
     enabled: !!agentId,
   });
 
+  const agentProfileId = agent ? resolveAgentProfileId(agent) : null;
+  const isWebexOneAgent = agentProfileId === "webexone-qa";
+
   const { data: evaluations = [] } = useQuery({
     queryKey: ["evaluations", agentId],
     queryFn: () => agentId ? evaluationsApi.getByAgent(agentId) : Promise.resolve([]),
@@ -213,7 +221,10 @@ export default function Evaluate() {
       }, agent.id);
 
       const { createClient, AnamEvent } = await import("@anam-ai/js-sdk");
-      const client = createClient(sessionToken);
+      // WebexOne speech is transcribed by the app and answered with its grounded
+      // reference search. Disable ANAM's independent mic/LLM input to avoid a
+      // second, ungrounded conversation running in parallel.
+      const client = createClient(sessionToken, isWebexOneAgent ? { disableInputAudio: true } : undefined);
       anamClientRef.current = client;
 
       const CHECK_TRIGGERS = [
@@ -256,7 +267,8 @@ export default function Evaluate() {
           const content: string = latestPersona.content;
           const lower = content.toLowerCase();
 
-          setChatMessages(prev => {
+          setChatMessages((prev) => {
+            if (prev.some((message) => message.role === "assistant" && message.content === content)) return prev;
             const updated = [...prev, { role: "assistant" as const, content }];
             chatMessagesRef.current = updated;
             return updated;
@@ -386,10 +398,52 @@ export default function Evaluate() {
       });
 
       if (avatarVideoRef.current) {
-        await client.streamToVideoElement(avatarVideoRef.current.id);
+        let removeConnectionListeners = () => {};
+        let cancelConnectionWait = () => {};
+        const connected = isWebexOneAgent ? new Promise<void>((resolve, reject) => {
+          const timeout = window.setTimeout(() => {
+            removeConnectionListeners();
+            reject(new Error("Timed out connecting to the video avatar. Please try again."));
+          }, 20000);
+          const onConnected = () => {
+            window.clearTimeout(timeout);
+            removeConnectionListeners();
+            resolve();
+          };
+          const onClosed = () => {
+            window.clearTimeout(timeout);
+            removeConnectionListeners();
+            reject(new Error("The video avatar connection closed before it was ready."));
+          };
+          removeConnectionListeners = () => {
+            client.removeListener(AnamEvent.CONNECTION_ESTABLISHED, onConnected);
+            client.removeListener(AnamEvent.CONNECTION_CLOSED, onClosed);
+          };
+          cancelConnectionWait = () => {
+            window.clearTimeout(timeout);
+            removeConnectionListeners();
+          };
+          client.addListener(AnamEvent.CONNECTION_ESTABLISHED, onConnected);
+          client.addListener(AnamEvent.CONNECTION_CLOSED, onClosed);
+        }) : null;
+        try {
+          await client.streamToVideoElement(avatarVideoRef.current.id);
+          if (connected) await connected;
+        } catch (error) {
+          cancelConnectionWait();
+          // The connection promise may be rejected while stream setup is also
+          // failing; observe it here so it cannot become an unhandled rejection.
+          if (connected) void connected.catch(() => {});
+          throw error;
+        }
         avatarStreamingRef.current = true;
         setAvatarStreaming(true);
         setAvatarEnabled(true);
+        if (isWebexOneAgent) {
+          const greeting = `Hi, I'm ${agent.name}. I can answer questions about WebexOne 2026. What would you like to know?`;
+          await client.talk(greeting);
+          webexOneListenRef.current?.();
+        }
       } else {
         throw new Error("Video element not ready. Please try again.");
       }
@@ -399,9 +453,10 @@ export default function Evaluate() {
     } finally {
       setAvatarLoading(false);
     }
-  }, [agent]);
+  }, [agent, isWebexOneAgent]);
 
   const stopAvatar = useCallback(async () => {
+    stopWebexOneListenRef.current?.();
     try {
       if (anamClientRef.current) {
         await anamClientRef.current.stopStreaming();
@@ -503,6 +558,16 @@ export default function Evaluate() {
 
   const [isAuthenticated, setIsAuthenticated] = useState(false);
 
+  const floatTo16BitPCM = useCallback((float32Array: Float32Array): ArrayBuffer => {
+    const buffer = new ArrayBuffer(float32Array.length * 2);
+    const view = new DataView(buffer);
+    for (let i = 0; i < float32Array.length; i++) {
+      const sample = Math.max(-1, Math.min(1, float32Array[i]));
+      view.setInt16(i * 2, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
+    }
+    return buffer;
+  }, []);
+
   const chatMutation = useMutation({
     mutationFn: ({ message, history }: { message: string; history: ChatMessage[] }) => chatApi.send({
       message,
@@ -544,22 +609,23 @@ export default function Evaluate() {
         });
       }
       const assistantMsg = response.response;
-      setChatMessages(prev => {
-        const updated = [...prev, { role: "assistant" as const, content: assistantMsg }];
-        chatMessagesRef.current = updated;
-        return updated;
-      });
+      if (!isWebexOneAgent) {
+        setChatMessages((prev) => {
+          const updated = [...prev, { role: "assistant" as const, content: assistantMsg }];
+          chatMessagesRef.current = updated;
+          return updated;
+        });
+      }
       setInputText(assistantMsg);
       setAudioUrl(null);
 
       // If avatar is active, speak the response through it; otherwise use TTS
       if (avatarStreamingRef.current && anamClientRef.current) {
-        try {
-          anamClientRef.current.talk(assistantMsg);
-        } catch (e) {
+        void anamClientRef.current.talk(assistantMsg).catch((e: unknown) => {
           console.error("Avatar talk error:", e);
+          setAvatarCallError("The avatar could not speak its response. You can retry by restarting the call.");
           if (autoPlayVoice) generateAndPlayAudio(assistantMsg);
-        }
+        });
       } else if (autoPlayVoice) {
         generateAndPlayAudio(assistantMsg);
       }
@@ -610,6 +676,115 @@ export default function Evaluate() {
       });
     },
   });
+
+  const startWebexOneListening = useCallback(async () => {
+    if (!isWebexOneAgent || deepgramSocketRef.current || !avatarStreamingRef.current) return;
+    setAvatarCallError(null);
+    setIsConnecting(true);
+    webexOneSpeechFinalRef.current = "";
+    setChatInput("");
+
+    try {
+      const keyResponse = await fetch("/api/deepgram/key");
+      if (!keyResponse.ok) throw new Error("Speech recognition is not configured. Check the server's Deepgram key.");
+      const { key } = await keyResponse.json();
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      });
+      streamRef.current = stream;
+      const audioContext = new AudioContext({ sampleRate: 16000 });
+      audioContextRef.current = audioContext;
+      const source = audioContext.createMediaStreamSource(stream);
+      const processor = audioContext.createScriptProcessor(4096, 1, 1);
+      processorRef.current = processor;
+      const socket = new WebSocket(
+        "wss://api.deepgram.com/v1/listen?model=nova-2&language=en&smart_format=true&interim_results=true&endpointing=300&utterance_end_ms=1000&vad_events=true&encoding=linear16&sample_rate=16000",
+        ["token", key],
+      );
+      deepgramSocketRef.current = socket;
+
+      const submitRecognizedTurn = () => {
+        const message = webexOneSpeechFinalRef.current.trim();
+        if (!message) return;
+        webexOneSpeechFinalRef.current = "";
+        setChatInput("");
+        const history = chatMessagesRef.current;
+        const userMessage: ChatMessage = { role: "user", content: message };
+        const updated = [...history, userMessage];
+        chatMessagesRef.current = updated;
+        setChatMessages(updated);
+        chatMutation.mutate({ message, history });
+      };
+
+      socket.onopen = () => {
+        setIsConnecting(false);
+        setIsRecording(true);
+        processor.onaudioprocess = (event) => {
+          if (socket.readyState === WebSocket.OPEN) {
+            socket.send(floatTo16BitPCM(event.inputBuffer.getChannelData(0)));
+          }
+        };
+        source.connect(processor);
+        // Keep the processor alive without playing the captured mic audio.
+        const silentGain = audioContext.createGain();
+        silentGain.gain.value = 0;
+        processor.connect(silentGain);
+        silentGain.connect(audioContext.destination);
+      };
+
+      socket.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          const transcript = data.channel?.alternatives?.[0]?.transcript || "";
+          if (transcript) {
+            if (data.is_final) {
+              webexOneSpeechFinalRef.current = `${webexOneSpeechFinalRef.current} ${transcript}`.trim();
+              setChatInput(webexOneSpeechFinalRef.current);
+            } else {
+              setChatInput(`${webexOneSpeechFinalRef.current} ${transcript}`.trim());
+            }
+          }
+          if (data.speech_final || data.type === "UtteranceEnd") submitRecognizedTurn();
+        } catch (error) {
+          console.error("Could not parse speech recognition result:", error);
+        }
+      };
+
+      socket.onerror = () => {
+        setAvatarCallError("Speech recognition disconnected. End and restart the video call to try again.");
+        setIsConnecting(false);
+      };
+      socket.onclose = () => {
+        setIsRecording(false);
+        setIsConnecting(false);
+        processor.disconnect();
+        processorRef.current = null;
+        stream.getTracks().forEach((track) => track.stop());
+        streamRef.current = null;
+        if (audioContext.state !== "closed") void audioContext.close();
+        audioContextRef.current = null;
+        if (deepgramSocketRef.current === socket) deepgramSocketRef.current = null;
+        submitRecognizedTurn();
+      };
+    } catch (error) {
+      setIsConnecting(false);
+      setAvatarCallError(error instanceof Error ? error.message : "Could not start speech recognition.");
+    }
+  }, [chatMutation, floatTo16BitPCM, isWebexOneAgent]);
+
+  useEffect(() => {
+    webexOneListenRef.current = () => { void startWebexOneListening(); };
+    stopWebexOneListenRef.current = () => {
+      const socket = deepgramSocketRef.current;
+      if (socket && socket.readyState < WebSocket.CLOSING) socket.close();
+    };
+  }, [startWebexOneListening]);
+
+  useEffect(() => {
+    if (!isWebexOneAgent || !agent || !anamStatus?.configured || autoAvatarStartAttemptedRef.current) return;
+    autoAvatarStartAttemptedRef.current = true;
+    void startAvatar();
+  }, [agent, anamStatus?.configured, isWebexOneAgent, startAvatar]);
 
   const handleSendChat = () => {
     if (!chatInput.trim() || chatMutation.isPending) return;
@@ -675,16 +850,6 @@ export default function Evaluate() {
       .catch(e => setOcrError(e.message || "Failed to extract text"))
       .finally(() => setOcrLoading(false));
   }, [ocrStream, sendOcrToAgent, closeOcrCamera]);
-
-  const floatTo16BitPCM = useCallback((float32Array: Float32Array): ArrayBuffer => {
-    const buffer = new ArrayBuffer(float32Array.length * 2);
-    const view = new DataView(buffer);
-    for (let i = 0; i < float32Array.length; i++) {
-      const s = Math.max(-1, Math.min(1, float32Array[i]));
-      view.setInt16(i * 2, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
-    }
-    return buffer;
-  }, []);
 
   const startVoiceRecording = useCallback(async () => {
     try {
@@ -931,7 +1096,6 @@ export default function Evaluate() {
         / (evaluations.length * 4)
       )
     : null;
-  const agentProfileId = resolveAgentProfileId(agent);
   const isStoreAssistant = agentProfileId === "retail";
   const isHrFeedbackAgent = agentProfileId === "hr-feedback";
   const showEvaluationControls = !isStoreAssistant && !isHrFeedbackAgent;
@@ -952,7 +1116,7 @@ export default function Evaluate() {
           onRealtimeEvent={isHrFeedbackAgent ? handleHrRealtimeEvent : handleRetailRealtimeEvent}
           onSessionStart={() => isHrFeedbackAgent ? setHrAssistState(createHrAssistState()) : setRetailAssistState(createRetailAssistState())}
           assistState={isStoreAssistant ? retailAssistState : undefined}
-          timelineContent={isHrFeedbackAgent ? <HrProgressTimeline state={hrAssistState} /> : undefined}
+          timelineContent={isHrFeedbackAgent ? (transcript) => <HrProgressTimeline state={hrAssistState} transcript={transcript} /> : undefined}
           timelineTitle={isHrFeedbackAgent ? "HR safety timeline" : undefined}
           timelineSubtitle={isHrFeedbackAgent ? "Guardrails, confirmation, and delivery" : undefined}
           timelineEmptyTitle={isHrFeedbackAgent ? "Waiting for feedback" : undefined}
@@ -1128,7 +1292,9 @@ export default function Evaluate() {
                    <div className="space-y-2 flex-1">
                       <div className="text-sm font-medium text-muted-foreground">{agent.name}</div>
                       <div className="p-4 rounded-2xl rounded-tl-none bg-white/5 border border-white/10 text-base leading-relaxed">
-                         Hi! I'm {agent.name}. Ask me anything and I'll use your Webex messages as context to provide relevant responses.
+                         {isWebexOneAgent
+                           ? `The live WebexOne conversation with ${agent.name} will appear here.`
+                           : `Hi! I'm ${agent.name}. Ask me anything and I'll use your Webex messages as context to provide relevant responses.`}
                       </div>
                    </div>
                 </div>
@@ -1172,7 +1338,7 @@ export default function Evaluate() {
               )}
            </div>
 
-           <div className="mt-4 pt-4 border-t border-white/10 space-y-4">
+           {!isWebexOneAgent && <div className="mt-4 pt-4 border-t border-white/10 space-y-4">
               <div className="flex items-center gap-3">
                  <Button
                    size="icon"
@@ -1291,14 +1457,15 @@ export default function Evaluate() {
                   <p className="text-sm text-muted-foreground line-clamp-2">{inputText}</p>
                 </div>
               )}
-           </div>
+           </div>}
         </div>
 
         <div className="lg:col-span-5 min-h-0 bg-background border-l border-white/5 flex flex-col overflow-hidden">
           <Tabs defaultValue="voice" className="flex flex-col h-full">
             <TabsList className="w-full justify-start rounded-none border-b border-white/10 bg-transparent px-4 pt-2 h-auto">
               <TabsTrigger value="voice" className="gap-2 data-[state=active]:bg-white/5 rounded-b-none border-b-2 border-transparent data-[state=active]:border-primary">
-                <Phone className="w-4 h-4" /> Voice
+                {isWebexOneAgent ? <Video className="w-4 h-4" /> : <Phone className="w-4 h-4" />}
+                {isWebexOneAgent ? "Video Avatar" : "Voice"}
               </TabsTrigger>
               <TabsTrigger value="eval" className="gap-2 data-[state=active]:bg-white/5 rounded-b-none border-b-2 border-transparent data-[state=active]:border-primary">
                 <Star className="w-4 h-4" /> Evaluate
@@ -1306,13 +1473,43 @@ export default function Evaluate() {
             </TabsList>
 
             <TabsContent value="voice" className="flex-1 overflow-hidden m-0">
-              <VoiceAgentPanel
-                agentId={agent.id}
-                agentName={agent.name}
-                systemPrompt={agent.systemPrompt || undefined}
-                voice={agent.voiceModel}
-                gender={agent.gender}
-              />
+              {isWebexOneAgent ? (
+                <div className="flex h-full flex-col justify-between p-6">
+                  <div className="space-y-4">
+                    <div className="flex items-center gap-3">
+                      <span className={`h-2.5 w-2.5 rounded-full ${avatarStreaming && isRecording ? "bg-green-400 animate-pulse" : avatarLoading || isConnecting ? "bg-amber-400 animate-pulse" : "bg-muted-foreground"}`} />
+                      <div>
+                        <p className="font-medium">{avatarLoading ? "Connecting to video avatar…" : isConnecting ? "Starting speech recognition…" : isRecording ? "Listening — speak naturally" : avatarStreaming ? "Video avatar connected" : "Video avatar stopped"}</p>
+                        <p className="text-sm text-muted-foreground">Your speech is transcribed and answered from the WebexOne reference.</p>
+                      </div>
+                    </div>
+                    {chatInput.trim() && isRecording && (
+                      <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4" aria-live="polite">
+                        <p className="mb-1 text-xs text-muted-foreground">Live transcript</p>
+                        <p>{chatInput}</p>
+                      </div>
+                    )}
+                    {(avatarError || avatarCallError) && (
+                      <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-300" role="alert">
+                        {avatarError || avatarCallError}
+                      </div>
+                    )}
+                  </div>
+                  {avatarStreaming && (
+                    <Button variant="destructive" className="mt-6 self-start" onClick={stopAvatar} data-testid="button-end-video-avatar">
+                      <VideoOff className="mr-2 h-4 w-4" /> End video call
+                    </Button>
+                  )}
+                </div>
+              ) : (
+                <VoiceAgentPanel
+                  agentId={agent.id}
+                  agentName={agent.name}
+                  systemPrompt={agent.systemPrompt || undefined}
+                  voice={agent.voiceModel}
+                  gender={agent.gender}
+                />
+              )}
             </TabsContent>
 
             <TabsContent value="eval" className="flex-1 overflow-y-auto m-0 p-8">

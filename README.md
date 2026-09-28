@@ -43,6 +43,7 @@ Open http://localhost:3000. That's it — Postgres, schema, and the app all star
 - **Voice Synthesis** - Preview agents with 6 distinct voices via OpenAI TTS
 - **Speech-to-Text** - Talk to your agent using Deepgram real-time transcription
 - **Knowledge Base** - Add URLs, upload PDFs, or write custom text to ground agent responses
+- **WebexOne Guide search** - Shared hybrid BM25 and semantic retrieval for all three avatar speech modes
 - **Chat with Function Calling** - Agents can execute actions (send messages, look up data, verify identity)
 - **Webex Integration** - Sync rooms, read messages, and send replies through your agent
 - **Voice Quality Evaluation** - Rate naturalness, clarity, intonation, and speed
@@ -78,6 +79,17 @@ graph TD
 ---
 
 ## Getting Started
+
+### Updating the WebexOne Guide reference
+
+The Guide reads the Markdown exports in `server/data/webexone/`. After changing those files, regenerate its embedding index and restart the app:
+
+```bash
+docker compose exec app node --import tsx scripts/build-webexone-index.ts
+docker compose restart app
+```
+
+Without Docker, run `npm run kb:index` after editing `.env`, then restart the server. The builder reuses embeddings for unchanged passages. The generated `server/data/webexone/embeddings.json` must be included when deploying updated sources. At call time, the app combines BM25 with semantic matches from that index. If the index is missing or stale, it logs a warning and uses BM25 results until the index is rebuilt. Query embedding failures also fall back to BM25.
 
 ### Prerequisites
 

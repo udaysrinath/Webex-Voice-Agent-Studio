@@ -9,6 +9,7 @@ import Build from "@/pages/build";
 import Evaluate from "@/pages/evaluate";
 import PstnCall from "@/pages/pstn-call";
 import DemoSetup from "@/pages/demo-setup";
+import WebexOneAvatarCall from "@/pages/webexone-avatar-call";
 import { UserProfile } from "@/components/user-profile";
 
 function Router() {
@@ -17,6 +18,7 @@ function Router() {
       <Route path="/" component={Home} />
       <Route path="/build" component={Build} />
       <Route path="/evaluate" component={Evaluate} />
+      <Route path="/webexone-avatar" component={WebexOneAvatarCall} />
       <Route path="/pstn-call" component={PstnCall} />
       <Route path="/demo-setup" component={DemoSetup} />
       <Route component={NotFound} />
