@@ -1999,11 +1999,15 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
         const matchingPersona = personas.data?.find((persona) =>
           persona.name?.toLowerCase() === agent?.name.toLowerCase(),
         );
-        avatarId ||= matchingPersona?.avatar?.id;
-        voiceId ||= matchingPersona?.voice?.id;
-        if (!avatarId || !voiceId) {
+        const avatarPersona = avatarId
+          ? personas.data?.find((persona) => persona.avatar?.id === avatarId)
+          : undefined;
+        const resolvedPersona = avatarPersona || matchingPersona;
+        avatarId ||= resolvedPersona?.avatar?.id;
+        voiceId ||= resolvedPersona?.voice?.id;
+        if (!avatarId) {
           return res.status(400).json({
-            error: `No usable ANAM avatar and voice were found for ${agent?.name}. Create a matching persona in ANAM or configure avatar and voice IDs.`,
+            error: `No ANAM avatar was found for ${agent?.name}. Create a matching persona in ANAM or set ANAM_AVATAR_ID.`,
           });
         }
       }
