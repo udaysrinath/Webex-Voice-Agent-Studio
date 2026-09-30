@@ -10,6 +10,8 @@
     "start": "NODE_ENV=production node dist/index.cjs",
     "check": "tsc",
     "kb:index": "node --env-file=.env --import tsx scripts/build-webexone-index.ts",
+    "kb:sync": "node --env-file=.env --import tsx scripts/sync-socio.ts",
+    "kb:refresh": "npm run kb:sync && npm run kb:index",
     "db:push": "npm exec --package=drizzle-kit@0.31.10 -- drizzle-kit push"
   },
   "notes": "removed framer motion dependency",

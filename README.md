@@ -91,6 +91,42 @@ docker compose restart app
 
 Without Docker, run `npm run kb:index` after editing `.env`, then restart the server. The builder reuses embeddings for unchanged passages. The generated `server/data/webexone/embeddings.json` must be included when deploying updated sources. At call time, the app combines BM25 with semantic matches from that index. If the index is missing or stale, it logs a warning and uses BM25 results until the index is rebuilt. Query embedding failures also fall back to BM25.
 
+### WebexOne knowledge sources and tools
+
+**One owner per fact.** The Guide's knowledge base is the Markdown in `server/data/webexone/`. Each kind of fact has exactly one origin, so sources never contradict each other:
+
+| Facts | Owner | Files | How it is updated |
+|-------|-------|-------|-------------------|
+| Sessions, times, rooms, speakers, topics, room capacity | Socio event platform | `socio-agenda.md`, `socio-speakers.md`, `socio-rooms.md` | `npm run kb:refresh` (generated, deterministic) |
+| Venue, FAQs, tickets, training overview, awards, sponsors, entertainment, home | webexone.com | `www.webexone.com_*.md` | Manual Markdown export, then `npm run kb:index` |
+| Live check-in and attendance numbers | Socio API at call time | none (queried live) | `get_webexone_live_stats` tool |
+
+The webexone.com and Socio files are not merged into shared documents. They are separate passages in one index, and search ranks them together. The old `agenda` and `speakers` web exports are archived in `server/data/webexone/superseded/` (ignored by the loader) because Socio replaces them and they disagreed on some details. There is no web scraper in this repo; the `www.webexone.com_*.md` files are refreshed by hand.
+
+Set the Socio credentials in `.env` (never commit the key):
+
+```bash
+SOCIO_API_KEY=sk_live_...   # server-side only, never sent to the browser
+SOCIO_EVENT_ID=60274        # WebexOne 2026
+# Optional: SOCIO_EVENT_TIMEZONE=America/Chicago  (display timezone, default shown)
+```
+
+`npm run kb:refresh` runs `kb:sync` (pull from Socio, rewrite the three `socio-*.md` files only if they changed) and `kb:index` (rebuild embeddings, reusing unchanged passages). Because output is deterministic, `git diff` shows exactly what changed in the schedule. Restart the server afterwards (`docker compose up -d --force-recreate app` if you changed `.env`).
+
+**Tools.** `server/webexone-tools.ts` is the single registry of WebexOne tools (`search_webexone_reference`, `get_webexone_live_stats`) and the shared prompt guidance. All three avatar flows use it:
+
+| Flow | How tools are called |
+|------|----------------------|
+| ANAM native | Anam transcribes, the app sends each turn to `/api/chat`, which runs a tool-calling loop over the registry |
+| ANAM + Deepgram | Deepgram transcribes, then the same `/api/chat` loop |
+| ANAM + GPT-Live | The GPT-Live session is created with the registry tools; the browser forwards each call to the server |
+
+The browser and the chat loop both execute tools through the server (`POST /api/webexone/tools/:name`, or `executeWebexOneTool` in the chat loop), so validation and secrets stay server-side. To add a tool, add one entry to the registry and one line to the guidance text. WebexOne agents only get these tools; the retail, HR, banking and messaging tools are not offered to them.
+
+`get_webexone_live_stats` returns aggregate numbers only: event-wide check-ins and, per session, room or speaker, registered, checked in now, capacity and seats left, cached for 15 seconds. Attendee records and custom-field answers (names, emails) are never queried, and `tests/server/socio/socio.test.ts` asserts this. With Groq as the chat provider (no tool calling), attendance questions fall back to a keyword-triggered lookup.
+
+Tests: `node --import tsx tests/server/socio/socio.test.ts` and `node --import tsx tests/server/webexone-tools.test.ts`.
+
 ### Prerequisites
 
 - **Docker** (only requirement for local development)
@@ -198,6 +234,8 @@ Replit stores env vars as **Secrets** (encrypted, not in source control):
 | `DATABASE_URL` | **Yes** | Neon PostgreSQL connection string |
 | `OPENAI_API_KEY` | Strongly recommended | TTS, chat, prompt generation |
 | `OPENAI_LIVE_BACKEND_MODEL` | Optional | Responses backend for the GPT-Live HR browser agent; defaults to `gpt-5.6-luna` |
+| `SOCIO_API_KEY` | For WebexOne live data | Socio event API key (KB sync and live check-in numbers) |
+| `SOCIO_EVENT_ID` | For WebexOne live data | Socio event ID for WebexOne 2026 (`60274`) |
 | `WEBEX_ACCESS_TOKEN` | For Webex features | Server-owned bot or personal access token |
 | `WEBEX_SPACE_ID` | Webex room for demo | Configured manager room used for store-manager summaries |
 | `DEEPGRAM_API_KEY` | For voice input | Speech-to-text |

@@ -17,16 +17,17 @@ type SearchChunk = KnowledgeChunk & { terms: Map<string, number>; length: number
 
 const STOP_WORDS = new Set("about after again all also an and any are as at be been before being between both but by can could did do does for from had has have how if in into is it its more most no not of on or our out over same she should so some such than that the their them then there these they this those through to too under up us was we were what which who why will with would you your webexone webex event".split(" "));
 const SOURCE_HINTS: Array<[RegExp, string[]]> = [
+  [/\b(?:room|ballroom|floor|level \d)\b|where (?:is|are|does|do|will)\b.*\b(?:session|keynote|talk|panel|speak\w*|present\w*)/i, ["socio-rooms", "socio-agenda", "socio-speakers"]],
   [/where|venue|hotel|stay|address|location|travel|airport/i, ["venue.html"]],
-  [/agenda|session|schedule|keynote|breakout|roundtable|lab/i, ["agenda.html", "faqs.html", "training.html"]],
-  [/speaker|presenter|who is/i, ["speakers.html"]],
+  [/agenda|session|schedule|keynote|breakout|roundtable|lab/i, ["socio-agenda", "faqs.html", "training.html"]],
+  [/speaker|presenter|who is/i, ["socio-speakers"]],
   [/ticket|register|registration|price|pass/i, ["tickets.html", "faqs.html"]],
   [/training|class|technical|lab/i, ["training.html", "faqs.html"]],
   [/award|nomination/i, ["awards.html"]],
   [/sponsor|sponsorship/i, ["sponsorships.html"]],
   [/entertainment|music|performer/i, ["entertainment.html"]],
   [/faq|app|download|access|login|sign in/i, ["faqs.html"]],
-  [/when|date|time|day/i, ["faqs.html", "agenda.html"]],
+  [/when|date|time|day/i, ["faqs.html", "socio-agenda"]],
 ];
 
 function tokenize(value: string): string[] {
@@ -85,7 +86,6 @@ export function loadWebexOneSource(): { chunks: KnowledgeChunk[]; sourceHash: st
       if (source === "faqs.html" && text.endsWith("?") && text.length < 150) {
         flush(); question = text; continue;
       }
-      if (source === "agenda.html" && /^(Technical Training Class|Technical Training Lab|Keynote|Breakout|Roundtable|Quick Takes)$/i.test(text)) flush();
       if (pending && pending.length + text.length + 1 > 1050) flush();
       pending += `${pending ? " " : ""}${text}`;
     }

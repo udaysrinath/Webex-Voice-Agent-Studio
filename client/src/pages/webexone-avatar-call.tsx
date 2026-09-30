@@ -92,16 +92,16 @@ export default function WebexOneAvatarCall() {
     }
   }, [agent]);
 
-  const searchWebexOneReference = useCallback(async (query: string): Promise<string> => {
+  const runWebexOneTool = useCallback(async (name: string, args: Record<string, unknown>): Promise<string> => {
     if (!agent) throw new Error("WebexOne agent is unavailable.");
-    const response = await fetch("/api/webexone/knowledge/search", {
+    const response = await fetch(`/api/webexone/tools/${encodeURIComponent(name)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ agentId: agent.id, query: query.slice(0, 500) }),
+      body: JSON.stringify({ agentId: agent.id, arguments: args }),
     });
     const body = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(body.error || "WebexOne reference search failed.");
-    return body.excerpts || "No relevant WebexOne reference excerpts were found. Do not guess; tell the attendee this detail is not in the available reference.";
+    if (!response.ok) throw new Error(body.error || "The WebexOne tool failed.");
+    return body.result || "No result was returned. Do not guess.";
   }, [agent]);
 
   const startDeepgram = useCallback(async () => {
@@ -270,10 +270,7 @@ export default function WebexOneAvatarCall() {
               const task = (async () => {
                 let output: string;
                 try {
-                  if (nested.item.name !== "search_webexone_reference") throw new Error("Unknown WebexOne tool.");
-                  const args = JSON.parse(nested.item.arguments || "{}");
-                  if (typeof args.query !== "string") throw new Error("A search query is required.");
-                  output = await searchWebexOneReference(args.query);
+                  output = await runWebexOneTool(String(nested.item.name), JSON.parse(nested.item.arguments || "{}"));
                 } catch (cause) {
                   output = `Reference lookup failed: ${cause instanceof Error ? cause.message : "Unknown error"}. Do not invent an answer.`;
                 }
@@ -313,7 +310,7 @@ export default function WebexOneAvatarCall() {
     await waitForIceGathering(peer);
     const answerSdp = await anamApi.createGPTLiveSession(agent?.id || 0, peer.localDescription?.sdp || "");
     await peer.setRemoteDescription({ type: "answer", sdp: answerSdp });
-  }, [agent, searchWebexOneReference]);
+  }, [agent, runWebexOneTool]);
 
   const stopCall = useCallback(async () => {
     stoppingRef.current = true;
