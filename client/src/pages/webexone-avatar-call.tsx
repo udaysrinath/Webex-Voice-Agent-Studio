@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { agentsApi, anamApi, chatApi, type AnamVoiceMode, type ChatMessage } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { resolveAgentProfileId } from "@shared/agent-profiles";
+import { AVATAR_PCM_WORKLET_SOURCE } from "@/lib/avatar-pcm-worklet";
 
 type VoiceMode = AnamVoiceMode;
 
@@ -197,37 +198,17 @@ export default function WebexOneAvatarCall() {
     mic.getAudioTracks().forEach((track) => peer.addTrack(track, mic));
 
     peer.ontrack = async (event) => {
-      const context = new AudioContext({ sampleRate: 48000 });
+      // Browser resampling replaces the old three-sample averaging filter.
+      const context = new AudioContext({ sampleRate: 16000 });
       passthroughContextRef.current = context;
-      const workletSource = `class AnamPcm16k extends AudioWorkletProcessor {
-        constructor() { super(); this.leftover = new Float32Array(0); }
-        process(inputs, outputs) {
-          const input = inputs[0] && inputs[0][0];
-          const output = outputs[0] && outputs[0][0];
-          if (output) output.fill(0);
-          if (!input) return true;
-          const samples = new Float32Array(this.leftover.length + input.length);
-          samples.set(this.leftover); samples.set(input, this.leftover.length);
-          const count = Math.floor(samples.length / 3);
-          const pcm = new ArrayBuffer(count * 2); const view = new DataView(pcm);
-          for (let i = 0; i < count; i++) {
-            const value = Math.max(-1, Math.min(1, (samples[i * 3] + samples[i * 3 + 1] + samples[i * 3 + 2]) / 3));
-            view.setInt16(i * 2, value < 0 ? value * 0x8000 : value * 0x7fff, true);
-          }
-          this.leftover = samples.slice(count * 3);
-          if (count) this.port.postMessage(pcm, [pcm]);
-          return true;
-        }
-      }
-      registerProcessor("anam-pcm16k", AnamPcm16k);`;
-      const moduleUrl = URL.createObjectURL(new Blob([workletSource], { type: "text/javascript" }));
+      const moduleUrl = URL.createObjectURL(new Blob([AVATAR_PCM_WORKLET_SOURCE], { type: "text/javascript" }));
       try {
         await context.audioWorklet.addModule(moduleUrl);
       } finally {
         URL.revokeObjectURL(moduleUrl);
       }
       const source = context.createMediaStreamSource(event.streams[0]);
-      const processor = new AudioWorkletNode(context, "anam-pcm16k", { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1] });
+      const processor = new AudioWorkletNode(context, "avatar-pcm", { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1] });
       const silent = context.createGain();
       silent.gain.value = 0;
       passthroughProcessorRef.current = processor;
