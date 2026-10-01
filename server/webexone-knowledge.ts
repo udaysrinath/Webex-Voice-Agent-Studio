@@ -205,3 +205,26 @@ export async function findWebexOneExcerpts(query: string, limit = 5): Promise<st
     .map((item) => item.chunk)
     .map((chunk) => `[Source: ${chunk.title} | ${chunk.section} | ${chunk.url}]\n${chunk.text}`).join("\n\n");
 }
+
+/** Cosine floor below which a spoken turn is treated as unrelated background talk. Deliberately low. */
+export const WEBEXONE_RELEVANCE_MIN = Number(process.env.WEBEXONE_RELEVANCE_MIN) || 0.25;
+
+/**
+ * Cheap on-topic check for noisy microphones: the best semantic match against the WebexOne passages.
+ * Short follow-ups ("who is he?") are also scored together with the previous user turn. Fails open
+ * (relevant) whenever semantic search is unavailable.
+ */
+export async function checkWebexOneRelevance(query: string, previousUserTurn?: string): Promise<{ relevant: boolean; score: number | null }> {
+  const index = getIndex();
+  if (!index.semanticReady) return { relevant: true, score: null };
+  let best: number | null = null;
+  for (const text of [query, previousUserTurn ? `${previousUserTurn} ${query}` : ""]) {
+    if (!text.trim()) continue;
+    const vector = await embedQuery(text);
+    if (!vector) return { relevant: true, score: null };
+    const score = index.chunks.reduce((max, chunk) => Math.max(max, similarity(vector, chunk.vector!)), 0);
+    best = Math.max(best ?? 0, score);
+    if (best >= WEBEXONE_RELEVANCE_MIN) break;
+  }
+  return { relevant: best === null || best >= WEBEXONE_RELEVANCE_MIN, score: best };
+}

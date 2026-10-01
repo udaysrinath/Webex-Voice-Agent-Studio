@@ -1,12 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useSearch } from "wouter";
 import { useQuery } from "@tanstack/react-query";
+import { calculateAdaptiveMicThreshold, MIC_NOISE_WINDOW_SIZE } from "@/lib/microphone-noise-gate";
 import { agentsApi, anamApi, chatApi, type AnamVoiceMode, type ChatMessage } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { resolveAgentProfileId } from "@shared/agent-profiles";
 import { AVATAR_PCM_WORKLET_SOURCE } from "@/lib/avatar-pcm-worklet";
 
 type VoiceMode = AnamVoiceMode;
+
+const MAX_AUTO_RECONNECTS = 3;
+const DEEPGRAM_GATE_HANGOVER_MS = 600;
+const MIN_TURN_CONFIDENCE = 0.5;
+const MIN_SHORT_TURN_CONFIDENCE = 0.8;
+const DEEPGRAM_KEYTERMS = ["WebexOne", "Webex", "Cisco", "Webex AI Agent", "Webex Contact Center", "Webex Calling"];
 
 async function waitForIceGathering(peer: RTCPeerConnection): Promise<void> {
   if (peer.iceGatheringState === "complete") return;
@@ -46,6 +53,12 @@ export default function WebexOneAvatarCall() {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const anamClientRef = useRef<any>(null);
+  const closeReasonRef = useRef<string | null>(null);
+  const reconnectAttemptsRef = useRef(0);
+  // True while silently re-establishing a session ANAM closed: keep history, skip the greeting.
+  const resumingRef = useRef(false);
+  const skipGreetingRef = useRef(false);
+  const startCallRef = useRef<() => Promise<void>>(async () => {});
   const deepgramSocketRef = useRef<WebSocket | null>(null);
   const micStreamRef = useRef<MediaStream | null>(null);
   const micContextRef = useRef<AudioContext | null>(null);
@@ -84,12 +97,20 @@ export default function WebexOneAvatarCall() {
     const history = conversationRef.current;
     conversationRef.current = [...history, { role: "user", content: message }];
     try {
-      const answer = await chatApi.send({ message, history, systemPrompt: agent.systemPrompt, agentId: agent.id });
+      const answer = await chatApi.send({ message, history, systemPrompt: agent.systemPrompt, agentId: agent.id, ignoreOffTopic: true });
       if (stoppingRef.current) return;
+      if (answer.ignored) {
+        // Unrelated background talk: stay silent and keep it out of the conversation history.
+        conversationRef.current = history;
+        return;
+      }
       conversationRef.current = [...conversationRef.current, { role: "assistant", content: answer.response }];
-      await anamClientRef.current?.talk(answer.response);
+      const client = anamClientRef.current;
+      if (!client) return;
+      await client.talk(answer.response);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not get an answer from the assistant.");
+      const message = cause instanceof Error ? cause.message : "Could not get an answer from the assistant.";
+      setError(/peer connection is null/i.test(message) && closeReasonRef.current ? closeReasonRef.current : message);
     }
   }, [agent]);
 
@@ -116,26 +137,48 @@ export default function WebexOneAvatarCall() {
     const silent = context.createGain();
     silent.gain.value = 0;
     const params = new URLSearchParams({
-      model: "nova-2",
+      model: "nova-3",
       language: "en",
       smart_format: "true",
       interim_results: "true",
-      endpointing: "300",
-      utterance_end_ms: "1000",
+      // Longer endpointing avoids cutting turns on short noise bursts and pauses.
+      endpointing: "500",
+      utterance_end_ms: "1200",
       vad_events: "true",
       encoding: "linear16",
       // Browsers may not honor the requested AudioContext rate. Tell Deepgram
       // the actual PCM rate so speech speed/pitch is never misinterpreted.
       sample_rate: String(context.sampleRate),
     });
+    DEEPGRAM_KEYTERMS.forEach((term) => params.append("keyterm", term));
     // Keep Deepgram credentials and token-based auth on the server. This
     // same-origin socket also avoids browser-specific third-party WS failures.
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const socket = new WebSocket(`${protocol}//${window.location.host}/ws/deepgram?${params}`);
     deepgramSocketRef.current = socket;
     let deepgramReady = false;
+    // Adaptive energy gate: while no speech-level energy is present, send silence instead of
+    // background noise. Silence (not skipping) keeps stream timing intact for Deepgram endpointing.
+    const recentRms: number[] = [];
+    let speechActiveUntil = 0;
+    let turnConfidenceSum = 0;
+    let turnConfidenceCount = 0;
     processor.onaudioprocess = (event) => {
-      if (deepgramReady && socket.readyState === WebSocket.OPEN) socket.send(floatToPcm16(event.inputBuffer.getChannelData(0)));
+      if (!deepgramReady || socket.readyState !== WebSocket.OPEN) return;
+      const input = event.inputBuffer.getChannelData(0);
+      let sumSquares = 0;
+      let peak = 0;
+      for (let i = 0; i < input.length; i += 1) {
+        sumSquares += input[i] * input[i];
+        peak = Math.max(peak, Math.abs(input[i]));
+      }
+      const rms = Math.sqrt(sumSquares / Math.max(1, input.length));
+      recentRms.push(rms);
+      if (recentRms.length > MIC_NOISE_WINDOW_SIZE) recentRms.shift();
+      const threshold = calculateAdaptiveMicThreshold(recentRms);
+      const now = Date.now();
+      if (rms >= threshold || peak >= threshold * 3) speechActiveUntil = now + DEEPGRAM_GATE_HANGOVER_MS;
+      socket.send(now < speechActiveUntil ? floatToPcm16(input) : new ArrayBuffer(input.length * 2));
     };
     source.connect(processor);
     processor.connect(silent);
@@ -152,11 +195,25 @@ export default function WebexOneAvatarCall() {
           setError(data.error || "Could not connect to Deepgram streaming.");
           return;
         }
-        const transcript = data.channel?.alternatives?.[0]?.transcript || "";
-        if (transcript && data.is_final) finalTranscriptRef.current = `${finalTranscriptRef.current} ${transcript}`.trim();
+        const alternative = data.channel?.alternatives?.[0];
+        const transcript = alternative?.transcript || "";
+        if (transcript && data.is_final) {
+          finalTranscriptRef.current = `${finalTranscriptRef.current} ${transcript}`.trim();
+          if (typeof alternative?.confidence === "number") {
+            turnConfidenceSum += alternative.confidence;
+            turnConfidenceCount += 1;
+          }
+        }
         if (data.speech_final || data.type === "UtteranceEnd") {
           const turn = finalTranscriptRef.current;
+          const confidence = turnConfidenceCount ? turnConfidenceSum / turnConfidenceCount : 1;
           finalTranscriptRef.current = "";
+          turnConfidenceSum = 0;
+          turnConfidenceCount = 0;
+          // Background chatter tends to come back as short, low-confidence fragments.
+          const words = turn.split(/\s+/).filter(Boolean).length;
+          if (words < 2 && confidence < MIN_SHORT_TURN_CONFIDENCE) return;
+          if (confidence < MIN_TURN_CONFIDENCE) return;
           void sendRecognizedTurn(turn);
         }
       } catch (cause) {
@@ -237,7 +294,7 @@ export default function WebexOneAvatarCall() {
     events.onmessage = (event) => {
       try {
         const message = JSON.parse(event.data);
-        if (message.type === "session.started") {
+        if (message.type === "session.started" && !skipGreetingRef.current) {
           events.send(JSON.stringify({ type: "response.create", event_id: `webexone_greeting_${Date.now()}` }));
         }
         if (message.type === "response.event" && message.delegation_id) {
@@ -330,7 +387,10 @@ export default function WebexOneAvatarCall() {
     setIsStarting(true);
     setError(null);
     stoppingRef.current = false;
-    conversationRef.current = [];
+    closeReasonRef.current = null;
+    const resuming = resumingRef.current;
+    resumingRef.current = false;
+    if (!resuming) conversationRef.current = [];
     lastAnamUserMessageIdRef.current = null;
     try {
       // Request fullscreen synchronously in the click gesture, before network work.
@@ -372,13 +432,31 @@ export default function WebexOneAvatarCall() {
         client.removeListener(AnamEvent.CONNECTION_CLOSED, onClosed);
       }
       setIsLive(true);
+      // The server can close the session after it was established (plan session limit, idle timeout, etc.).
+      // Record why, so a late talk() failure reports the real cause instead of "peer connection is null".
+      client.addListener(AnamEvent.CONNECTION_CLOSED, (code: unknown, reason?: string) => {
+        if (stoppingRef.current || anamClientRef.current !== client) return;
+        console.error("ANAM connection closed", code, reason);
+        closeReasonRef.current = `ANAM ended the avatar session${reason ? `: ${reason}` : ""}${code ? ` (${String(code)})` : ""}.`;
+        void stopCall().then(() => {
+          if (reconnectAttemptsRef.current >= MAX_AUTO_RECONNECTS) {
+            setError(closeReasonRef.current);
+            return;
+          }
+          reconnectAttemptsRef.current += 1;
+          resumingRef.current = true;
+          window.setTimeout(() => void startCallRef.current(), 500);
+        });
+      });
 
+      const greeting = `Hi, I'm ${agent.name}. What would you like to know about WebexOne 2026?`;
       if (mode === "anam-native") {
-        await client.talk(`Hi, I'm ${agent.name}. What would you like to know about WebexOne 2026?`);
+        if (!resuming) await client.talk(greeting);
       } else if (mode === "deepgram-anam") {
         await startDeepgram();
-        await client.talk(`Hi, I'm ${agent.name}. What would you like to know about WebexOne 2026?`);
+        if (!resuming) await client.talk(greeting);
       } else if (mode === "gpt-live-anam") {
+        skipGreetingRef.current = resuming;
         await startRealtimePassthrough(client);
       }
     } catch (cause) {
@@ -395,6 +473,8 @@ export default function WebexOneAvatarCall() {
       setIsStarting(false);
     }
   }, [agent, isLive, isStarting, mode, sendRecognizedTurn, startDeepgram, startRealtimePassthrough, stopCall]);
+
+  startCallRef.current = startCall;
 
   useEffect(() => {
     if (!agent || resolveAgentProfileId(agent) !== "webexone-qa" || hasStartedRef.current) return;
