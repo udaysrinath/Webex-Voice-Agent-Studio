@@ -82,26 +82,29 @@ graph TD
 
 ### Updating the WebexOne Guide reference
 
-The Guide reads the Markdown exports in `server/data/webexone/`. After changing those files, regenerate its embedding index and restart the app:
+The Guide answers from one consolidated knowledge base in `server/data/webexone/kb/` (`cards.json` and `vectors.json`, loaded by `server/webexone-kb.ts`). It is generated from every source by:
 
 ```bash
-docker compose exec app node --import tsx scripts/build-webexone-index.ts
-docker compose restart app
+npm run kb:build   # needs OPENAI_API_KEY; reuses cached LLM/embedding results for unchanged text
+npm run kb:eval    # retrieval quality against server/data/webexone/kb/golden.json (and heldout.json)
 ```
 
-Without Docker, run `npm run kb:index` after editing `.env`, then restart the server. The builder reuses embeddings for unchanged passages. The generated `server/data/webexone/embeddings.json` must be included when deploying updated sources. At call time, the app combines BM25 with semantic matches from that index. If the index is missing or stale, it logs a warning and uses BM25 results until the index is rebuilt. Query embedding failures also fall back to BM25.
+Restart the app afterwards. Both generated files must be deployed with the code. At call time the retriever combines BM25, semantic similarity over each card's spoken-question aliases and content, exact name/code matches, and day/room facets. If query embedding fails it falls back to BM25.
 
-### WebexOne knowledge sources and tools
+### How the sources are combined
 
-**One owner per fact.** The Guide's knowledge base is the Markdown in `server/data/webexone/`. Each kind of fact has exactly one origin, so sources never contradict each other:
+The event data is frozen, so nothing here is "kept fresh". Instead, each kind of fact has one authority and the other sources only enrich it:
 
-| Facts | Owner | Files | How it is updated |
-|-------|-------|-------|-------------------|
-| Sessions, times, rooms, speakers, topics, room capacity | Socio event platform | `socio-agenda.md`, `socio-speakers.md`, `socio-rooms.md` | `npm run kb:refresh` (generated, deterministic) |
-| Venue, FAQs, tickets, training overview, awards, sponsors, entertainment, home | webexone.com | `www.webexone.com_*.md` | Manual Markdown export, then `npm run kb:index` |
-| Live check-in and attendance numbers | Socio API at call time | none (queried live) | `get_webexone_live_stats` tool |
+| Facts | Authority | Source files | Treatment |
+|-------|-----------|--------------|-----------|
+| Sessions, times, rooms, speakers, topics, capacity | Socio event platform (`raw/socio.json`) | one export via `npm run kb:socio` | Structured cards, no LLM: one card per session (all deliveries together), speaker and room. Enriched with training session codes/levels/lengths and speaker categories from OneDrive. |
+| Meals, registration, activations, logistics | Socio activities + curated OneDrive documents | `onedrive/event-info-activations.md`, `things-to-do-each-day.md` | Overlapping passages are consolidated, then merged into one authoritative card per topic. |
+| FAQs, venue, training page, awards, sponsors, products, devices, launches | OneDrive documents (Oct 1) | `server/data/webexone/onedrive/*.md` (converted from the Word files with `scripts/docx_to_md.py`) | Kept verbatim where they are already agent-ready. |
+| Older website text | webexone.com crawl | `www.webexone.com_*.md` | Lowest precedence. Duplicates of OneDrive text are dropped; stale or conflicting text loses. |
 
-The webexone.com and Socio files are not merged into shared documents. They are separate passages in one index, and search ranks them together. The old `agenda` and `speakers` web exports are archived in `server/data/webexone/superseded/` (ignored by the loader) because Socio replaces them and they disagreed on some details. There is no web scraper in this repo; the `www.webexone.com_*.md` files are refreshed by hand.
+The build (`scripts/build-webexone-kb.ts`) does, in order: structured cards; prose units; embedding-based clustering of overlapping units with an LLM merge (every merge is fact-checked, so no time, room, price, phone number or URL is silently dropped); a topic stage that writes one card per narrow logistics topic; spoken-question aliases; embeddings; and a coverage audit that compares the facts in every source file with the facts in the final cards. `kb/REPORT.md` lists every conflict between sources, what was kept, and any audit gaps. Agent-instruction sections inside the documents ("how the concierge should use this guide") are set aside in `kb/guidance.json`, not indexed as facts.
+
+Live check-in and attendance numbers still come from the Socio API at call time (`get_webexone_live_stats`).
 
 Set the Socio credentials in `.env` (never commit the key):
 
@@ -110,8 +113,6 @@ SOCIO_API_KEY=sk_live_...   # server-side only, never sent to the browser
 SOCIO_EVENT_ID=60274        # WebexOne 2026
 # Optional: SOCIO_EVENT_TIMEZONE=America/Chicago  (display timezone, default shown)
 ```
-
-`npm run kb:refresh` runs `kb:sync` (pull from Socio, rewrite the three `socio-*.md` files only if they changed) and `kb:index` (rebuild embeddings, reusing unchanged passages). Because output is deterministic, `git diff` shows exactly what changed in the schedule. Restart the server afterwards (`docker compose up -d --force-recreate app` if you changed `.env`).
 
 **Tools.** `server/webexone-tools.ts` is the single registry of WebexOne tools (`search_webexone_reference`, `get_webexone_live_stats`) and the shared prompt guidance. All three avatar flows use it:
 
@@ -125,7 +126,7 @@ The browser and the chat loop both execute tools through the server (`POST /api/
 
 `get_webexone_live_stats` returns aggregate numbers only: event-wide check-ins and, per session, room or speaker, registered, checked in now, capacity and seats left, cached for 15 seconds. Attendee records and custom-field answers (names, emails) are never queried, and `tests/server/socio/socio.test.ts` asserts this. With Groq as the chat provider (no tool calling), attendance questions fall back to a keyword-triggered lookup.
 
-Tests: `node --import tsx tests/server/socio/socio.test.ts` and `node --import tsx tests/server/webexone-tools.test.ts`.
+Tests: `node --import tsx tests/server/socio/socio.test.ts` and `node --import tsx tests/server/webexone-tools.test.ts`; retrieval quality: `npm run kb:eval`.
 
 ### Prerequisites
 

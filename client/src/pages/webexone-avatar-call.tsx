@@ -52,6 +52,11 @@ export default function WebexOneAvatarCall() {
   const [inFullscreen, setInFullscreen] = useState(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  // ?debug=1 shows a device diagnostics panel (video size/drops, audio packet timing, OpenAI link stats).
+  const debugEnabled = params.get("debug") === "1";
+  const audioStatsRef = useRef({ packets: 0, lastAt: 0, maxGapMs: 0, gapsOver60: 0 });
+  const [debugText, setDebugText] = useState("");
+  const [animMuted, setAnimMuted] = useState(false);
   const anamClientRef = useRef<any>(null);
   const closeReasonRef = useRef<string | null>(null);
   const reconnectAttemptsRef = useRef(0);
@@ -271,6 +276,15 @@ export default function WebexOneAvatarCall() {
       passthroughProcessorRef.current = processor;
       passthroughGainRef.current = silent;
       processor.port.onmessage = (message: MessageEvent<ArrayBuffer>) => {
+        const stats = audioStatsRef.current;
+        const now = performance.now();
+        if (stats.lastAt) {
+          const gap = now - stats.lastAt;
+          stats.maxGapMs = Math.max(stats.maxGapMs, gap);
+          if (gap > 60) stats.gapsOver60 += 1;
+        }
+        stats.lastAt = now;
+        stats.packets += 1;
         if (!stoppingRef.current && message.data.byteLength) audioInputRef.current?.sendAudioChunk(message.data);
       };
       source.connect(processor);
@@ -493,6 +507,34 @@ export default function WebexOneAvatarCall() {
     anamClientRef.current?.stopStreaming().catch(() => {});
   }, []);
 
+  useEffect(() => {
+    if (!debugEnabled || !isLive) return;
+    const timer = window.setInterval(async () => {
+      const video = videoRef.current;
+      const quality = video?.getVideoPlaybackQuality?.();
+      const audio = audioStatsRef.current;
+      const context = passthroughContextRef.current;
+      let openai = "n/a";
+      try {
+        const reports = await realtimePeerRef.current?.getStats();
+        reports?.forEach((report) => {
+          if (report.type === "inbound-rtp" && report.kind === "audio") {
+            openai = `jitter ${(report.jitter * 1000).toFixed(0)}ms lost ${report.packetsLost} concealed ${report.concealedSamples}/${report.totalSamplesReceived}`;
+          }
+        });
+      } catch {}
+      setDebugText([
+        `mode ${mode}`,
+        `video ${video?.videoWidth}x${video?.videoHeight} dropped ${quality?.droppedVideoFrames}/${quality?.totalVideoFrames} muted ${video?.muted}`,
+        `ctx ${context?.state} rate ${context?.sampleRate} baseLat ${((context?.baseLatency || 0) * 1000).toFixed(0)}ms`,
+        `pcm packets ${audio.packets} maxGap ${audio.maxGapMs.toFixed(0)}ms gaps>60ms ${audio.gapsOver60}`,
+        `openai ${openai}`,
+        `ua ${navigator.userAgent.slice(0, 90)}`,
+      ].join("\n"));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [debugEnabled, isLive, mode]);
+
   if (!Number.isInteger(agentId) || agentId < 1) {
     return <div className="grid min-h-screen place-items-center bg-black p-6 text-white">Missing agent ID.</div>;
   }
@@ -532,6 +574,16 @@ export default function WebexOneAvatarCall() {
         <Button variant="destructive" onClick={() => void stopCall()} className={`fixed bottom-6 left-1/2 z-[101] -translate-x-1/2 ${inFullscreen ? "" : ""}`}>
           End call
         </Button>
+      )}
+      {debugEnabled && isLive && (
+        <div className="fixed left-2 top-2 z-[102] max-w-[90vw] space-y-2 rounded bg-black/80 p-2 font-mono text-xs text-green-300">
+          <pre className="whitespace-pre-wrap">{debugText}</pre>
+          <Button size="sm" variant="outline" onClick={() => {
+            const next = !animMuted;
+            if (videoRef.current) videoRef.current.muted = next;
+            setAnimMuted(next);
+          }}>{animMuted ? "Unmute avatar video" : "Mute avatar video (buzz test)"}</Button>
+        </div>
       )}
       {isLive && error && <p role="alert" className="fixed left-1/2 top-4 z-[101] -translate-x-1/2 rounded-lg bg-red-950/90 px-4 py-2 text-sm text-red-100">{error}</p>}
     </main>

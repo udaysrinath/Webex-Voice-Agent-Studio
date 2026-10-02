@@ -2,48 +2,12 @@ import assert from "node:assert/strict";
 
 import { clearSocioCache, htmlToText, socioPaginate } from "../../../server/socio/client";
 import { getWebexOneLiveStats, LIVE_INTENT } from "../../../server/socio/live";
-import { renderAgendaMarkdown, renderRoomsMarkdown, renderSpeakersMarkdown, type SnapshotSession } from "../../../server/socio/snapshot";
-import { findWebexOneExcerpts } from "../../../server/webexone-knowledge";
+import { retrieveWebexOne } from "../../../server/webexone-kb";
 
-const ids = { speakers: 500985, topics: 500984 };
 const TZ = "America/Chicago";
 const start = Date.UTC(2026, 9, 7, 14, 0) / 1000; // 9:00 AM CDT on Oct 7, 2026
 
-const sessions: SnapshotSession[] = [
-  {
-    id: 1, name: "Opening Keynote", overview: "<div>Hear from <strong>leaders</strong> &amp; partners.</div>", startTime: start, endTime: start + 5400,
-    region: { name: "Manchester Ballroom, Level 5" }, tracks: [{ name: "Keynote" }], component: { name: "Agenda" },
-    items: [{ id: 10, name: "Tom Brady", componentId: 500985 }, { id: 20, name: "AI", componentId: 500984 }],
-  },
-  {
-    id: 2, name: "Hands-on Lab", overview: null, startTime: start + 86400, endTime: start + 90000,
-    region: { name: "Violet, Level 4" }, tracks: null, component: null, items: null,
-  },
-];
-
-const agenda = renderAgendaMarkdown(sessions, ids, TZ);
-assert.match(agenda, /^## Wednesday, October 7$/m);
-assert.match(agenda, /^## Thursday, October 8$/m);
-assert.match(agenda, /- When: Wednesday, October 7, 9:00 AM CDT to 10:30 AM CDT/);
-assert.match(agenda, /- Room: Manchester Ballroom, Level 5/);
-assert.match(agenda, /- Speakers: Tom Brady/);
-assert.match(agenda, /- Topics: AI/);
-assert.match(agenda, /- Description: Hear from leaders & partners\./);
-assert.equal(renderAgendaMarkdown(sessions, ids, TZ), agenda, "rendering must be deterministic");
-
-const speakerMarkdown = renderSpeakersMarkdown(
-  [{ id: 10, name: "Tom Brady", info: "Champion", overview: null }, { id: 11, name: "Ada Lovelace", info: null, overview: null }],
-  sessions, ids, TZ,
-);
-assert.match(speakerMarkdown, /### Tom Brady\n- Title: Champion\n- Sessions: Opening Keynote \(Wednesday, October 7, 9:00 AM CDT, Manchester Ballroom, Level 5\)/);
-assert.match(speakerMarkdown, /### Ada Lovelace\n- Sessions: none listed yet/);
-assert.ok(speakerMarkdown.indexOf("### Ada Lovelace") < speakerMarkdown.indexOf("### Tom Brady"), "speakers sorted by name");
 assert.equal(htmlToText("<p>a&nbsp;b</p><p>c</p>"), "a b c");
-
-const roomsMarkdown = renderRoomsMarkdown([{ name: "Violet, Level 4", maxCapacity: 40 }, { name: "Empty Room", maxCapacity: null }], sessions, TZ);
-assert.match(roomsMarkdown, /### Manchester Ballroom, Level 5\n- Wednesday, October 7, 9:00 AM CDT to 10:30 AM CDT: Opening Keynote/);
-assert.match(roomsMarkdown, /### Violet, Level 4\n- Capacity: 40\n- Thursday, October 8, 9:00 AM CDT to 10:00 AM CDT: Hands-on Lab/);
-assert.match(roomsMarkdown, /### Empty Room\n- No sessions scheduled/);
 
 assert.equal(LIVE_INTENT.test("How many people are checked in right now?"), true);
 assert.equal(LIVE_INTENT.test("Is the opening keynote full?"), true);
@@ -124,11 +88,12 @@ globalThis.fetch = (async (_url: unknown, init?: { body?: string }) => {
 assert.deepEqual(await socioPaginate<{ c: any }, number>("query($eventId:Int!,$first:Int,$cursor:String){c}", (data) => data.c), [1, 2]);
 assert.deepEqual(cursors, [null, "next"]);
 
-// The generated knowledge base answers room questions offline (keyword search, no embeddings key needed)
+// The consolidated knowledge base answers room questions offline (lexical ranking, no embeddings key needed)
 delete process.env.OPENAI_API_KEY;
-const excerpts = await findWebexOneExcerpts("Which room is the Tom Brady closing keynote in?");
-assert.match(excerpts, /Tom Brady/);
-assert.match(excerpts, /Room: [^\n|]*Ballroom/);
-assert.doesNotMatch(excerpts, /Luminary Fireside Chat/, "the superseded scraped agenda must not be indexed alongside Socio");
+const closingKeynote = await retrieveWebexOne("Which room is the Tom Brady closing keynote in?");
+assert.match(closingKeynote.text, /Tom Brady/);
+assert.match(closingKeynote.text, /Manchester Ballroom/);
+const lunch = await retrieveWebexOne("Where is lunch served?");
+assert.match(lunch.text, /Pool Terrace & Palm Court/);
 
 console.info("socio tests passed");
