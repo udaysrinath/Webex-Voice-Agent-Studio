@@ -252,6 +252,14 @@ export default function WebexOneAvatarCall() {
       // Browser resampling replaces the old three-sample averaging filter.
       const context = new AudioContext({ sampleRate: 16000 });
       passthroughContextRef.current = context;
+      // A page that starts without a click can leave the audio context suspended, which silences everything sent to the avatar.
+      void fetch("/api/webexone/live-log", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind: "audio-context", detail: { state: context.state, sampleRate: context.sampleRate } }), keepalive: true }).catch(() => {});
+      if (context.state === "suspended") {
+        void context.resume().catch(() => {});
+        const resume = () => { void context.resume().catch(() => {}); };
+        window.addEventListener("pointerdown", resume, { once: true });
+        window.addEventListener("keydown", resume, { once: true });
+      }
       const moduleUrl = URL.createObjectURL(new Blob([AVATAR_PCM_WORKLET_SOURCE], { type: "text/javascript" }));
       try {
         await context.audioWorklet.addModule(moduleUrl);
@@ -295,6 +303,30 @@ export default function WebexOneAvatarCall() {
     let unansweredTimer: number | undefined;
     let spokenBuffer = "";
     let spokenTimer: number | undefined;
+    let sawSessionStarted = false;
+    let greeted = false;
+    let greetingAcknowledged = false;
+    let channelOpenedAt = performance.now();
+    // GPT-Live opens the conversation when told to (Responses-only commands such as response.create are not available).
+    const greet = (reason: string) => {
+      if (greeted || skipGreetingRef.current) return;
+      greeted = true;
+      liveLog("greeting-sent", { reason, tMs: Math.round(performance.now() - channelOpenedAt) });
+      sendEvent({ type: "session.instructions.append", event_id: `webexone_greeting_${Date.now()}`, delegation_id: null, content: `Greet the caller now, in English. Say: “Hi, I'm ${agent?.name || "your WebexOne guide"}. I can answer questions about WebexOne 2026. What would you like to know?” Then wait.` });
+      // if it was never acknowledged, say it once more
+      window.setTimeout(() => {
+        if (!greetingAcknowledged && !stoppingRef.current) {
+          liveLog("greeting-resent", { reason: "no acknowledgement after 4 s" });
+          sendEvent({ type: "session.instructions.append", event_id: `webexone_greeting_retry_${Date.now()}`, delegation_id: null, content: `Greet the caller now, in English. Say: “Hi, I'm ${agent?.name || "your WebexOne guide"}. I can answer questions about WebexOne 2026. What would you like to know?” Then wait.` });
+        }
+      }, 4000);
+    };
+    events.onopen = () => {
+      channelOpenedAt = performance.now();
+      liveLog("datachannel-open");
+      // normally session.started arrives first; if it does not, do not wait for the caller to speak
+      window.setTimeout(() => { if (!sawSessionStarted) greet("data channel open, no session.started after 1.5 s"); }, 1500);
+    };
     const sendEvent = (event: Record<string, unknown>) => { if (events.readyState === "open" && !stoppingRef.current) events.send(JSON.stringify(event)); };
     const flushAssistant = () => { if (assistantTranscript.trim()) turns.push({ role: "assistant", content: assistantTranscript.trim() }); assistantTranscript = ""; };
     const answerDelegation = async (delegationId: string, offsetMs?: number) => {
@@ -336,9 +368,14 @@ export default function WebexOneAvatarCall() {
     events.onmessage = (event) => {
       try {
         const message = JSON.parse(event.data);
-        if (message.type === "session.started" && !skipGreetingRef.current) {
-          // greet through the live model; Responses-only commands such as response.create are not available here
-          sendEvent({ type: "session.instructions.append", event_id: `webexone_greeting_${Date.now()}`, delegation_id: null, content: `Greet the caller now, in English. Say: “Hi, I'm ${agent?.name || "your WebexOne guide"}. I can answer questions about WebexOne 2026. What would you like to know?” Then wait.` });
+        if (message.type === "session.started") {
+          sawSessionStarted = true;
+          liveLog("session-started", { tMs: Math.round(performance.now() - channelOpenedAt) });
+          greet("session.started");
+        }
+        if (message.type === "session.instructions.appended") {
+          greetingAcknowledged = true;
+          liveLog("greeting-acknowledged", { tMs: Math.round(performance.now() - channelOpenedAt) });
         }
         if (message.type === "session.input_transcript.delta") {
           delegatedSinceSpeech = false;
