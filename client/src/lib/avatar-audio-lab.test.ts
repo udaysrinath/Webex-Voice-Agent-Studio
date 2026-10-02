@@ -9,7 +9,7 @@ const packet = (value: number, samples = 320) => new Int16Array(samples).fill(va
 
 test("defaults apply and URL parameters override them, and the settings round-trip through the URL", () => {
   assert.deepEqual(configFromParams(new URLSearchParams("")), DEFAULT_LAB_CONFIG);
-  assert.equal(DEFAULT_LAB_CONFIG.chunkMs, 200);
+  assert.equal(DEFAULT_LAB_CONFIG.chunkMs, 20);
   const config = configFromParams(new URLSearchParams("gain=6&chunk=100&prebuffer=150&idleend=600&interrupt=off&rate=24000"));
   assert.deepEqual(config, { gainDb: 6, chunkMs: 100, prebufferMs: 150, idleEndMs: 600, localInterrupt: false, rate: 24000 });
   assert.deepEqual(configFromParams(configToParams(config)), config);

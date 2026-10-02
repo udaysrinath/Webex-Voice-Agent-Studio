@@ -20,7 +20,7 @@ const DEEPGRAM_KEYTERMS = ["WebexOne", "Webex", "Cisco", "Webex AI Agent", "Webe
 async function waitForIceGathering(peer: RTCPeerConnection): Promise<void> {
   if (peer.iceGatheringState === "complete") return;
   await new Promise<void>((resolve) => {
-    const timeout = window.setTimeout(finish, 5000);
+    const timeout = window.setTimeout(finish, 1200); // host candidates arrive in milliseconds; do not wait for stragglers
     function finish() {
       window.clearTimeout(timeout);
       peer.removeEventListener("icegatheringstatechange", onStateChange);
@@ -57,6 +57,9 @@ export default function WebexOneAvatarCall() {
   // ?debug=1 shows a device diagnostics panel (video size/drops, audio packet timing, OpenAI link stats).
   const debugEnabled = params.get("debug") === "1";
   const labRef = useRef<AudioLab | null>(null);
+  const startT0Ref = useRef(0);
+  const startMarksRef = useRef<Record<string, number>>({});
+  const mark = (name: string) => { if (!(name in startMarksRef.current)) startMarksRef.current[name] = Math.round(performance.now() - startT0Ref.current); };
   const avatarMeterRef = useRef({ rmsDb: -Infinity, peakDb: -Infinity, clipped: 0, ring: [] as Float32Array[], samples: 0, rate: 48000 });
   const [, setLabTick] = useState(0);
   const [debugText, setDebugText] = useState("");
@@ -242,11 +245,26 @@ export default function WebexOneAvatarCall() {
     socket.onerror = () => setError("Deepgram audio connection was interrupted. End the call and try again.");
   }, [floatToPcm16, sendRecognizedTurn]);
 
-  const startRealtimePassthrough = useCallback(async (client: any) => {
+  // clientPromise resolves with the ANAM client once the avatar is connected. Everything GPT-Live needs (microphone,
+  // WebRTC session, data channel) is set up WHILE the avatar connects, and the greeting waits for both.
+  const startRealtimePassthrough = useCallback(async (clientPromise: Promise<any>) => {
     const labConfig = configFromParams(params);
-    const audioInput = client.createAgentAudioInputStream({ encoding: "pcm_s16le", sampleRate: labConfig.rate, channels: 1 });
-    audioInputRef.current = audioInput;
+    let avatarClient: any;
+    let avatarReady = false;
+    let relayReady = false;
+    let contextRate: number | undefined;
+    let audioInputRate = 0;
+    // (re)create the ANAM audio input at the rate the audio context really runs at, once both are known
+    const ensureAudioInput = () => {
+      if (!avatarClient) return;
+      const rate = contextRate ?? labConfig.rate;
+      if (audioInputRef.current && audioInputRate === rate) return;
+      audioInputRef.current = avatarClient.createAgentAudioInputStream({ encoding: "pcm_s16le", sampleRate: rate, channels: 1 });
+      audioInputRate = rate;
+    };
     const mic = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+    mark("micReady");
+    if (stoppingRef.current) { mic.getTracks().forEach((track) => track.stop()); return; }
     realtimeMicRef.current = mic;
     const peer = new RTCPeerConnection();
     realtimePeerRef.current = peer;
@@ -273,10 +291,9 @@ export default function WebexOneAvatarCall() {
       }
       // The worklet packs 20 ms of whatever rate the context really runs at, and the browser may not honour 16 kHz
       // (some device browsers do not). Tell ANAM the true rate, or the avatar's audio would play at the wrong speed.
-      if (context.sampleRate !== labConfig.rate) {
-        liveLog("sample-rate-mismatch", { requested: labConfig.rate, actual: context.sampleRate });
-        audioInputRef.current = client.createAgentAudioInputStream({ encoding: "pcm_s16le", sampleRate: context.sampleRate, channels: 1 });
-      }
+      contextRate = context.sampleRate;
+      if (context.sampleRate !== labConfig.rate) liveLog("sample-rate-mismatch", { requested: labConfig.rate, actual: context.sampleRate });
+      ensureAudioInput();
       labRef.current = new AudioLab(
         labConfig,
         context.sampleRate,
@@ -293,6 +310,9 @@ export default function WebexOneAvatarCall() {
       source.connect(processor);
       processor.connect(silent);
       silent.connect(context.destination);
+      relayReady = true;
+      mark("relayReady");
+      tryGreet("relay ready");
     };
 
     const events = peer.createDataChannel("oai-events");
@@ -309,29 +329,43 @@ export default function WebexOneAvatarCall() {
     let spokenBuffer = "";
     let spokenTimer: number | undefined;
     let sawSessionStarted = false;
+    let greetFallback = false;
     let greeted = false;
     let greetingAcknowledged = false;
     let channelOpenedAt = performance.now();
+    const greetingText = `Greet the caller now, in English. Say: “Hi, I'm ${agent?.name || "your WebexOne guide"}. I can answer questions about WebexOne 2026. What would you like to know?” Then wait.`;
     // GPT-Live opens the conversation when told to (Responses-only commands such as response.create are not available).
-    const greet = (reason: string) => {
-      if (greeted || skipGreetingRef.current) return;
+    // The greeting goes out only when GPT-Live is ready AND the avatar can receive its voice, so none of it is lost.
+    const tryGreet = (reason: string) => {
+      if (greeted || skipGreetingRef.current || !(sawSessionStarted || greetFallback) || !avatarReady || !relayReady) return;
       greeted = true;
+      mark("greetSent");
       liveLog("greeting-sent", { reason, tMs: Math.round(performance.now() - channelOpenedAt) });
-      sendEvent({ type: "session.instructions.append", event_id: `webexone_greeting_${Date.now()}`, delegation_id: null, content: `Greet the caller now, in English. Say: “Hi, I'm ${agent?.name || "your WebexOne guide"}. I can answer questions about WebexOne 2026. What would you like to know?” Then wait.` });
+      sendEvent({ type: "session.instructions.append", event_id: `webexone_greeting_${Date.now()}`, delegation_id: null, content: greetingText });
       // if it was never acknowledged, say it once more
       window.setTimeout(() => {
         if (!greetingAcknowledged && !stoppingRef.current) {
           liveLog("greeting-resent", { reason: "no acknowledgement after 4 s" });
-          sendEvent({ type: "session.instructions.append", event_id: `webexone_greeting_retry_${Date.now()}`, delegation_id: null, content: `Greet the caller now, in English. Say: “Hi, I'm ${agent?.name || "your WebexOne guide"}. I can answer questions about WebexOne 2026. What would you like to know?” Then wait.` });
+          sendEvent({ type: "session.instructions.append", event_id: `webexone_greeting_retry_${Date.now()}`, delegation_id: null, content: greetingText });
         }
       }, 4000);
     };
     events.onopen = () => {
       channelOpenedAt = performance.now();
+      mark("channelOpen");
       liveLog("datachannel-open");
       // normally session.started arrives first; if it does not, do not wait for the caller to speak
-      window.setTimeout(() => { if (!sawSessionStarted) greet("data channel open, no session.started after 1.5 s"); }, 1500);
+      window.setTimeout(() => { if (!sawSessionStarted) { greetFallback = true; tryGreet("data channel open, no session.started after 1.5 s"); } }, 1500);
     };
+    // the avatar connects in parallel; once it does, give it its audio input and greet if everything else is ready
+    void clientPromise.then((client) => {
+      if (stoppingRef.current) return;
+      avatarClient = client;
+      avatarReady = true;
+      ensureAudioInput();
+      mark("avatarReady");
+      tryGreet("avatar ready");
+    }).catch(() => {});
     const sendEvent = (event: Record<string, unknown>) => { if (events.readyState === "open" && !stoppingRef.current) events.send(JSON.stringify(event)); };
     const flushAssistant = () => { if (assistantTranscript.trim()) turns.push({ role: "assistant", content: assistantTranscript.trim() }); assistantTranscript = ""; };
     const answerDelegation = async (delegationId: string, offsetMs?: number) => {
@@ -375,11 +409,13 @@ export default function WebexOneAvatarCall() {
         const message = JSON.parse(event.data);
         if (message.type === "session.started") {
           sawSessionStarted = true;
+          mark("sessionStarted");
           liveLog("session-started", { tMs: Math.round(performance.now() - channelOpenedAt) });
-          greet("session.started");
+          tryGreet("session.started");
         }
         if (message.type === "session.instructions.appended") {
           greetingAcknowledged = true;
+          mark("greetingAcknowledged");
           liveLog("greeting-acknowledged", { tMs: Math.round(performance.now() - channelOpenedAt) });
         }
         if (message.type === "session.input_transcript.delta") {
@@ -393,6 +429,7 @@ export default function WebexOneAvatarCall() {
           responseAudioEnded = false;
         }
         if (message.type === "session.output_transcript.delta") {
+          if (!("firstSpeech" in startMarksRef.current)) { mark("firstSpeech"); liveLog("startup", { ...startMarksRef.current }); }
           assistantTranscript += message.delta || "";
           spokenBuffer += message.delta || "";
           window.clearTimeout(spokenTimer);
@@ -432,8 +469,12 @@ export default function WebexOneAvatarCall() {
     const offer = await peer.createOffer();
     await peer.setLocalDescription(offer);
     await waitForIceGathering(peer);
+    mark("offerReady");
     const answerSdp = await anamApi.createGPTLiveSession(agent?.id || 0, peer.localDescription?.sdp || "");
+    mark("sessionCreated");
+    if (stoppingRef.current) { peer.close(); mic.getTracks().forEach((track) => track.stop()); return; }
     await peer.setRemoteDescription({ type: "answer", sdp: answerSdp });
+    mark("answerSet");
   }, [agent]);
 
   const stopCall = useCallback(async () => {
@@ -482,10 +523,26 @@ export default function WebexOneAvatarCall() {
     lastAnamUserMessageIdRef.current = null;
     try {
       // Request fullscreen synchronously in the click gesture, before network work.
+      startT0Ref.current = performance.now();
+      startMarksRef.current = {};
       await containerRef.current.requestFullscreen().catch(() => {});
       const systemPrompt = agent.systemPrompt || `You are ${agent.name}, a concise and helpful WebexOne event Q&A assistant.`;
-      const { sessionToken } = await anamApi.getSessionToken({ name: agent.name, systemPrompt }, agent.id, mode);
-      const { createClient, AnamEvent } = await import("@anam-ai/js-sdk");
+      // the session token and the SDK download do not depend on each other
+      const [{ sessionToken }, { createClient, AnamEvent }] = await Promise.all([
+        anamApi.getSessionToken({ name: agent.name, systemPrompt }, agent.id, mode),
+        import("@anam-ai/js-sdk"),
+      ]);
+      mark("anamToken");
+      // GPT-Live (microphone, WebRTC session, data channel) does not need the avatar until it speaks, so it starts now and
+      // meets the avatar's connection at the greeting instead of waiting behind it.
+      let avatarConnected!: (client: unknown) => void;
+      const avatarPromise = new Promise<unknown>((resolve) => { avatarConnected = resolve; });
+      let realtimeSetup: Promise<void> | undefined;
+      if (mode === "gpt-live-anam") {
+        skipGreetingRef.current = resuming;
+        realtimeSetup = startRealtimePassthrough(avatarPromise);
+        void realtimeSetup.catch(() => {}); // surfaced below, or by the catch if the avatar fails first
+      }
       const client = createClient(sessionToken, mode === "anam-native" ? undefined : { disableInputAudio: true });
       anamClientRef.current = client;
       if (mode === "anam-native") {
@@ -519,7 +576,9 @@ export default function WebexOneAvatarCall() {
         client.removeListener(AnamEvent.CONNECTION_ESTABLISHED, onConnected);
         client.removeListener(AnamEvent.CONNECTION_CLOSED, onClosed);
       }
+      mark("anamConnected");
       setIsLive(true);
+      avatarConnected(client);
       // The server can close the session after it was established (plan session limit, idle timeout, etc.).
       // Record why, so a late talk() failure reports the real cause instead of "peer connection is null".
       client.addListener(AnamEvent.CONNECTION_CLOSED, (code: unknown, reason?: string) => {
@@ -541,11 +600,10 @@ export default function WebexOneAvatarCall() {
       if (mode === "anam-native") {
         if (!resuming) await client.talk(greeting);
       } else if (mode === "deepgram-anam") {
-        await startDeepgram();
-        if (!resuming) await client.talk(greeting);
+        // greet while the speech connection is still being set up
+        await Promise.all([startDeepgram(), resuming ? Promise.resolve() : client.talk(greeting)]);
       } else if (mode === "gpt-live-anam") {
-        skipGreetingRef.current = resuming;
-        await startRealtimePassthrough(client);
+        await realtimeSetup;
       }
     } catch (cause) {
       const failure = cause as { message?: string; statusCode?: number; details?: { cause?: unknown } };
