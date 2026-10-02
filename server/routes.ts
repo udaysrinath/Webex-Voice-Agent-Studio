@@ -31,7 +31,7 @@ import { resolveRealtimeVoice } from "./voice-agent/voice";
 import { LIVE_INTENT, getWebexOneLiveStats } from "./socio/live";
 import { WEBEXONE_TOOL_GUIDANCE, WebexOneToolInputError, executeWebexOneTool, isWebexOneTool, webexOneChatTools, webexOneRealtimeTools } from "./webexone-tools";
 import { classifyHrRestrictedTopic } from "./tools/hr";
-import { checkWebexOneRelevance, retrieveWebexOne } from "./webexone-kb";
+import { checkWebexOneRelevance, coreReference, retrieveForTranscript, retrieveWebexOne } from "./webexone-kb";
 import { webexOneLiveFrontendInstructions } from "./webexone-live";
 
 const upload = multer({ 
@@ -1756,27 +1756,36 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
     if (!agent || resolveAgentProfileId(agent) !== "webexone-qa") return res.status(404).json({ error: "WebexOne Guide agent not found." });
     try {
       const started = performance.now();
-      const question = parsed.data.question;
+      // The transcript is GPT-Live's text guess at what was said, and in a noisy room it carries background words (or is
+      // simply wrong: "when is WebexOne" once came back as a person's name). So retrieve for every plausible reading of
+      // it and give GPT-Live the combined facts as quiet context. It heard the real audio and picks what applies.
       const previous = [...(parsed.data.history || [])].reverse().find((turn) => turn.role === "user")?.content;
-      // a short follow-up ("what time?") is searched together with the previous question
-      const searchText = previous && question.split(/\s+/).length < 5 ? `${previous} ${question}` : question;
-      const [found, live] = await Promise.all([
-        retrieveWebexOne(searchText, { limit: 3, maxChars: 650 }),
-        LIVE_INTENT.test(question) ? getWebexOneLiveStats({ query: question }).catch(() => "") : Promise.resolve(""),
+      const [retrieval, live] = await Promise.all([
+        retrieveForTranscript(parsed.data.question, previous),
+        LIVE_INTENT.test(parsed.data.question) ? getWebexOneLiveStats({ query: parsed.data.question }).catch(() => "") : Promise.resolve(""),
       ]);
-      // session.commentary.append allows about 500 tokens. Budget the facts so the question and the answering
-      // instructions at the end are never the part that gets cut.
-      const facts = [found.text, live ? `[Live event numbers — report exactly]\n${live}` : ""].filter(Boolean).join("\n\n---\n\n").slice(0, 1400);
-      const content = [
-        "Facts about WebexOne 2026:",
-        facts || "(no matching facts found)",
-        "",
-        `The caller asked: "${question}".`,
-        "Answer in one or two short sentences from the facts above, saying who it applies to if only some attendees. Give the best answer the facts support and mention a gap (for example one day without a listed room) only if asked. Add nothing else that was not asked. Only if none of the facts contain the answer, say you don't have that detail and suggest the WebexOne app or the Registration & Information Desk on Level 3.",
-      ].join("\n");
+      const question = retrieval.question;
+      // Unreliable: nothing matched, the best match is weak (real questions usually score above 0.5, garbled text 0.3 to 0.5),
+      // it only resembles a speaker's name, or semantic search timed out. Then the core reference is attached as well.
+      const unreliable = !retrieval.cards.length || retrieval.topIsGuessedName || retrieval.confidence === undefined || retrieval.confidence < 0.55;
+      // GPT-Live does not always finish reading separate context appends before it starts speaking, so the facts for the
+      // best reading of the transcript go in the answer message itself (the most reliable place), and the facts for the
+      // other readings, plus the core reference when the lookup looks unreliable, ride along as quiet extra context.
+      const [primaryFacts = "", ...otherPacks] = retrieval.packs;
+      const extras = [...otherPacks];
+      if (unreliable) extras.push(`[Quick reference]\n${await coreReference()}`.slice(0, 1150));
+      const facts = extras.slice(0, 3).map((pack) => `Other facts that might apply to what the caller asked:\n${pack}`);
+      const rules = unreliable
+        ? `Transcript guess (may be misheard or background talk): "${question}". Go with what you actually heard; if unsure what was asked, ask the caller to repeat. Otherwise answer from the facts in one or two short sentences, saying who it applies to. If the facts lack the answer, say you don't have that detail and suggest the WebexOne app or the Registration & Information Desk on Level 3.`
+        : `Transcript guess (may include background talk or errors): "${question}". Go with what you heard. Answer from the facts in one or two short sentences, saying who it applies to. If the facts lack the answer, say you don't have that detail and suggest the WebexOne app or the Registration & Information Desk on Level 3.`;
+      // session.commentary.append rejects more than 500 tokens (dense text runs ~3 characters per token): keep it near 1450 characters
+      const mainFacts = [live ? `[Live event numbers, report exactly]\n${live}` : "", primaryFacts].filter(Boolean).join("\n---\n") || "(no matching facts found)";
+      const content = `Facts:\n${mainFacts.slice(0, Math.max(200, 1450 - rules.length - 12))}\n\n${rules}`;
+      const fallback = `Facts:\n${mainFacts.slice(0, 500)}\n\nAnswer the caller's question from these facts in one or two short sentences. If they lack the answer, say you don't have that detail.`;
+      const found = { cards: retrieval.cards };
       const ms = Math.round(performance.now() - started);
-      console.info(`WebexOne live answer ${ms}ms: ${JSON.stringify(question.slice(0, 120))} -> ${found.cards.map((card) => card.title.slice(0, 36)).join(" | ") || "nothing"}`);
-      return res.json({ content, cards: found.cards, ms });
+      console.info(`WebexOne live answer ${ms}ms: heard ${JSON.stringify(parsed.data.question.slice(0, 90))} → asked ${JSON.stringify(question.slice(0, 80))} -> ${found.cards.map((card) => card.title.slice(0, 36)).join(" | ") || "nothing"}`);
+      return res.json({ facts, content, fallback, cards: found.cards, ms });
     } catch (error) {
       console.error("WebexOne live answer failed", error instanceof Error ? error.message : error);
       return res.status(500).json({ error: "The WebexOne lookup is unavailable." });

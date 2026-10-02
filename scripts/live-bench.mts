@@ -5,6 +5,7 @@
 // useful audio came back. It also prints what was said and checks it against expected facts.
 import WebSocket from "ws";
 import { buildLiveSessionConfig } from "../server/voice-agent/openai-live";
+import { lastUtterance, type TranscriptFragment } from "../shared/live-transcript";
 import { webexOneLiveFrontendInstructions } from "../server/webexone-live";
 import { executeWebexOneTool, WEBEXONE_TOOL_GUIDANCE, webexOneRealtimeTools } from "../server/webexone-tools";
 
@@ -44,14 +45,28 @@ async function tts(text: string): Promise<Buffer> {
 
 interface Run { q: string; delegationMs?: number; toolResultMs?: number; firstAudioMs?: number; usefulAudioMs?: number; spoken: string; ok: boolean; note: string }
 
+const BABBLE = process.env.BENCH_BABBLE ? await Promise.all(["So then I told him we could move the review to Thursday if everyone was around and the budget was approved by then.", "Honestly the flight was fine, the hotel was a bit far from the venue, but the food was great and the coffee was even better."].map(async (text, i) => { const r = await fetch("https://api.openai.com/v1/audio/speech", { method: "POST", headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: "tts-1", voice: ["echo", "nova"][i], input: text, response_format: "pcm" }) }); return new Int16Array(Buffer.from(await r.arrayBuffer()).buffer.slice(0)); })) : undefined;
+const mixBabble = (pcm: Buffer): Buffer => {
+  if (!BABBLE) return pcm;
+  const q = new Int16Array(pcm.buffer.slice(pcm.byteOffset, pcm.byteOffset + pcm.length));
+  const rms = (x: Int16Array) => Math.sqrt(x.reduce((a, v) => a + v * v, 0) / x.length);
+  const g = (rms(q) / Math.max(1, rms(BABBLE[0]))) / 1.8; // about 5 dB below the question
+  const out = new Float32Array(q.length + 24000 * 3);
+  q.forEach((v, i) => { out[i + 24000] += v; });
+  [{ x: BABBLE[0], at: 0 }, { x: BABBLE[1], at: 12000 }].forEach(({ x, at }) => x.forEach((v, i) => { if (at + i < out.length) out[at + i] += v * g; }));
+  return Buffer.from(Int16Array.from(out, (v) => Math.max(-32768, Math.min(32767, v))).buffer);
+};
+
 async function runOne(testCase: (typeof CASES)[number]): Promise<Run> {
-  const audio = await tts(testCase.q);
+  const audio = mixBabble(await tts(testCase.q));
   const session = buildLiveSessionConfig(
     { instructions: FRONTEND, tools: mode === "responses" ? webexOneRealtimeTools : [], inputAudioFormat: "pcm16", outputAudioFormat: "pcm16", voice: "marin" } as any,
     { frontendInstructions: FRONTEND, backendInstructions: `You are the WebexOne 2026 guide backend.\n${WEBEXONE_TOOL_GUIDANCE}\nFor each factual question, call the matching tool before answering. If a tool returns nothing relevant, say you could not find that detail.` },
     "websocket",
   );
   if (mode === "app") session.delegation = { type: "client" };
+  // RESP_TUNING='{"tool_choice":"required","reasoning":{"effort":"low"},"service_tier":"priority"}' tunes Responses delegation
+  if (mode === "responses" && process.env.RESP_TUNING) Object.assign(session.delegation.responses, JSON.parse(process.env.RESP_TUNING));
 
   const ws = new WebSocket("wss://api.openai.com/v1/live/sessions", { headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` } });
   const send = (event: object) => ws.readyState === WebSocket.OPEN && ws.send(JSON.stringify(event));
@@ -60,6 +75,8 @@ async function runOne(testCase: (typeof CASES)[number]): Promise<Run> {
   const run: Run = { q: testCase.q, spoken: "", ok: false, note: "" };
   const timeline: string[] = [];
   let inputTranscript = "";
+  const fragments: TranscriptFragment[] = [];
+  let lastFallback: { id: string; text: string } | undefined;
   let answerSentAt = 0;
   let started = false, finished = false;
   const pendingTools = new Map<string, { completed: boolean; calls: Map<string, Promise<void>> }>();
@@ -72,14 +89,17 @@ async function runOne(testCase: (typeof CASES)[number]): Promise<Run> {
       if (process.env.BENCH_EVENTS && t0 && !String(event.type).includes("audio.delta")) timeline.push(`${at()}ms ${event.type}${event.delta ? ` "${String(event.delta).slice(0, 30)}"` : ""}`);
       switch (event.type) {
         case "session.started": started = true; break;
-        case "session.input_transcript.delta": inputTranscript += event.delta || ""; break;
+        case "session.input_transcript.delta": inputTranscript += event.delta || ""; fragments.push({ text: String(event.delta || ""), startMs: Number(event.start_ms) || 0, endMs: Number(event.end_ms) || 0 }); break;
         case "session.delegation.created":
           run.delegationMs ??= at();
           if (mode === "app" && event.delegation?.target === "client") {
-            const question = inputTranscript.trim() || testCase.q;
+            const question = lastUtterance(fragments, event.offset_ms) || testCase.q;
+            run.note += ` heard:"${question.slice(0, 60)}";`;
             const t = performance.now();
             const response = await fetch(`${process.env.BENCH_URL || "http://localhost:3000"}/api/webexone/live-answer`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ agentId: 3, question }) });
-            const body = await response.json() as { content: string };
+            const body = await response.json() as { facts: string[]; content: string; fallback: string };
+            for (const pack of body.facts) send({ type: "session.thinking.append", event_id: `facts_${Date.now()}_${Math.random()}`, delegation_id: event.delegation.id, content: pack });
+            lastFallback = { id: event.delegation.id, text: body.fallback };
             run.note += ` http(${Math.round(performance.now() - t)}ms);`;
             send({ type: "session.commentary.append", event_id: `app_${Date.now()}`, delegation_id: event.delegation.id, content: body.content });
             answerSentAt = performance.now();
@@ -115,7 +135,10 @@ async function runOne(testCase: (typeof CASES)[number]): Promise<Run> {
           run.spoken += event.delta || "";
           if (answerSentAt) { if (quietTimer) clearTimeout(quietTimer); quietTimer = setTimeout(() => { if (!finished) { finished = true; clearTimeout(timer); resolve(); } }, 3000); }
           break;
-        case "error": run.note += ` error:${event.error?.message};`; break;
+        case "error":
+          run.note += ` error:${event.error?.message};`;
+          if (/must not exceed 500 tokens/i.test(String(event.error?.message)) && lastFallback) { send({ type: "session.commentary.append", event_id: `retry_${Date.now()}`, delegation_id: lastFallback.id, content: lastFallback.text }); run.note += " retried-with-fallback;"; lastFallback = undefined; }
+          break;
       }
     });
     ws.on("error", (error) => { run.note += ` ws:${error.message};`; resolve(); });

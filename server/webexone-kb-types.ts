@@ -30,8 +30,13 @@ export interface KbFile {
 export interface KbVectors {
   version: number;
   dimensions: number;
-  /** One base64 float32 vector per card, in card order: the question side (title + questions). */
-  question: string[];
-  /** And the content side (text). */
+  /** One base64 float32 vector per card, in card order: the content side (title + text). */
   text: string[];
+  /**
+   * One vector per question alias, title and alias term (so a card is matched by its best single phrasing, not a
+   * blend of all of them). Unit vectors quantised to int8 (value / 127), concatenated and base64 encoded.
+   */
+  questions: string;
+  /** Card index each question vector belongs to, in order. */
+  questionCard: number[];
 }

@@ -1,0 +1,80 @@
+{
+ "description": "Regression cases from real device testing. Add every question that fails in the field here before fixing it.",
+ "cases": [
+  {
+   "id": "r001",
+   "question": "when is Webex One",
+   "all": [
+    [
+     "October 5"
+    ],
+    [
+     "October 8"
+    ]
+   ]
+  },
+  {
+   "id": "r002",
+   "question": "when is webex one",
+   "all": [
+    [
+     "October 5"
+    ],
+    [
+     "October 8"
+    ]
+   ]
+  },
+  {
+   "id": "r003",
+   "question": "When is WebexOne?",
+   "all": [
+    [
+     "October 5"
+    ],
+    [
+     "October 8"
+    ]
+   ]
+  },
+  {
+   "id": "r004",
+   "question": "when's WebexOne",
+   "all": [
+    [
+     "October 5"
+    ],
+    [
+     "October 8"
+    ]
+   ]
+  },
+  {
+   "id": "r005",
+   "question": "where is Webex One",
+   "all": [
+    [
+     "Fairmont Austin"
+    ]
+   ]
+  },
+  {
+   "id": "r006",
+   "question": "where is WebexOne being held",
+   "all": [
+    [
+     "Fairmont Austin"
+    ]
+   ]
+  },
+  {
+   "id": "r007",
+   "question": "what is Webex One",
+   "all": [
+    [
+     "WebexOne"
+    ]
+   ]
+  }
+ ]
+}

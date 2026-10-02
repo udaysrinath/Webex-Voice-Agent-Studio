@@ -10,7 +10,7 @@
     "start": "NODE_ENV=production node dist/index.cjs",
     "check": "tsc",
     "kb:build": "node --env-file=.env --import tsx scripts/build-webexone-kb.ts",
-    "kb:eval": "node --env-file=.env --import tsx scripts/eval-webexone-kb.mts new 5",
+    "kb:eval": "WEBEXONE_EMBED_BUDGET_MS=8000 sh -c 'for set in golden heldout regression; do EVAL_SET=$set node --env-file=.env --import tsx scripts/eval-webexone-kb.mts new 5; done'",
     "kb:socio": "node --env-file=.env --import tsx scripts/export-socio-raw.ts",
     "db:push": "npm exec --package=drizzle-kit@0.31.10 -- drizzle-kit push"
   },

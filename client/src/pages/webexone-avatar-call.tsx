@@ -6,6 +6,7 @@ import { agentsApi, anamApi, chatApi, type AnamVoiceMode, type ChatMessage } fro
 import { Button } from "@/components/ui/button";
 import { resolveAgentProfileId } from "@shared/agent-profiles";
 import { AVATAR_PCM_WORKLET_SOURCE } from "@/lib/avatar-pcm-worklet";
+import { lastUtterance, type TranscriptFragment } from "@shared/live-transcript";
 
 type VoiceMode = AnamVoiceMode;
 
@@ -284,19 +285,19 @@ export default function WebexOneAvatarCall() {
     let responseAudioEnded = false;
     // Client delegation: GPT-Live asks us for help (session.delegation.created) and we answer from the knowledge base.
     // Its transcript deltas are the only record of what the caller said, so keep them per turn.
-    let turnTranscript = "";
-    let lastDeltaAt = 0;
+    const fragments: TranscriptFragment[] = [];
     let assistantTranscript = "";
     let latestDelegation = "";
+    let lastAnswer: { delegationId: string; fallback: string; retried: boolean } | undefined;
     const turns: Array<{ role: "user" | "assistant"; content: string }> = [];
     const sendEvent = (event: Record<string, unknown>) => { if (events.readyState === "open" && !stoppingRef.current) events.send(JSON.stringify(event)); };
     const flushAssistant = () => { if (assistantTranscript.trim()) turns.push({ role: "assistant", content: assistantTranscript.trim() }); assistantTranscript = ""; };
-    const answerDelegation = async (delegationId: string) => {
+    const answerDelegation = async (delegationId: string, offsetMs?: number) => {
       latestDelegation = delegationId;
       // the last transcript fragment can land just after the delegation event
-      for (let waited = 0; !turnTranscript.trim() && waited < 400; waited += 50) await new Promise((resolve) => window.setTimeout(resolve, 50));
-      const question = turnTranscript.trim();
-      turnTranscript = "";
+      for (let waited = 0; !fragments.length && waited < 400; waited += 50) await new Promise((resolve) => window.setTimeout(resolve, 50));
+      const question = lastUtterance(fragments, offsetMs);
+      fragments.length = 0;
       flushAssistant();
       let content: string;
       if (!question) {
@@ -311,7 +312,11 @@ export default function WebexOneAvatarCall() {
         });
         const body = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(body.error || "lookup failed");
+        for (const pack of (body.facts as string[] | undefined) || []) {
+          sendEvent({ type: "session.thinking.append", event_id: `webexone_facts_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`, delegation_id: delegationId, content: pack });
+        }
         content = body.content;
+        lastAnswer = { delegationId, fallback: String(body.fallback || ""), retried: false };
       } catch (cause) {
         console.warn("WebexOne lookup failed", cause);
         content = "The lookup is unavailable right now. Tell the caller you could not check that and suggest the WebexOne app or the Registration & Information Desk.";
@@ -324,20 +329,17 @@ export default function WebexOneAvatarCall() {
     events.onmessage = (event) => {
       try {
         const message = JSON.parse(event.data);
-        if (message.type === "session.started") {
+        if (message.type === "session.started" && !skipGreetingRef.current) {
           // greet through the live model; Responses-only commands such as response.create are not available here
           sendEvent({ type: "session.instructions.append", event_id: `webexone_greeting_${Date.now()}`, delegation_id: null, content: `Greet the caller now. Say: “Hi, I'm ${agent?.name || "your WebexOne guide"}. I can answer questions about WebexOne 2026. What would you like to know?” Then wait.` });
         }
         if (message.type === "session.input_transcript.delta") {
-          // a long pause since the previous fragment means this is a new utterance, not the rest of the last one
-          const now = performance.now();
-          if (now - lastDeltaAt > 1800) turnTranscript = "";
-          lastDeltaAt = now;
-          turnTranscript += message.delta || "";
+          fragments.push({ text: String(message.delta || ""), startMs: Number(message.start_ms) || 0, endMs: Number(message.end_ms) || 0 });
+          if (fragments.length > 200) fragments.splice(0, fragments.length - 200);
           responseAudioEnded = false;
         }
         if (message.type === "session.output_transcript.delta") assistantTranscript += message.delta || "";
-        if (message.type === "session.delegation.created" && message.delegation?.target === "client" && message.delegation?.id) void answerDelegation(String(message.delegation.id));
+        if (message.type === "session.delegation.created" && message.delegation?.target === "client" && message.delegation?.id) void answerDelegation(String(message.delegation.id), typeof message.offset_ms === "number" ? message.offset_ms : undefined);
         if (message.type === "response.created") responseAudioEnded = false;
         if ((message.type === "session.output_audio.done" || message.type === "response.done") && !responseAudioEnded) {
           responseAudioEnded = true;
@@ -347,7 +349,14 @@ export default function WebexOneAvatarCall() {
           anamClientRef.current?.interruptPersona();
           audioInputRef.current?.endSequence();
         }
-        if (message.type === "error") setError(message.error?.message || "The realtime voice session returned an error.");
+        if (message.type === "error") {
+          const detail = String(message.error?.message || "");
+          // GPT-Live caps one append at ~500 tokens; if it rejected the answer as too long, resend the shorter version once
+          if (/must not exceed 500 tokens/i.test(detail) && lastAnswer && !lastAnswer.retried && lastAnswer.fallback && latestDelegation === lastAnswer.delegationId) {
+            lastAnswer.retried = true;
+            sendEvent({ type: "session.commentary.append", event_id: `webexone_answer_retry_${Date.now()}`, delegation_id: lastAnswer.delegationId, content: lastAnswer.fallback });
+          } else setError(detail || "The realtime voice session returned an error.");
+        }
       } catch (cause) {
         console.warn("Unable to read realtime event", cause);
       }

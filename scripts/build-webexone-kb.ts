@@ -14,7 +14,7 @@ import { buildStructuredCards } from "./kb/structured";
 import { loadUnits } from "./kb/units";
 
 const OUT = path.join(DATA_DIR, "kb");
-const KB_VERSION = 2;
+const KB_VERSION = 3;
 
 async function addQuestions(cards: KbCard[]): Promise<number> {
   const needing = cards.filter((card) => card.questions.length < 4);
@@ -99,16 +99,25 @@ async function main() {
   report.push("## Retrieval aids", `- Generated spoken-question aliases for ${aliased} cards; ${aliasHits} cards got Search Aliases from the speakers document.`, "");
 
   console.info("5/5 embeddings");
-  const questionSide = cards.map((card) => `${card.title}\n${card.questions.join("\n")}${card.aliases?.length ? `\n${card.aliases.join(", ")}` : ""}`);
-  const textSide = cards.map((card) => `${card.title}\n${card.text}`);
-  const [questionVectors, textVectors] = [await embed(questionSide), await embed(textSide)];
+  // Each question alias is embedded on its own so a card is matched by its best single phrasing; blending them into
+  // one vector made broad cards lose to narrow ones ("When is WebexOne?" ranked "What is WebexOne?" first).
+  const questionTexts: string[] = [];
+  const questionCard: number[] = [];
+  cards.forEach((card, index) => {
+    const phrases = new Set<string>([card.title, ...card.questions, ...(card.aliases || [])].map((phrase) => phrase.trim()).filter((phrase) => phrase.length > 1));
+    for (const phrase of phrases) { questionTexts.push(phrase); questionCard.push(index); }
+  });
+  const textVectors = await embed(cards.map((card) => `${card.title}\n${card.text}`));
+  const questionVectors = await embed(questionTexts);
+  const quantised = new Int8Array(questionVectors.length * EMBEDDING_DIMENSIONS);
+  questionVectors.forEach((vector, row) => vector.forEach((value, column) => { quantised[row * EMBEDDING_DIMENSIONS + column] = Math.max(-127, Math.min(127, Math.round(value * 127))); }));
 
   const audit = coverageAudit(cards);
   report.push("## Coverage audit (every fact in every source must be in some card)", ...audit.report, "");
   console.info(`Coverage audit: ${audit.missingTotal} source fact(s) not found in any card (see REPORT.md).`);
 
   const kb: KbFile = { version: KB_VERSION, builtAt: new Date().toISOString(), embeddingModel: EMBEDDING_MODEL, dimensions: EMBEDDING_DIMENSIONS, cards };
-  const vectors: KbVectors = { version: KB_VERSION, dimensions: EMBEDDING_DIMENSIONS, question: questionVectors.map(f32), text: textVectors.map(f32) };
+  const vectors: KbVectors = { version: KB_VERSION, dimensions: EMBEDDING_DIMENSIONS, text: textVectors.map(f32), questions: Buffer.from(quantised.buffer).toString("base64"), questionCard };
   fs.writeFileSync(path.join(OUT, "cards.json"), JSON.stringify(kb));
   fs.writeFileSync(path.join(OUT, "vectors.json"), JSON.stringify(vectors));
   fs.writeFileSync(path.join(OUT, "guidance.json"), JSON.stringify(guidance, null, 1));
