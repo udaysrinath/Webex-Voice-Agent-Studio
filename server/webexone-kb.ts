@@ -379,8 +379,10 @@ export async function retrieveForTranscript(transcript: string, previousQuestion
   const words = text.split(" ").filter(Boolean);
   const clauses = text.split(/(?<=[.?!;])\s*|,\s+/).map((clause) => clause.trim()).filter((clause) => clause.split(" ").length >= 2);
   let candidates = words.length <= 4 ? [text] : [...new Set([...clauses, words.slice(-6).join(" "), words.slice(-10).join(" "), text])].slice(0, 6);
-  // a short follow-up ("what time?") is searched together with the previous question
-  if (previousQuestion && words.length < 5) candidates = [`${previousQuestion} ${text}`, ...candidates];
+  // A genuine follow-up ("what time?", "and on Thursday?") is searched together with the previous question. It is only a
+  // candidate, with a penalty, so a complete new question ("where is registration") is never contaminated by the last one.
+  const withContext = previousQuestion && words.length < 5 ? `${previousQuestion} ${text}` : undefined;
+  if (withContext) candidates = [...candidates, withContext];
 
   const budget = options.budgetMs ?? EMBED_BUDGET_MS;
   const vectors = index.semantic
@@ -390,7 +392,8 @@ export async function retrieveForTranscript(transcript: string, previousQuestion
     const vector = vectors?.[i];
     const result = await retrieveWebexOne(candidate, { limit: 3, maxChars: 560, vector, embedBudgetMs: vector ? undefined : 1 });
     const bonus = (candidate.endsWith("?") || WH_START.test(candidate) ? 0.05 : 0) - (candidate.split(" ").length < 3 ? 0.05 : 0);
-    return { candidate, result, rank: (vector ? (result.confidence ?? 0) : 0) + bonus };
+    const penalty = candidate === withContext ? 0.12 : 0;
+    return { candidate, result, rank: (vector ? (result.confidence ?? 0) : 0) + bonus - penalty };
   }));
   scored.sort((a, b) => b.rank - a.rank);
   const best = scored[0];

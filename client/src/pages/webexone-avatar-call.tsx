@@ -290,6 +290,11 @@ export default function WebexOneAvatarCall() {
     let latestDelegation = "";
     let lastAnswer: { delegationId: string; fallback: string; retried: boolean } | undefined;
     const turns: Array<{ role: "user" | "assistant"; content: string }> = [];
+    const liveLog = (kind: string, detail: Record<string, unknown> = {}) => { void fetch("/api/webexone/live-log", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind, detail }), keepalive: true }).catch(() => {}); };
+    let delegatedSinceSpeech = false;
+    let unansweredTimer: number | undefined;
+    let spokenBuffer = "";
+    let spokenTimer: number | undefined;
     const sendEvent = (event: Record<string, unknown>) => { if (events.readyState === "open" && !stoppingRef.current) events.send(JSON.stringify(event)); };
     const flushAssistant = () => { if (assistantTranscript.trim()) turns.push({ role: "assistant", content: assistantTranscript.trim() }); assistantTranscript = ""; };
     const answerDelegation = async (delegationId: string, offsetMs?: number) => {
@@ -297,6 +302,7 @@ export default function WebexOneAvatarCall() {
       // the last transcript fragment can land just after the delegation event
       for (let waited = 0; !fragments.length && waited < 400; waited += 50) await new Promise((resolve) => window.setTimeout(resolve, 50));
       const question = lastUtterance(fragments, offsetMs);
+      liveLog("delegation", { question, fragments: fragments.length, offsetMs });
       fragments.length = 0;
       flushAssistant();
       let content: string;
@@ -322,7 +328,8 @@ export default function WebexOneAvatarCall() {
         content = "The lookup is unavailable right now. Tell the caller you could not check that and suggest the WebexOne app or the Registration & Information Desk.";
       }
       // a newer question arrived while this one was being looked up: its answer is stale
-      if (stoppingRef.current || latestDelegation !== delegationId) return;
+      if (stoppingRef.current || latestDelegation !== delegationId) { liveLog("answer-dropped", { question, reason: stoppingRef.current ? "call ended" : "a newer delegation arrived" }); return; }
+      liveLog("answer-sent", { question });
       turns.push({ role: "user", content: question });
       sendEvent({ type: "session.commentary.append", event_id: `webexone_answer_${Date.now()}`, delegation_id: delegationId, content });
     };
@@ -334,11 +341,22 @@ export default function WebexOneAvatarCall() {
           sendEvent({ type: "session.instructions.append", event_id: `webexone_greeting_${Date.now()}`, delegation_id: null, content: `Greet the caller now. Say: “Hi, I'm ${agent?.name || "your WebexOne guide"}. I can answer questions about WebexOne 2026. What would you like to know?” Then wait.` });
         }
         if (message.type === "session.input_transcript.delta") {
+          delegatedSinceSpeech = false;
+          window.clearTimeout(unansweredTimer);
+          unansweredTimer = window.setTimeout(() => {
+            if (!delegatedSinceSpeech && fragments.length) liveLog("no-delegation", { heard: lastUtterance(fragments), spokeMeanwhile: spokenBuffer.slice(0, 200) });
+          }, 3000);
           fragments.push({ text: String(message.delta || ""), startMs: Number(message.start_ms) || 0, endMs: Number(message.end_ms) || 0 });
           if (fragments.length > 200) fragments.splice(0, fragments.length - 200);
           responseAudioEnded = false;
         }
-        if (message.type === "session.output_transcript.delta") assistantTranscript += message.delta || "";
+        if (message.type === "session.output_transcript.delta") {
+          assistantTranscript += message.delta || "";
+          spokenBuffer += message.delta || "";
+          window.clearTimeout(spokenTimer);
+          spokenTimer = window.setTimeout(() => { liveLog("avatar-said", { text: spokenBuffer.trim().slice(0, 400) }); spokenBuffer = ""; }, 2000);
+        }
+        if (message.type === "session.delegation.created" && message.delegation?.target === "client" && message.delegation?.id) delegatedSinceSpeech = true;
         if (message.type === "session.delegation.created" && message.delegation?.target === "client" && message.delegation?.id) void answerDelegation(String(message.delegation.id), typeof message.offset_ms === "number" ? message.offset_ms : undefined);
         if (message.type === "response.created") responseAudioEnded = false;
         if ((message.type === "session.output_audio.done" || message.type === "response.done") && !responseAudioEnded) {
@@ -346,11 +364,13 @@ export default function WebexOneAvatarCall() {
           audioInputRef.current?.endSequence();
         }
         if (message.type === "session.input_audio.speech_started" || message.type === "input_audio_buffer.speech_started") {
+          if (spokenBuffer) liveLog("barge-in", { whileSaying: spokenBuffer.slice(-120) });
           anamClientRef.current?.interruptPersona();
           audioInputRef.current?.endSequence();
         }
         if (message.type === "error") {
           const detail = String(message.error?.message || "");
+          liveLog("openai-error", { detail: detail.slice(0, 300) });
           // GPT-Live caps one append at ~500 tokens; if it rejected the answer as too long, resend the shorter version once
           if (/must not exceed 500 tokens/i.test(detail) && lastAnswer && !lastAnswer.retried && lastAnswer.fallback && latestDelegation === lastAnswer.delegationId) {
             lastAnswer.retried = true;

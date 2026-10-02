@@ -1741,6 +1741,14 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
     }
   });
 
+  // What the browser saw in the GPT-Live session (delegations, unanswered speech, what the avatar said, errors), so a
+  // missed answer can be traced: the server only sees the questions that reached it.
+  app.post("/api/webexone/live-log", (req, res) => {
+    const parsed = z.object({ kind: z.string().max(40), detail: z.record(z.unknown()).optional() }).safeParse(req.body);
+    if (parsed.success) console.info(`WebexOne live event [${parsed.data.kind}] ${JSON.stringify(parsed.data.detail ?? {}).slice(0, 500)}`);
+    res.status(204).end();
+  });
+
   const webexOneLiveAnswerSchema = z.object({
     agentId: z.number().int().positive(),
     question: z.string().trim().min(1).max(1000),
