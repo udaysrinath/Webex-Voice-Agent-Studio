@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { resolveAgentProfileId } from "@shared/agent-profiles";
 import { AVATAR_PCM_WORKLET_SOURCE } from "@/lib/avatar-pcm-worklet";
 import { lastUtterance, type TranscriptFragment } from "@shared/live-transcript";
+import { AudioLab, configFromParams, pcmToWav, toDb } from "@/lib/avatar-audio-lab";
 
 type VoiceMode = AnamVoiceMode;
 
@@ -55,7 +56,9 @@ export default function WebexOneAvatarCall() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   // ?debug=1 shows a device diagnostics panel (video size/drops, audio packet timing, OpenAI link stats).
   const debugEnabled = params.get("debug") === "1";
-  const audioStatsRef = useRef({ packets: 0, lastAt: 0, maxGapMs: 0, gapsOver60: 0 });
+  const labRef = useRef<AudioLab | null>(null);
+  const avatarMeterRef = useRef({ rmsDb: -Infinity, peakDb: -Infinity, clipped: 0, ring: [] as Float32Array[], samples: 0, rate: 48000 });
+  const [, setLabTick] = useState(0);
   const [debugText, setDebugText] = useState("");
   const [animMuted, setAnimMuted] = useState(false);
   const anamClientRef = useRef<any>(null);
@@ -248,6 +251,7 @@ export default function WebexOneAvatarCall() {
     realtimePeerRef.current = peer;
     mic.getAudioTracks().forEach((track) => peer.addTrack(track, mic));
 
+    const liveLog = (kind: string, detail: Record<string, unknown> = {}) => { void fetch("/api/webexone/live-log", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind, detail }), keepalive: true }).catch(() => {}); };
     peer.ontrack = async (event) => {
       // Browser resampling replaces the old three-sample averaging filter.
       const context = new AudioContext({ sampleRate: 16000 });
@@ -266,24 +270,25 @@ export default function WebexOneAvatarCall() {
       } finally {
         URL.revokeObjectURL(moduleUrl);
       }
+      // The worklet packs 20 ms of whatever rate the context really runs at, and the browser may not honour 16 kHz
+      // (some device browsers do not). Tell ANAM the true rate, or the avatar's audio would play at the wrong speed.
+      if (context.sampleRate !== 16000) {
+        liveLog("sample-rate-mismatch", { requested: 16000, actual: context.sampleRate });
+        audioInputRef.current = client.createAgentAudioInputStream({ encoding: "pcm_s16le", sampleRate: context.sampleRate, channels: 1 });
+      }
+      labRef.current = new AudioLab(
+        configFromParams(params),
+        context.sampleRate,
+        (chunk) => { if (!stoppingRef.current) audioInputRef.current?.sendAudioChunk(chunk); },
+        () => audioInputRef.current?.endSequence(),
+      );
       const source = context.createMediaStreamSource(event.streams[0]);
       const processor = new AudioWorkletNode(context, "avatar-pcm", { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1] });
       const silent = context.createGain();
       silent.gain.value = 0;
       passthroughProcessorRef.current = processor;
       passthroughGainRef.current = silent;
-      processor.port.onmessage = (message: MessageEvent<ArrayBuffer>) => {
-        const stats = audioStatsRef.current;
-        const now = performance.now();
-        if (stats.lastAt) {
-          const gap = now - stats.lastAt;
-          stats.maxGapMs = Math.max(stats.maxGapMs, gap);
-          if (gap > 60) stats.gapsOver60 += 1;
-        }
-        stats.lastAt = now;
-        stats.packets += 1;
-        if (!stoppingRef.current && message.data.byteLength) audioInputRef.current?.sendAudioChunk(message.data);
-      };
+      processor.port.onmessage = (message: MessageEvent<ArrayBuffer>) => { if (!stoppingRef.current) labRef.current?.push(message.data); };
       source.connect(processor);
       processor.connect(silent);
       silent.connect(context.destination);
@@ -298,7 +303,6 @@ export default function WebexOneAvatarCall() {
     let latestDelegation = "";
     let lastAnswer: { delegationId: string; fallback: string; retried: boolean } | undefined;
     const turns: Array<{ role: "user" | "assistant"; content: string }> = [];
-    const liveLog = (kind: string, detail: Record<string, unknown> = {}) => { void fetch("/api/webexone/live-log", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind, detail }), keepalive: true }).catch(() => {}); };
     let delegatedSinceSpeech = false;
     let unansweredTimer: number | undefined;
     let spokenBuffer = "";
@@ -398,12 +402,17 @@ export default function WebexOneAvatarCall() {
         if (message.type === "response.created") responseAudioEnded = false;
         if ((message.type === "session.output_audio.done" || message.type === "response.done") && !responseAudioEnded) {
           responseAudioEnded = true;
-          audioInputRef.current?.endSequence();
+          labRef.current?.endSequence();
         }
         if (message.type === "session.input_audio.speech_started" || message.type === "input_audio_buffer.speech_started") {
-          if (spokenBuffer) liveLog("barge-in", { whileSaying: spokenBuffer.slice(-120) });
-          anamClientRef.current?.interruptPersona();
-          audioInputRef.current?.endSequence();
+          const wasSpeaking = labRef.current?.speechStarted() ?? false;
+          if (spokenBuffer || wasSpeaking) liveLog("barge-in", { whileSaying: spokenBuffer.slice(-120), localInterrupt: labRef.current?.config.localInterrupt ?? true });
+          // With local interruption off, GPT-Live stops its own audio and the sequence simply runs dry.
+          if (labRef.current?.config.localInterrupt ?? true) {
+            anamClientRef.current?.interruptPersona();
+            labRef.current?.interrupted();
+            labRef.current?.endSequence();
+          }
         }
         if (message.type === "error") {
           const detail = String(message.error?.message || "");
@@ -447,6 +456,8 @@ export default function WebexOneAvatarCall() {
     passthroughGainRef.current = null;
     if (passthroughContextRef.current && passthroughContextRef.current.state !== "closed") await passthroughContextRef.current.close().catch(() => {});
     passthroughContextRef.current = null;
+    labRef.current?.reset();
+    labRef.current = null;
     audioInputRef.current = null;
     lastAnamUserMessageIdRef.current = null;
     if (anamClientRef.current) {
@@ -569,33 +580,88 @@ export default function WebexOneAvatarCall() {
     anamClientRef.current?.stopStreaming().catch(() => {});
   }, []);
 
+  // Debug only: meter and record what the avatar actually plays (ANAM's output), to compare with what we sent it.
   useEffect(() => {
     if (!debugEnabled || !isLive) return;
+    let context: AudioContext | undefined;
+    let processor: ScriptProcessorNode | undefined;
+    let retry: number | undefined;
+    const attach = () => {
+      const stream = videoRef.current?.srcObject as MediaStream | null;
+      if (!stream || !stream.getAudioTracks().length) { retry = window.setTimeout(attach, 1000); return; }
+      context = new AudioContext();
+      const meter = avatarMeterRef.current;
+      meter.rate = context.sampleRate;
+      const source = context.createMediaStreamSource(stream);
+      processor = context.createScriptProcessor(4096, 1, 1);
+      const mute = context.createGain();
+      mute.gain.value = 0;
+      processor.onaudioprocess = (event) => {
+        const input = event.inputBuffer.getChannelData(0);
+        let squares = 0, peak = 0;
+        for (let i = 0; i < input.length; i++) { const v = Math.abs(input[i]); squares += v * v; if (v > peak) peak = v; if (v >= 0.9989) meter.clipped += 1; }
+        meter.rmsDb = toDb(Math.sqrt(squares / input.length));
+        meter.peakDb = toDb(peak);
+        meter.ring.push(Float32Array.from(input));
+        meter.samples += input.length;
+        while (meter.samples > meter.rate * 10 && meter.ring.length > 1) meter.samples -= meter.ring.shift()!.length;
+      };
+      source.connect(processor);
+      processor.connect(mute);
+      mute.connect(context.destination);
+    };
+    attach();
+    return () => { window.clearTimeout(retry); processor?.disconnect(); void context?.close().catch(() => {}); };
+  }, [debugEnabled, isLive]);
+
+  useEffect(() => {
+    if (!debugEnabled || !isLive) return;
+    const fmt = (db: number) => (Number.isFinite(db) ? `${db.toFixed(1)}` : "-inf");
     const timer = window.setInterval(async () => {
       const video = videoRef.current;
       const quality = video?.getVideoPlaybackQuality?.();
-      const audio = audioStatsRef.current;
+      const lab = labRef.current;
       const context = passthroughContextRef.current;
+      const avatar = avatarMeterRef.current;
       let openai = "n/a";
       try {
         const reports = await realtimePeerRef.current?.getStats();
         reports?.forEach((report) => {
-          if (report.type === "inbound-rtp" && report.kind === "audio") {
-            openai = `jitter ${(report.jitter * 1000).toFixed(0)}ms lost ${report.packetsLost} concealed ${report.concealedSamples}/${report.totalSamplesReceived}`;
-          }
+          if (report.type === "inbound-rtp" && report.kind === "audio") openai = `jitter ${(report.jitter * 1000).toFixed(0)}ms lost ${report.packetsLost} concealed ${report.concealedSamples}/${report.totalSamplesReceived}`;
         });
       } catch {}
+      const stats = lab?.stats;
       setDebugText([
-        `mode ${mode}`,
-        `video ${video?.videoWidth}x${video?.videoHeight} dropped ${quality?.droppedVideoFrames}/${quality?.totalVideoFrames} muted ${video?.muted}`,
-        `ctx ${context?.state} rate ${context?.sampleRate} baseLat ${((context?.baseLatency || 0) * 1000).toFixed(0)}ms`,
-        `pcm packets ${audio.packets} maxGap ${audio.maxGapMs.toFixed(0)}ms gaps>60ms ${audio.gapsOver60}`,
-        `openai ${openai}`,
-        `ua ${navigator.userAgent.slice(0, 90)}`,
-      ].join("\n"));
-    }, 1000);
+        `mode ${mode}  video ${video?.videoWidth}x${video?.videoHeight} dropped ${quality?.droppedVideoFrames}/${quality?.totalVideoFrames} muted ${video?.muted}`,
+        `ctx ${context?.state} ${context?.sampleRate} Hz  openai ${openai}`,
+        stats
+          ? `SENT to avatar: rms ${fmt(stats.rmsDb)} peak ${fmt(stats.peakDb)} dBFS  clipped ${stats.clipped}\n  pkts ${stats.packets} sends ${stats.sentChunks} (${stats.sentMs.toFixed(0)} ms)  maxGap ${stats.maxGapMs.toFixed(0)} ms  gaps>60ms ${stats.gapsOver60}`
+          : "SENT to avatar: (no audio yet)",
+        `AVATAR plays:  rms ${fmt(avatar.rmsDb)} peak ${fmt(avatar.peakDb)} dBFS  clipped ${avatar.clipped}`,
+        stats ? `speech-while-avatar-speaking ${stats.speechWhileSpeaking}  interrupts ${stats.interrupts}  sequence ends ${stats.endSequences}` : "",
+        lab ? `config: gain ${lab.config.gainDb} dB | chunk ${lab.config.chunkMs} ms | prebuffer ${lab.config.prebufferMs} ms | idle end ${lab.config.idleEndMs || "off"} | local interrupt ${lab.config.localInterrupt ? "on" : "off"}` : "",
+      ].filter(Boolean).join("\n"));
+    }, 500);
     return () => window.clearInterval(timer);
   }, [debugEnabled, isLive, mode]);
+
+  const cycle = <T,>(values: T[], current: T): T => values[(values.indexOf(current) + 1) % values.length];
+  const download = (blob: Blob | undefined, name: string) => {
+    if (!blob) return;
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = name;
+    link.click();
+    window.setTimeout(() => URL.revokeObjectURL(link.href), 2000);
+  };
+  const avatarWav = () => {
+    const meter = avatarMeterRef.current;
+    if (!meter.samples) return undefined;
+    const merged = new Int16Array(meter.samples);
+    let offset = 0;
+    for (const block of meter.ring) { for (let i = 0; i < block.length; i++) merged[offset + i] = Math.max(-32768, Math.min(32767, Math.round(block[i] * 32767))); offset += block.length; }
+    return pcmToWav(merged, meter.rate);
+  };
 
   if (!Number.isInteger(agentId) || agentId < 1) {
     return <div className="grid min-h-screen place-items-center bg-black p-6 text-white">Missing agent ID.</div>;
@@ -638,13 +704,26 @@ export default function WebexOneAvatarCall() {
         </Button>
       )}
       {debugEnabled && isLive && (
-        <div className="fixed left-2 top-2 z-[102] max-w-[90vw] space-y-2 rounded bg-black/80 p-2 font-mono text-xs text-green-300">
+        <div className="fixed left-2 top-2 z-[102] max-w-[95vw] space-y-2 rounded bg-black/85 p-2 font-mono text-xs text-green-300">
           <pre className="whitespace-pre-wrap">{debugText}</pre>
-          <Button size="sm" variant="outline" onClick={() => {
-            const next = !animMuted;
-            if (videoRef.current) videoRef.current.muted = next;
-            setAnimMuted(next);
-          }}>{animMuted ? "Unmute avatar video" : "Mute avatar video (buzz test)"}</Button>
+          <div className="flex flex-wrap gap-1">
+            {labRef.current && (() => {
+              const lab = labRef.current!;
+              const set = (patch: Partial<typeof lab.config>) => { Object.assign(lab.config, patch); setLabTick((n) => n + 1); };
+              return (
+                <>
+                  <Button size="sm" variant="outline" onClick={() => set({ gainDb: cycle([0, 6, 9], lab.config.gainDb) })}>Gain {lab.config.gainDb} dB</Button>
+                  <Button size="sm" variant="outline" onClick={() => set({ chunkMs: cycle([20, 100, 200], lab.config.chunkMs) })}>Chunk {lab.config.chunkMs} ms</Button>
+                  <Button size="sm" variant="outline" onClick={() => set({ prebufferMs: cycle([0, 150, 300], lab.config.prebufferMs) })}>Prebuffer {lab.config.prebufferMs} ms</Button>
+                  <Button size="sm" variant="outline" onClick={() => set({ idleEndMs: cycle([0, 600], lab.config.idleEndMs) })}>Idle end {lab.config.idleEndMs ? `${lab.config.idleEndMs} ms` : "off"}</Button>
+                  <Button size="sm" variant="outline" onClick={() => set({ localInterrupt: !lab.config.localInterrupt })}>Local interrupt {lab.config.localInterrupt ? "on" : "off"}</Button>
+                </>
+              );
+            })()}
+            <Button size="sm" variant="outline" onClick={() => { const next = !animMuted; if (videoRef.current) videoRef.current.muted = next; setAnimMuted(next); }}>{animMuted ? "Unmute avatar video" : "Mute avatar video"}</Button>
+            <Button size="sm" variant="outline" onClick={() => download(labRef.current?.recentWav(), "sent-to-avatar.wav")}>Save SENT audio</Button>
+            <Button size="sm" variant="outline" onClick={() => download(avatarWav(), "avatar-output.wav")}>Save AVATAR audio</Button>
+          </div>
         </div>
       )}
       {isLive && error && <p role="alert" className="fixed left-1/2 top-4 z-[101] -translate-x-1/2 rounded-lg bg-red-950/90 px-4 py-2 text-sm text-red-100">{error}</p>}
