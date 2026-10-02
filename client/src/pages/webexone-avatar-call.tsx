@@ -333,20 +333,29 @@ export default function WebexOneAvatarCall() {
     let greeted = false;
     let greetingAcknowledged = false;
     let channelOpenedAt = performance.now();
-    const greetingText = `Greet the caller now, in English. Say: “Hi, I'm ${agent?.name || "your WebexOne guide"}. I can answer questions about WebexOne 2026. What would you like to know?” Then wait.`;
-    // GPT-Live opens the conversation when told to (Responses-only commands such as response.create are not available).
+    // The greeting is a commentary append. Over WebRTC an instructions append ("greet the caller now") was accepted but GPT-Live
+    // often did not speak until the caller did (4 of 4 headless Chrome runs, still unreliable with stronger wording),
+    // while commentary was spoken within ~0.7 s every time (3 of 3).
+    const greetingText = `Say this to the caller right now: “Hi, I'm ${agent?.name || "your WebexOne guide"}. I can answer questions about WebexOne 2026. What would you like to know?”`;
+    // Responses-only commands such as response.create are not available under client delegation.
     // The greeting goes out only when GPT-Live is ready AND the avatar can receive its voice, so none of it is lost.
     const tryGreet = (reason: string) => {
       if (greeted || skipGreetingRef.current || !(sawSessionStarted || greetFallback) || !avatarReady || !relayReady) return;
       greeted = true;
       mark("greetSent");
       liveLog("greeting-sent", { reason, tMs: Math.round(performance.now() - channelOpenedAt) });
-      sendEvent({ type: "session.instructions.append", event_id: `webexone_greeting_${Date.now()}`, delegation_id: null, content: greetingText });
+      sendEvent({ type: "session.commentary.append", event_id: `webexone_greeting_${Date.now()}`, delegation_id: null, content: greetingText });
+      window.setTimeout(async () => {
+        if ("firstSpeech" in startMarksRef.current || stoppingRef.current) return;
+        let outbound: Record<string, unknown> = {};
+        try { (await peer.getStats()).forEach((report) => { if (report.type === "outbound-rtp" && report.kind === "audio") outbound = { packetsSent: report.packetsSent, bytesSent: report.bytesSent }; }); } catch {}
+        liveLog("greeting-not-spoken", { after: "6 s", micOutbound: outbound });
+      }, 6000);
       // if it was never acknowledged, say it once more
       window.setTimeout(() => {
         if (!greetingAcknowledged && !stoppingRef.current) {
           liveLog("greeting-resent", { reason: "no acknowledgement after 4 s" });
-          sendEvent({ type: "session.instructions.append", event_id: `webexone_greeting_retry_${Date.now()}`, delegation_id: null, content: greetingText });
+          sendEvent({ type: "session.commentary.append", event_id: `webexone_greeting_retry_${Date.now()}`, delegation_id: null, content: greetingText });
         }
       }, 4000);
     };
@@ -413,7 +422,7 @@ export default function WebexOneAvatarCall() {
           liveLog("session-started", { tMs: Math.round(performance.now() - channelOpenedAt) });
           tryGreet("session.started");
         }
-        if (message.type === "session.instructions.appended") {
+        if (message.type === "session.commentary.appended" && String(message.client_event_id || "").startsWith("webexone_greeting")) {
           greetingAcknowledged = true;
           mark("greetingAcknowledged");
           liveLog("greeting-acknowledged", { tMs: Math.round(performance.now() - channelOpenedAt) });
@@ -473,7 +482,11 @@ export default function WebexOneAvatarCall() {
     const answerSdp = await anamApi.createGPTLiveSession(agent?.id || 0, peer.localDescription?.sdp || "");
     mark("sessionCreated");
     if (stoppingRef.current) { peer.close(); mic.getTracks().forEach((track) => track.stop()); return; }
-    await peer.setRemoteDescription({ type: "answer", sdp: answerSdp });
+    // GPT-Live only runs its timeline (and so only speaks the greeting) when audio arrives. If the answer asks the browser
+    // to use Opus DTX, the browser sends almost nothing while the room is quiet and the greeting waits for the caller.
+    const fmtp = (sdp: string) => (sdp.match(/a=fmtp:\d+ [^\r\n]*/g) || []).slice(0, 4);
+    liveLog("sdp", { offer: fmtp(peer.localDescription?.sdp || ""), answer: fmtp(answerSdp), answerHasDtx: /usedtx=1/.test(answerSdp) });
+    await peer.setRemoteDescription({ type: "answer", sdp: answerSdp.replace(/usedtx=1/g, "usedtx=0") });
     mark("answerSet");
   }, [agent]);
 
