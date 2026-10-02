@@ -13,7 +13,8 @@ test("defaults apply and URL parameters override them, and the settings round-tr
   const config = configFromParams(new URLSearchParams("gain=6&chunk=100&prebuffer=150&idleend=600&interrupt=off&rate=24000"));
   assert.deepEqual(config, { gainDb: 6, chunkMs: 100, prebufferMs: 150, idleEndMs: 600, localInterrupt: false, rate: 24000 });
   assert.deepEqual(configFromParams(configToParams(config)), config);
-  assert.equal(configFromParams(new URLSearchParams("rate=11025")).rate, 16000, "unsupported rates fall back");
+  assert.equal(DEFAULT_LAB_CONFIG.rate, 24000);
+  assert.equal(configFromParams(new URLSearchParams("rate=11025")).rate, 24000, "unsupported rates fall back to the default");
 });
 
 test("gain raises level by the requested amount and limits instead of hard-clipping", () => {

@@ -20,11 +20,12 @@ export interface LabConfig {
 }
 
 /**
- * chunkMs 200: the avatar's output carried a 50 Hz click train (harmonics at 51.7, 100, 149, 202 and 248 Hz in the
- * 9-20 kHz band, which the 16 kHz input cannot contain) that matched the 20 ms chunking, and the buzz on the Webex
- * device was much reduced at 200 ms. See the buzzing notes in the README.
+ * The avatar's output carried a 50 Hz click train (harmonics at 51.7, 100, 149, 202 and 248 Hz in the 9-20 kHz band,
+ * which the 16 kHz input cannot contain) matching the 20 ms chunking. On the Webex device 200 ms chunks reduced the
+ * buzz a lot, and sending 24 kHz (ANAM's engine rate, and GPT-Live's native rate) removed it completely.
+ * See the buzzing notes in the README.
  */
-export const DEFAULT_LAB_CONFIG: LabConfig = { gainDb: 0, chunkMs: 200, prebufferMs: 0, idleEndMs: 0, localInterrupt: true, rate: 16000 };
+export const DEFAULT_LAB_CONFIG: LabConfig = { gainDb: 0, chunkMs: 200, prebufferMs: 0, idleEndMs: 0, localInterrupt: true, rate: 24000 };
 
 export function configFromParams(params: URLSearchParams): LabConfig {
   const number = (key: string, fallback: number) => { const value = Number(params.get(key)); return params.has(key) && Number.isFinite(value) ? value : fallback; };
