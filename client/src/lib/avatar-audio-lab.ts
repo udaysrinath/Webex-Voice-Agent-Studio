@@ -15,9 +15,16 @@ export interface LabConfig {
   idleEndMs: number;
   /** Call interruptPersona() when the caller starts speaking. Off lets GPT-Live stop its own audio instead. */
   localInterrupt: boolean;
+  /** Sample rate of the PCM sent to ANAM. ANAM's engine runs at 24 kHz and GPT-Live produces 24 kHz, so 24000 avoids a resample. */
+  rate: number;
 }
 
-export const DEFAULT_LAB_CONFIG: LabConfig = { gainDb: 0, chunkMs: 20, prebufferMs: 0, idleEndMs: 0, localInterrupt: true };
+/**
+ * chunkMs 200: the avatar's output carried a 50 Hz click train (harmonics at 51.7, 100, 149, 202 and 248 Hz in the
+ * 9-20 kHz band, which the 16 kHz input cannot contain) that matched the 20 ms chunking, and the buzz on the Webex
+ * device was much reduced at 200 ms. See the buzzing notes in the README.
+ */
+export const DEFAULT_LAB_CONFIG: LabConfig = { gainDb: 0, chunkMs: 200, prebufferMs: 0, idleEndMs: 0, localInterrupt: true, rate: 16000 };
 
 export function configFromParams(params: URLSearchParams): LabConfig {
   const number = (key: string, fallback: number) => { const value = Number(params.get(key)); return params.has(key) && Number.isFinite(value) ? value : fallback; };
@@ -27,7 +34,13 @@ export function configFromParams(params: URLSearchParams): LabConfig {
     prebufferMs: Math.max(0, number("prebuffer", DEFAULT_LAB_CONFIG.prebufferMs)),
     idleEndMs: Math.max(0, number("idleend", DEFAULT_LAB_CONFIG.idleEndMs)),
     localInterrupt: params.get("interrupt") !== "off",
+    rate: [16000, 24000, 48000].includes(number("rate", DEFAULT_LAB_CONFIG.rate)) ? number("rate", DEFAULT_LAB_CONFIG.rate) : DEFAULT_LAB_CONFIG.rate,
   };
+}
+
+/** The settings as URL parameters, so a combination found in the panel survives a reload. */
+export function configToParams(config: LabConfig): URLSearchParams {
+  return new URLSearchParams({ gain: String(config.gainDb), chunk: String(config.chunkMs), prebuffer: String(config.prebufferMs), idleend: String(config.idleEndMs), interrupt: config.localInterrupt ? "on" : "off", rate: String(config.rate) });
 }
 
 export interface LabStats {
@@ -80,6 +93,8 @@ export function pcmToWav(samples: Int16Array, sampleRate: number): Blob {
 
 const RECORD_SECONDS = 10;
 const UTTERANCE_GAP_MS = 300;
+/** Audio held back in a partial chunk is sent after this long without new packets, so sentence endings are never stuck in the buffer. */
+const TAIL_FLUSH_MS = 60;
 
 export class AudioLab {
   readonly stats: LabStats = { packets: 0, maxGapMs: 0, gapsOver60: 0, sentChunks: 0, sentMs: 0, peakDb: -Infinity, rmsDb: -Infinity, clipped: 0, endSequences: 0, interrupts: 0, speechWhileSpeaking: 0 };
@@ -89,6 +104,7 @@ export class AudioLab {
   private sequenceOpen = false;
   private lastPacketAt = 0;
   private idleTimer: ReturnType<typeof setTimeout> | undefined;
+  private tailTimer: ReturnType<typeof setTimeout> | undefined;
   private ring: Int16Array[] = [];
   private ringSamples = 0;
   private windowSquares = 0;
@@ -126,6 +142,8 @@ export class AudioLab {
     if (this.holding) { if (pendingMs >= this.config.prebufferMs) { this.holding = false; this.flush(); } }
     else if (pendingMs >= this.config.chunkMs) this.flush();
     this.scheduleIdleEnd();
+    clearTimeout(this.tailTimer);
+    this.tailTimer = setTimeout(() => { this.holding = false; this.flush(); }, TAIL_FLUSH_MS);
   }
 
   /** Send everything held back. */
@@ -162,6 +180,7 @@ export class AudioLab {
 
   reset(): void {
     clearTimeout(this.idleTimer);
+    clearTimeout(this.tailTimer);
     this.pending = []; this.pendingSamples = 0; this.holding = false; this.sequenceOpen = false; this.lastPacketAt = 0;
   }
 

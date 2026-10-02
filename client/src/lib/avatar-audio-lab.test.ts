@@ -1,14 +1,19 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { applyGain, AudioLab, configFromParams, DEFAULT_LAB_CONFIG, pcmToWav, toDb } from "./avatar-audio-lab";
+import { applyGain, AudioLab, configFromParams, configToParams, DEFAULT_LAB_CONFIG, pcmToWav, toDb } from "./avatar-audio-lab";
+
+const PER_PACKET: typeof DEFAULT_LAB_CONFIG = { ...DEFAULT_LAB_CONFIG, chunkMs: 20 };
 
 const RATE = 16000;
 const packet = (value: number, samples = 320) => new Int16Array(samples).fill(value).buffer;
 
-test("defaults reproduce the previous behaviour and URL parameters override them", () => {
+test("defaults apply and URL parameters override them, and the settings round-trip through the URL", () => {
   assert.deepEqual(configFromParams(new URLSearchParams("")), DEFAULT_LAB_CONFIG);
-  const config = configFromParams(new URLSearchParams("gain=6&chunk=100&prebuffer=150&idleend=600&interrupt=off"));
-  assert.deepEqual(config, { gainDb: 6, chunkMs: 100, prebufferMs: 150, idleEndMs: 600, localInterrupt: false });
+  assert.equal(DEFAULT_LAB_CONFIG.chunkMs, 200);
+  const config = configFromParams(new URLSearchParams("gain=6&chunk=100&prebuffer=150&idleend=600&interrupt=off&rate=24000"));
+  assert.deepEqual(config, { gainDb: 6, chunkMs: 100, prebufferMs: 150, idleEndMs: 600, localInterrupt: false, rate: 24000 });
+  assert.deepEqual(configFromParams(configToParams(config)), config);
+  assert.equal(configFromParams(new URLSearchParams("rate=11025")).rate, 16000, "unsupported rates fall back");
 });
 
 test("gain raises level by the requested amount and limits instead of hard-clipping", () => {
@@ -22,7 +27,7 @@ test("gain raises level by the requested amount and limits instead of hard-clipp
 
 test("20 ms packets are forwarded one by one by default", () => {
   const sent: ArrayBuffer[] = [];
-  const lab = new AudioLab({ ...DEFAULT_LAB_CONFIG }, RATE, (chunk) => sent.push(chunk), () => {});
+  const lab = new AudioLab({ ...PER_PACKET }, RATE, (chunk) => sent.push(chunk), () => {});
   for (let i = 0; i < 5; i++) lab.push(packet(100));
   assert.equal(sent.length, 5);
   assert.equal(lab.stats.sentMs, 100);
@@ -41,7 +46,7 @@ test("chunking joins packets into larger sends without losing samples", () => {
 test("pre-buffering holds the start of an utterance, then releases it", () => {
   const sent: ArrayBuffer[] = [];
   let now = 0;
-  const lab = new AudioLab({ ...DEFAULT_LAB_CONFIG, prebufferMs: 100, chunkMs: 20 }, RATE, (chunk) => sent.push(chunk), () => {}, () => now);
+  const lab = new AudioLab({ ...PER_PACKET, prebufferMs: 100 }, RATE, (chunk) => sent.push(chunk), () => {}, () => now);
   for (let i = 0; i < 4; i++) { lab.push(packet(5)); now += 20; }
   assert.equal(sent.length, 0, "nothing is sent while the pre-buffer fills");
   lab.push(packet(5)); now += 20;
@@ -67,7 +72,7 @@ test("endSequence flushes held audio and ends the sequence once", () => {
 
 test("idle end closes the sequence after silence", async () => {
   let ended = 0;
-  const lab = new AudioLab({ ...DEFAULT_LAB_CONFIG, idleEndMs: 30 }, RATE, () => {}, () => { ended++; });
+  const lab = new AudioLab({ ...PER_PACKET, idleEndMs: 30 }, RATE, () => {}, () => { ended++; });
   lab.push(packet(1));
   await new Promise((resolve) => setTimeout(resolve, 80));
   assert.equal(ended, 1);
@@ -75,7 +80,7 @@ test("idle end closes the sequence after silence", async () => {
 
 test("meters report level, clipping and main-thread stalls", () => {
   let now = 0;
-  const lab = new AudioLab({ ...DEFAULT_LAB_CONFIG }, RATE, () => {}, () => {}, () => now);
+  const lab = new AudioLab({ ...PER_PACKET }, RATE, () => {}, () => {}, () => now);
   for (let i = 0; i < 30; i++) { lab.push(packet(16384)); now += i === 10 ? 120 : 20; }
   assert.ok(Math.abs(lab.stats.rmsDb - -6) < 0.1);
   assert.equal(lab.stats.gapsOver60, 1);
@@ -104,4 +109,15 @@ test("speech detected while the avatar is talking is counted, speech after it fi
   lab.endSequence();
   assert.equal(lab.speechStarted(), false, "after the sequence ended");
   assert.equal(lab.stats.speechWhileSpeaking, 1);
+});
+
+test("the end of an utterance is not left in the buffer waiting for the next one", async () => {
+  const sent: ArrayBuffer[] = [];
+  const lab = new AudioLab({ ...DEFAULT_LAB_CONFIG, chunkMs: 200 }, RATE, (chunk) => sent.push(chunk), () => {});
+  for (let i = 0; i < 12; i++) lab.push(packet(1)); // 240 ms: one full chunk sent, 40 ms left over
+  assert.equal(sent.length, 1);
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  assert.equal(sent.length, 2, "the leftover is flushed shortly after the audio stops");
+  assert.equal(lab.stats.sentMs, 240);
+  lab.reset();
 });

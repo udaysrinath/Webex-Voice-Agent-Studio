@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { resolveAgentProfileId } from "@shared/agent-profiles";
 import { AVATAR_PCM_WORKLET_SOURCE } from "@/lib/avatar-pcm-worklet";
 import { lastUtterance, type TranscriptFragment } from "@shared/live-transcript";
-import { AudioLab, configFromParams, pcmToWav, toDb } from "@/lib/avatar-audio-lab";
+import { AudioLab, configFromParams, configToParams, pcmToWav, toDb } from "@/lib/avatar-audio-lab";
 
 type VoiceMode = AnamVoiceMode;
 
@@ -243,7 +243,8 @@ export default function WebexOneAvatarCall() {
   }, [floatToPcm16, sendRecognizedTurn]);
 
   const startRealtimePassthrough = useCallback(async (client: any) => {
-    const audioInput = client.createAgentAudioInputStream({ encoding: "pcm_s16le", sampleRate: 16000, channels: 1 });
+    const labConfig = configFromParams(params);
+    const audioInput = client.createAgentAudioInputStream({ encoding: "pcm_s16le", sampleRate: labConfig.rate, channels: 1 });
     audioInputRef.current = audioInput;
     const mic = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
     realtimeMicRef.current = mic;
@@ -254,7 +255,7 @@ export default function WebexOneAvatarCall() {
     const liveLog = (kind: string, detail: Record<string, unknown> = {}) => { void fetch("/api/webexone/live-log", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind, detail }), keepalive: true }).catch(() => {}); };
     peer.ontrack = async (event) => {
       // Browser resampling replaces the old three-sample averaging filter.
-      const context = new AudioContext({ sampleRate: 16000 });
+      const context = new AudioContext({ sampleRate: labConfig.rate });
       passthroughContextRef.current = context;
       // A page that starts without a click can leave the audio context suspended, which silences everything sent to the avatar.
       void fetch("/api/webexone/live-log", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind: "audio-context", detail: { state: context.state, sampleRate: context.sampleRate } }), keepalive: true }).catch(() => {});
@@ -272,12 +273,12 @@ export default function WebexOneAvatarCall() {
       }
       // The worklet packs 20 ms of whatever rate the context really runs at, and the browser may not honour 16 kHz
       // (some device browsers do not). Tell ANAM the true rate, or the avatar's audio would play at the wrong speed.
-      if (context.sampleRate !== 16000) {
-        liveLog("sample-rate-mismatch", { requested: 16000, actual: context.sampleRate });
+      if (context.sampleRate !== labConfig.rate) {
+        liveLog("sample-rate-mismatch", { requested: labConfig.rate, actual: context.sampleRate });
         audioInputRef.current = client.createAgentAudioInputStream({ encoding: "pcm_s16le", sampleRate: context.sampleRate, channels: 1 });
       }
       labRef.current = new AudioLab(
-        configFromParams(params),
+        labConfig,
         context.sampleRate,
         (chunk) => { if (!stoppingRef.current) audioInputRef.current?.sendAudioChunk(chunk); },
         () => audioInputRef.current?.endSequence(),
@@ -713,10 +714,17 @@ export default function WebexOneAvatarCall() {
               return (
                 <>
                   <Button size="sm" variant="outline" onClick={() => set({ gainDb: cycle([0, 6, 9], lab.config.gainDb) })}>Gain {lab.config.gainDb} dB</Button>
-                  <Button size="sm" variant="outline" onClick={() => set({ chunkMs: cycle([20, 100, 200], lab.config.chunkMs) })}>Chunk {lab.config.chunkMs} ms</Button>
+                  <Button size="sm" variant="outline" onClick={() => set({ chunkMs: cycle([20, 100, 200, 400], lab.config.chunkMs) })}>Chunk {lab.config.chunkMs} ms</Button>
                   <Button size="sm" variant="outline" onClick={() => set({ prebufferMs: cycle([0, 150, 300], lab.config.prebufferMs) })}>Prebuffer {lab.config.prebufferMs} ms</Button>
                   <Button size="sm" variant="outline" onClick={() => set({ idleEndMs: cycle([0, 600], lab.config.idleEndMs) })}>Idle end {lab.config.idleEndMs ? `${lab.config.idleEndMs} ms` : "off"}</Button>
                   <Button size="sm" variant="outline" onClick={() => set({ localInterrupt: !lab.config.localInterrupt })}>Local interrupt {lab.config.localInterrupt ? "on" : "off"}</Button>
+                  <Button size="sm" variant="outline" onClick={() => {
+                    // the sample rate is fixed when the audio context is created, so changing it reloads the page with these settings
+                    const next = configToParams({ ...lab.config, rate: lab.config.rate === 16000 ? 24000 : 16000 });
+                    next.set("agentId", String(agentId));
+                    next.set("debug", "1");
+                    window.location.search = next.toString();
+                  }}>Send rate {lab.config.rate} (tap to switch + reload)</Button>
                 </>
               );
             })()}
