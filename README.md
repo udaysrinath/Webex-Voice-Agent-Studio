@@ -120,7 +120,15 @@ SOCIO_EVENT_ID=60274        # WebexOne 2026
 |------|----------------------|
 | ANAM native | Anam transcribes, the app sends each turn to `/api/chat`, which runs a tool-calling loop over the registry |
 | ANAM + Deepgram | Deepgram transcribes, then the same `/api/chat` loop |
-| ANAM + GPT-Live | The GPT-Live session is created with the registry tools; the browser forwards each call to the server |
+| ANAM + GPT-Live | GPT-Live client delegation (see below): the browser answers each delegation from the knowledge base and hands GPT-Live the facts |
+
+**ANAM + GPT-Live (client delegation).** The WebexOne session is created with `delegation: { type: "client" }`, so the app, not a second Responses model, is the backend. GPT-Live decides to delegate any WebexOne question (and acknowledges almost at once), emits `session.delegation.created`, and the browser:
+
+1. reads the caller's question from the `session.input_transcript.delta` fragments,
+2. calls `POST /api/webexone/live-answer`, which retrieves the matching cards (and live attendance numbers when asked) from the knowledge base,
+3. sends them back with `session.commentary.append`, and GPT-Live composes the spoken answer from those facts.
+
+Small talk and background conversation are not delegated (see the delegation policy in `server/webexone-live.ts`). The headless benchmark `node --env-file=.env --import tsx scripts/live-bench.mts <responses|app> [repeats]` to time it: it speaks synthesized questions into a GPT-Live session in real time and reports, from the end of the caller's speech, when delegation started, when the backend result arrived and when the first useful audio came back, plus whether the spoken answer contained the expected facts. Measured on this repo's knowledge base: Responses delegation about 2.8 s, client delegation with our own answer model about 2.3 s, client delegation with facts handed to GPT-Live about 1.0 to 1.6 s.
 
 The browser and the chat loop both execute tools through the server (`POST /api/webexone/tools/:name`, or `executeWebexOneTool` in the chat loop), so validation and secrets stay server-side. To add a tool, add one entry to the registry and one line to the guidance text. WebexOne agents only get these tools; the retail, HR, banking and messaging tools are not offered to them.
 

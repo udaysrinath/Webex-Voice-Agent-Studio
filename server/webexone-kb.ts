@@ -111,7 +111,13 @@ function detectIntent(query: string): Intent {
 }
 
 // ---- retrieval --------------------------------------------------------------------------------------------------
-export interface RetrieveOptions { limit?: number; maxChars?: number }
+export interface RetrieveOptions {
+  limit?: number;
+  maxChars?: number;
+  /** How long to wait for the query embedding before answering from lexical ranking alone. Spoken answers cannot wait on a slow API call. */
+  embedBudgetMs?: number;
+}
+const EMBED_BUDGET_MS = Number(process.env.WEBEXONE_EMBED_BUDGET_MS) || 700;
 export interface Retrieved { id: string; title: string; kind: CardKind; score: number }
 export interface RetrieveResult { text: string; cards: Retrieved[] }
 
@@ -145,8 +151,11 @@ export async function retrieveWebexOne(rawQuery: string, options: RetrieveOption
   // semantic
   let semantic: number[] | undefined;
   if (index.semantic) {
-    const vector = await embedQuery(query, index.dimensions, index.embeddingModel);
+    const pending = embedQuery(query, index.dimensions, index.embeddingModel);
+    const budget = options.embedBudgetMs ?? EMBED_BUDGET_MS;
+    const vector = await Promise.race([pending, new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), budget))]);
     if (vector) semantic = index.cards.map((card) => Math.max(dot(vector, card.qVec!), dot(vector, card.tVec!) * 0.92));
+    else console.warn(`WebexOne query embedding exceeded ${budget}ms; answering from lexical ranking (the embedding still completes and is cached).`);
   }
 
   // exact entity matches: titles, aliases, session codes
@@ -218,4 +227,15 @@ export async function checkWebexOneRelevance(query: string, previousUserTurn?: s
     if (best >= WEBEXONE_RELEVANCE_MIN) break;
   }
   return { relevant: best === null || best >= WEBEXONE_RELEVANCE_MIN, score: best };
+}
+
+/** Load the index and open the embedding connection before the first caller, so the first question is as fast as the rest. */
+export async function warmWebexOneKnowledge(): Promise<void> {
+  try {
+    const index = loadKnowledgeBase();
+    if (index.semantic) await embedQuery("where is lunch", index.dimensions, index.embeddingModel);
+    console.info(`WebexOne KB ready: ${index.cards.length} cards${index.semantic ? ", semantic search warm" : ", lexical only"}.`);
+  } catch (error) {
+    console.warn("WebexOne KB warm-up failed:", error instanceof Error ? error.message : error);
+  }
 }

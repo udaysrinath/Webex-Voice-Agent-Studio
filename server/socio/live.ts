@@ -1,7 +1,7 @@
 import { formatEventTime, getSocioConfig, resolveComponentIds, socioPaginate, socioQuery, SocioConfigError } from "./client";
 
 /** Cheap intent check so text-chat paths only hit the live API when the question is about live numbers. */
-export const LIVE_INTENT = /\b(?:checked[- ]?in|check[- ]?ins?|how many (?:people|attendees|are)|attendance|capacity|is (?:it|the(?: \w+){1,5}) full|seats? (?:left|available|remaining)|spots? left|crowd|happening now|right now|in progress|currently)\b/i;
+export const LIVE_INTENT = /\b(?:checked[- ]?in|check-?ins\b|how many (?:people|attendees|are)|attendance|capacity|is (?:it|the(?: \w+){1,5}) full|seats? (?:left|available|remaining)|spots? left|crowd|happening now|right now|in progress|currently)\b/i;
 
 const LIVE_TTL_MS = 15_000;
 const MAX_RESULTS = 5;

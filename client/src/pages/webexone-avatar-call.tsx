@@ -119,18 +119,6 @@ export default function WebexOneAvatarCall() {
     }
   }, [agent]);
 
-  const runWebexOneTool = useCallback(async (name: string, args: Record<string, unknown>): Promise<string> => {
-    if (!agent) throw new Error("WebexOne agent is unavailable.");
-    const response = await fetch(`/api/webexone/tools/${encodeURIComponent(name)}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ agentId: agent.id, arguments: args }),
-    });
-    const body = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(body.error || "The WebexOne tool failed.");
-    return body.result || "No result was returned. Do not guess.";
-  }, [agent]);
-
   const startDeepgram = useCallback(async () => {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
     micStreamRef.current = stream;
@@ -294,59 +282,67 @@ export default function WebexOneAvatarCall() {
 
     const events = peer.createDataChannel("oai-events");
     let responseAudioEnded = false;
-    const pendingTools = new Map<string, { completed: boolean; calls: Map<string, Promise<void>> }>();
-    const continueDelegation = (delegationId: string) => {
-      const pending = pendingTools.get(delegationId);
-      if (!pending?.completed || !pending.calls.size) return;
-      pendingTools.delete(delegationId);
-      void Promise.all(pending.calls.values()).then(() => {
-        if (!stoppingRef.current && events.readyState === "open") {
-          events.send(JSON.stringify({ type: "response.create", event_id: `webexone_continue_${Date.now()}` }));
-        }
-      });
+    // Client delegation: GPT-Live asks us for help (session.delegation.created) and we answer from the knowledge base.
+    // Its transcript deltas are the only record of what the caller said, so keep them per turn.
+    let turnTranscript = "";
+    let lastDeltaAt = 0;
+    let assistantTranscript = "";
+    let latestDelegation = "";
+    const turns: Array<{ role: "user" | "assistant"; content: string }> = [];
+    const sendEvent = (event: Record<string, unknown>) => { if (events.readyState === "open" && !stoppingRef.current) events.send(JSON.stringify(event)); };
+    const flushAssistant = () => { if (assistantTranscript.trim()) turns.push({ role: "assistant", content: assistantTranscript.trim() }); assistantTranscript = ""; };
+    const answerDelegation = async (delegationId: string) => {
+      latestDelegation = delegationId;
+      // the last transcript fragment can land just after the delegation event
+      for (let waited = 0; !turnTranscript.trim() && waited < 400; waited += 50) await new Promise((resolve) => window.setTimeout(resolve, 50));
+      const question = turnTranscript.trim();
+      turnTranscript = "";
+      flushAssistant();
+      let content: string;
+      if (!question) {
+        if (!stoppingRef.current && latestDelegation === delegationId) sendEvent({ type: "session.commentary.append", event_id: `webexone_repeat_${Date.now()}`, delegation_id: delegationId, content: "Say that you did not catch the question and ask the caller to repeat it." });
+        return;
+      }
+      try {
+        const response = await fetch("/api/webexone/live-answer", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ agentId: agent?.id, question, history: turns.slice(-6) }),
+        });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(body.error || "lookup failed");
+        content = body.content;
+      } catch (cause) {
+        console.warn("WebexOne lookup failed", cause);
+        content = "The lookup is unavailable right now. Tell the caller you could not check that and suggest the WebexOne app or the Registration & Information Desk.";
+      }
+      // a newer question arrived while this one was being looked up: its answer is stale
+      if (stoppingRef.current || latestDelegation !== delegationId) return;
+      turns.push({ role: "user", content: question });
+      sendEvent({ type: "session.commentary.append", event_id: `webexone_answer_${Date.now()}`, delegation_id: delegationId, content });
     };
     events.onmessage = (event) => {
       try {
         const message = JSON.parse(event.data);
-        if (message.type === "session.started" && !skipGreetingRef.current) {
-          events.send(JSON.stringify({ type: "response.create", event_id: `webexone_greeting_${Date.now()}` }));
+        if (message.type === "session.started") {
+          // greet through the live model; Responses-only commands such as response.create are not available here
+          sendEvent({ type: "session.instructions.append", event_id: `webexone_greeting_${Date.now()}`, delegation_id: null, content: `Greet the caller now. Say: “Hi, I'm ${agent?.name || "your WebexOne guide"}. I can answer questions about WebexOne 2026. What would you like to know?” Then wait.` });
         }
-        if (message.type === "response.event" && message.delegation_id) {
-          const nested = message.event;
-          const delegationId = String(message.delegation_id);
-          if (nested?.type === "response.output_item.done" && nested.item?.type === "function_call" && nested.item.call_id) {
-            const pending = pendingTools.get(delegationId) || { completed: false, calls: new Map<string, Promise<void>>() };
-            pendingTools.set(delegationId, pending);
-            const callId = String(nested.item.call_id);
-            if (!pending.calls.has(callId)) {
-              const task = (async () => {
-                let output: string;
-                try {
-                  output = await runWebexOneTool(String(nested.item.name), JSON.parse(nested.item.arguments || "{}"));
-                } catch (cause) {
-                  output = `Reference lookup failed: ${cause instanceof Error ? cause.message : "Unknown error"}. Do not invent an answer.`;
-                }
-                if (!stoppingRef.current && events.readyState === "open") {
-                  events.send(JSON.stringify({ type: "response.item.create", event_id: `webexone_result_${callId}`, item: { type: "function_call_output", call_id: callId, output } }));
-                }
-              })();
-              pending.calls.set(callId, task);
-            }
-          }
-          if (nested?.type === "response.completed") {
-            const pending = pendingTools.get(delegationId);
-            if (pending) {
-              pending.completed = true;
-              continueDelegation(delegationId);
-            }
-          }
+        if (message.type === "session.input_transcript.delta") {
+          // a long pause since the previous fragment means this is a new utterance, not the rest of the last one
+          const now = performance.now();
+          if (now - lastDeltaAt > 1800) turnTranscript = "";
+          lastDeltaAt = now;
+          turnTranscript += message.delta || "";
+          responseAudioEnded = false;
         }
+        if (message.type === "session.output_transcript.delta") assistantTranscript += message.delta || "";
+        if (message.type === "session.delegation.created" && message.delegation?.target === "client" && message.delegation?.id) void answerDelegation(String(message.delegation.id));
         if (message.type === "response.created") responseAudioEnded = false;
         if ((message.type === "session.output_audio.done" || message.type === "response.done") && !responseAudioEnded) {
           responseAudioEnded = true;
           audioInputRef.current?.endSequence();
         }
-        if (message.type === "session.input_transcript.delta") responseAudioEnded = false;
         if (message.type === "session.input_audio.speech_started" || message.type === "input_audio_buffer.speech_started") {
           anamClientRef.current?.interruptPersona();
           audioInputRef.current?.endSequence();
@@ -362,7 +358,7 @@ export default function WebexOneAvatarCall() {
     await waitForIceGathering(peer);
     const answerSdp = await anamApi.createGPTLiveSession(agent?.id || 0, peer.localDescription?.sdp || "");
     await peer.setRemoteDescription({ type: "answer", sdp: answerSdp });
-  }, [agent, runWebexOneTool]);
+  }, [agent]);
 
   const stopCall = useCallback(async () => {
     stoppingRef.current = true;
