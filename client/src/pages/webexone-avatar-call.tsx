@@ -338,7 +338,7 @@ export default function WebexOneAvatarCall() {
         const message = JSON.parse(event.data);
         if (message.type === "session.started" && !skipGreetingRef.current) {
           // greet through the live model; Responses-only commands such as response.create are not available here
-          sendEvent({ type: "session.instructions.append", event_id: `webexone_greeting_${Date.now()}`, delegation_id: null, content: `Greet the caller now. Say: “Hi, I'm ${agent?.name || "your WebexOne guide"}. I can answer questions about WebexOne 2026. What would you like to know?” Then wait.` });
+          sendEvent({ type: "session.instructions.append", event_id: `webexone_greeting_${Date.now()}`, delegation_id: null, content: `Greet the caller now, in English. Say: “Hi, I'm ${agent?.name || "your WebexOne guide"}. I can answer questions about WebexOne 2026. What would you like to know?” Then wait.` });
         }
         if (message.type === "session.input_transcript.delta") {
           delegatedSinceSpeech = false;

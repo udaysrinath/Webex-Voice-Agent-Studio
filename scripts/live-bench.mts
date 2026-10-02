@@ -23,6 +23,7 @@ const CASES_ALL: Array<{ q: string; expect: string[][] }> = [
   { q: "Is there anywhere to eat for breakfast?", expect: [["Pool Terrace"]] },
   { q: "Where is the capture the flag lab?", expect: [["Violet"]] },
   { q: "Where is registration?", expect: [["Level 3", "Foyer"]] },
+  { q: "WebexOne में लंच कहाँ मिलेगा?", expect: [["Pool Terrace"]] },
   { q: "What is the wifi password?", expect: [["WebexOne2026"]] },
   { q: "When is the closing keynote?", expect: [["October 8", "Thursday"], ["2"]] },
   { q: "Where is Capture the Flag?", expect: [["Violet"]] },

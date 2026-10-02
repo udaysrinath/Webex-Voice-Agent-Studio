@@ -1784,12 +1784,12 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
       if (unreliable) extras.push(`[Quick reference]\n${await coreReference()}`.slice(0, 1150));
       const facts = extras.slice(0, 3).map((pack) => `Other facts that might apply to what the caller asked:\n${pack}`);
       const rules = unreliable
-        ? `Transcript guess (may be misheard or background talk): "${question}". Go with what you actually heard; if unsure what was asked, ask the caller to repeat. Otherwise answer from the facts in one or two short sentences, saying who it applies to. If the facts lack the answer, say you don't have that detail and suggest the WebexOne app or the Registration & Information Desk on Level 3.`
-        : `Transcript guess (may include background talk or errors): "${question}". Go with what you heard. Answer from the facts in one or two short sentences, saying who it applies to. If the facts lack the answer, say you don't have that detail and suggest the WebexOne app or the Registration & Information Desk on Level 3.`;
+        ? `Reply in English only. Transcript guess (may be misheard or background talk): "${question}". Go with what you actually heard; if unsure what was asked, ask the caller to repeat. Otherwise answer from the facts in one or two short sentences, saying who it applies to. If the facts lack the answer, say you don't have that detail and suggest the WebexOne app or the Registration & Information Desk on Level 3.`
+        : `Reply in English only. Transcript guess (may include background talk or errors): "${question}". Go with what you heard. Answer from the facts in one or two short sentences, saying who it applies to. If the facts lack the answer, say you don't have that detail and suggest the WebexOne app or the Registration & Information Desk on Level 3.`;
       // session.commentary.append rejects more than 500 tokens (dense text runs ~3 characters per token): keep it near 1450 characters
       const mainFacts = [live ? `[Live event numbers, report exactly]\n${live}` : "", primaryFacts].filter(Boolean).join("\n---\n") || "(no matching facts found)";
       const content = `Facts:\n${mainFacts.slice(0, Math.max(200, 1450 - rules.length - 12))}\n\n${rules}`;
-      const fallback = `Facts:\n${mainFacts.slice(0, 500)}\n\nAnswer the caller's question from these facts in one or two short sentences. If they lack the answer, say you don't have that detail.`;
+      const fallback = `Facts:\n${mainFacts.slice(0, 500)}\n\nReply in English only. Answer the caller's question from these facts in one or two short sentences. If they lack the answer, say you don't have that detail.`;
       const found = { cards: retrieval.cards };
       const ms = Math.round(performance.now() - started);
       console.info(`WebexOne live answer ${ms}ms: heard ${JSON.stringify(parsed.data.question.slice(0, 90))} → asked ${JSON.stringify(question.slice(0, 80))} -> ${found.cards.map((card) => card.title.slice(0, 36)).join(" | ") || "nothing"}`);

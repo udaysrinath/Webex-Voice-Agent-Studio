@@ -375,7 +375,8 @@ const PACK_CHARS = 1150;
  */
 export async function retrieveForTranscript(transcript: string, previousQuestion?: string, options: { budgetMs?: number } = {}): Promise<TranscriptRetrieval> {
   const index = loadKnowledgeBase();
-  const text = transcript.replace(/\s+/g, " ").trim();
+  // Background audio in another language leaks in as non-Latin script ("...WebexOne है"); search only on the Latin text.
+  const text = transcript.replace(/[^\u0000-\u024F\u2010-\u206F]+/g, " ").replace(/\s+/g, " ").trim();
   const words = text.split(" ").filter(Boolean);
   const clauses = text.split(/(?<=[.?!;])\s*|,\s+/).map((clause) => clause.trim()).filter((clause) => clause.split(" ").length >= 2);
   let candidates = words.length <= 4 ? [text] : [...new Set([...clauses, words.slice(-6).join(" "), words.slice(-10).join(" "), text])].slice(0, 6);
