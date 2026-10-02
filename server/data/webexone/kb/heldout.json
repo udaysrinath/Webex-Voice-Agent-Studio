@@ -1,0 +1,515 @@
+{
+ "description": "Held-out retrieval cases written after the build was tuned on golden.json. Not used for tuning.",
+ "cases": [
+  {
+   "id": "h001",
+   "question": "hey where can I grab some food around here",
+   "all": [
+    [
+     "Pool Terrace & Palm Court",
+     "restaurant",
+     "Moonshine",
+     "dining"
+    ]
+   ]
+  },
+  {
+   "id": "h002",
+   "question": "what time is breakfast on thursday",
+   "all": [
+    [
+     "7:00"
+    ],
+    [
+     "8:45"
+    ]
+   ]
+  },
+  {
+   "id": "h003",
+   "question": "is lunch included for everyone or just training people",
+   "all": [
+    [
+     "Training"
+    ],
+    [
+     "All attendees",
+     "everyone",
+     "all attendees"
+    ]
+   ]
+  },
+  {
+   "id": "h004",
+   "question": "how do I get my badge",
+   "all": [
+    [
+     "badge"
+    ],
+    [
+     "ID",
+     "identification"
+    ]
+   ]
+  },
+  {
+   "id": "h005",
+   "question": "what do I need to bring to check in",
+   "all": [
+    [
+     "government"
+    ]
+   ]
+  },
+  {
+   "id": "h006",
+   "question": "when does registration close on the last day",
+   "all": [
+    [
+     "3:30"
+    ]
+   ]
+  },
+  {
+   "id": "h007",
+   "question": "can I get online somewhere, what's the wifi",
+   "all": [
+    [
+     "WebexOne2026"
+    ]
+   ]
+  },
+  {
+   "id": "h008",
+   "question": "is there someone who can help if I get hurt",
+   "all": [
+    [
+     "EMT",
+     "First Aid",
+     "first aid"
+    ]
+   ]
+  },
+  {
+   "id": "h009",
+   "question": "I need a pharmacy",
+   "all": [
+    [
+     "CVS"
+    ]
+   ]
+  },
+  {
+   "id": "h010",
+   "question": "closest hospital",
+   "all": [
+    [
+     "Dell Seton",
+     "St. David"
+    ]
+   ]
+  },
+  {
+   "id": "h011",
+   "question": "how much is valet parking overnight",
+   "all": [
+    [
+     "$68"
+    ]
+   ]
+  },
+  {
+   "id": "h012",
+   "question": "how do I get to the hotel from the airport",
+   "all": [
+    [
+     "Route 20",
+     "rideshare",
+     "Capital Metro",
+     "CapMetro"
+    ]
+   ]
+  },
+  {
+   "id": "h013",
+   "question": "how far is the airport",
+   "all": [
+    [
+     "10 miles",
+     "10 mile"
+    ]
+   ]
+  },
+  {
+   "id": "h014",
+   "question": "what time does the show floor open on thursday",
+   "all": [
+    [
+     "10:30"
+    ],
+    [
+     "3:30"
+    ]
+   ]
+  },
+  {
+   "id": "h015",
+   "question": "when does the expo close on wednesday",
+   "all": [
+    [
+     "5:30"
+    ]
+   ]
+  },
+  {
+   "id": "h016",
+   "question": "where do the keynotes happen",
+   "all": [
+    [
+     "Manchester Ballroom"
+    ]
+   ]
+  },
+  {
+   "id": "h017",
+   "question": "what time is the first keynote",
+   "all": [
+    [
+     "9:00"
+    ]
+   ]
+  },
+  {
+   "id": "h018",
+   "question": "is Tom Brady really speaking",
+   "all": [
+    [
+     "Tom Brady"
+    ],
+    [
+     "Thursday",
+     "October 8"
+    ]
+   ]
+  },
+  {
+   "id": "h019",
+   "question": "where is the party on wednesday night",
+   "all": [
+    [
+     "Pool Terrace & Palm Court"
+    ],
+    [
+     "Evening Celebration",
+     "celebration"
+    ]
+   ]
+  },
+  {
+   "id": "h020",
+   "question": "what band is playing at the evening celebration",
+   "all": [
+    [
+     "Allstars",
+     "Red Hot Revolution"
+    ]
+   ]
+  },
+  {
+   "id": "h021",
+   "question": "is there anything for women in tech",
+   "all": [
+    [
+     "Women in Technology"
+    ]
+   ]
+  },
+  {
+   "id": "h022",
+   "question": "where can I donate or help out a charity",
+   "all": [
+    [
+     "Covenant House"
+    ]
+   ]
+  },
+  {
+   "id": "h023",
+   "question": "can I get my picture taken professionally",
+   "all": [
+    [
+     "headshot",
+     "Headshot"
+    ]
+   ]
+  },
+  {
+   "id": "h024",
+   "question": "where is the coffee",
+   "all": [
+    [
+     "Caf\u00e9",
+     "Cafe",
+     "coffee"
+    ]
+   ]
+  },
+  {
+   "id": "h025",
+   "question": "where do the training classes happen",
+   "all": [
+    [
+     "Level 4",
+     "Agenda Builder",
+     "room"
+    ]
+   ]
+  },
+  {
+   "id": "h026",
+   "question": "do I have to register for capture the flag",
+   "all": [
+    [
+     "No",
+     "no prior registration",
+     "not required",
+     "No advance"
+    ]
+   ]
+  },
+  {
+   "id": "h027",
+   "question": "how do I sign up for training labs",
+   "all": [
+    [
+     "Agenda Builder"
+    ]
+   ]
+  },
+  {
+   "id": "h028",
+   "question": "what is a CLS code",
+   "all": [
+    [
+     "CLS",
+     "code"
+    ]
+   ]
+  },
+  {
+   "id": "h029",
+   "question": "tell me about the Webex Calling Customer Assist class",
+   "all": [
+    [
+     "Customer Assist"
+    ],
+    [
+     "Indigo"
+    ]
+   ]
+  },
+  {
+   "id": "h030",
+   "question": "who is speaking at the closing keynote",
+   "all": [
+    [
+     "Tom Brady"
+    ],
+    [
+     "Anurag Dhingra",
+     "Snorre Kjesbu"
+    ]
+   ]
+  },
+  {
+   "id": "h031",
+   "question": "what is the AI innovator award for",
+   "all": [
+    [
+     "AI Innovator"
+    ]
+   ]
+  },
+  {
+   "id": "h032",
+   "question": "who is nominated for workspace wizard",
+   "all": [
+    [
+     "Workspace Wizard"
+    ]
+   ]
+  },
+  {
+   "id": "h033",
+   "question": "how many sponsors are there at gold level",
+   "all": [
+    [
+     "Bandwidth"
+    ],
+    [
+     "CDW"
+    ]
+   ]
+  },
+  {
+   "id": "h034",
+   "question": "tell me about AWS as a sponsor",
+   "all": [
+    [
+     "AWS",
+     "Amazon Web Services"
+    ]
+   ]
+  },
+  {
+   "id": "h035",
+   "question": "what new devices were announced",
+   "all": [
+    [
+     "Ceiling Speaker Pro",
+     "Room Bar",
+     "Board Pro",
+     "RoomOS"
+    ]
+   ]
+  },
+  {
+   "id": "h036",
+   "question": "what is Webex AI Agent",
+   "all": [
+    [
+     "AI Agent"
+    ]
+   ]
+  },
+  {
+   "id": "h037",
+   "question": "how do I download the app",
+   "all": [
+    [
+     "iOS",
+     "Android"
+    ]
+   ]
+  },
+  {
+   "id": "h038",
+   "question": "I can't log in to the app",
+   "all": [
+    [
+     "SSO",
+     "IT administrator",
+     "Webex account"
+    ]
+   ]
+  },
+  {
+   "id": "h039",
+   "question": "what is the phone number for registration help",
+   "all": [
+    [
+     "855-420-2368",
+     "408-940-8062"
+    ]
+   ]
+  },
+  {
+   "id": "h040",
+   "question": "is the hotel sold out",
+   "all": [
+    [
+     "sold out"
+    ]
+   ]
+  },
+  {
+   "id": "h041",
+   "question": "what is the group rate at the fairmont",
+   "all": [
+    [
+     "$295"
+    ]
+   ]
+  },
+  {
+   "id": "h042",
+   "question": "what's the dress code",
+   "all": [
+    [
+     "dress",
+     "Dress",
+     "attire"
+    ]
+   ]
+  },
+  {
+   "id": "h043",
+   "question": "is there a mothers room",
+   "all": [
+    [
+     "Mother"
+    ]
+   ]
+  },
+  {
+   "id": "h044",
+   "question": "what is the Cisco Sound Studio",
+   "all": [
+    [
+     "Sound Studio"
+    ],
+    [
+     "music",
+     "sound"
+    ]
+   ]
+  },
+  {
+   "id": "h045",
+   "question": "where is the registration desk located exactly",
+   "all": [
+    [
+     "Level 3 Foyer"
+    ]
+   ]
+  },
+  {
+   "id": "h046",
+   "question": "what's happening in austin that week",
+   "all": [
+    [
+     "Austin City Limits",
+     "ACL"
+    ]
+   ]
+  },
+  {
+   "id": "h047",
+   "question": "when does the technical training program begin",
+   "all": [
+    [
+     "October 5",
+     "Monday"
+    ]
+   ]
+  },
+  {
+   "id": "h048",
+   "question": "what's a quick takes session",
+   "all": [
+    [
+     "Quick Take"
+    ]
+   ]
+  },
+  {
+   "id": "h049",
+   "question": "where is the expo theater",
+   "all": [
+    [
+     "Level 3"
+    ]
+   ]
+  }
+ ]
+}

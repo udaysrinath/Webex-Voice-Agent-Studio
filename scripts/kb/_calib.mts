@@ -1,0 +1,12 @@
+import * as fs from "node:fs";
+import { checkWebexOneRelevance } from "../../server/webexone-kb";
+const on = [...JSON.parse(fs.readFileSync("server/data/webexone/kb/heldout.json", "utf8")).cases, ...JSON.parse(fs.readFileSync("server/data/webexone/kb/golden.json", "utf8")).cases].map((c: any) => c.question);
+const off = ["yeah I'll call you back after the meeting","did you see the game last night","can you pass me that pen","what do you want for dinner tonight","the traffic this morning was terrible","hey how's your kid doing","I think we should order pizza","my flight got delayed again","okay sounds good thanks","that's hilarious","I'm so tired today","did you get my email about the budget","let's go grab a beer later","she said she'd be here at six","I need to charge my phone","that was a great movie","what time are we meeting for dinner","my daughter has a recital tomorrow","can you believe the weather","I forgot my laptop charger at home","are you coming to the afterparty","tell the client we'll ship it friday","oh nice I love that song","how was your weekend","we should really get going"];
+const score = async (qs: string[]) => { const out: number[] = []; for (const q of qs) out.push((await checkWebexOneRelevance(q)).score ?? 1); return out; };
+const a = await score(on), b = await score(off);
+const pct = (xs: number[], p: number) => [...xs].sort((x, y) => x - y)[Math.floor((xs.length - 1) * p)].toFixed(3);
+console.log("on-topic  n=" + a.length, "min", pct(a, 0), "p5", pct(a, 0.05), "p25", pct(a, 0.25), "median", pct(a, 0.5));
+console.log("off-topic n=" + b.length, "median", pct(b, 0.5), "p75", pct(b, 0.75), "p95", pct(b, 0.95), "max", pct(b, 1));
+for (const t of [0.25, 0.3, 0.35, 0.4, 0.45]) console.log(`threshold ${t}: on-topic kept ${a.filter((x) => x >= t).length}/${a.length}, off-topic blocked ${b.filter((x) => x < t).length}/${b.length}`);
+console.log("lowest on-topic:", on.map((q, i) => [a[i], q] as const).sort((x, y) => x[0] - y[0]).slice(0, 5).map(([s, q]) => `${s.toFixed(3)} ${q}`).join(" | "));
+console.log("highest off-topic:", off.map((q, i) => [b[i], q] as const).sort((x, y) => y[0] - x[0]).slice(0, 5).map(([s, q]) => `${s.toFixed(3)} ${q}`).join(" | "));

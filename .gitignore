@@ -7,3 +7,6 @@ vite.config.ts.*
 *.tar.gz
 .claude/
 .env
+
+# WebexOne KB build cache (LLM and embedding responses; regenerated on demand)
+server/data/webexone/kb/.cache/
