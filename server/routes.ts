@@ -2132,8 +2132,9 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
                   ? { enableAudioPassthrough: true } as any
                   : isWebexOneAgent ? { voiceDetectionOptions: WEBEXONE_VOICE_DETECTION } : {}),
               },
-          // Passthrough sessions on slower devices (Webex Room/Board) stayed at a low adaptive bitrate.
-          ...(data.mode === "gpt-live-anam" ? { sessionOptions: { videoQuality: "high" } } : {}),
+          // Start at the high bitrate profile in every mode: on slower devices (Webex Room/Board) the default adaptive
+          // profile stayed low and looked pixelated.
+          sessionOptions: { videoQuality: "high" },
         }),
       });
 
