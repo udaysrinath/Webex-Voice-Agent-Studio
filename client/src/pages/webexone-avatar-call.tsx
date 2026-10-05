@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useLocation, useSearch } from "wouter";
+import { useSearch } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { calculateAdaptiveMicThreshold, MIC_NOISE_WINDOW_SIZE } from "@/lib/microphone-noise-gate";
 import { agentsApi, anamApi, chatApi, type AnamVoiceMode, type ChatMessage } from "@/lib/api";
@@ -35,7 +35,6 @@ async function waitForIceGathering(peer: RTCPeerConnection): Promise<void> {
 
 export default function WebexOneAvatarCall() {
   const search = useSearch();
-  const [, setLocation] = useLocation();
   const params = new URLSearchParams(search);
   const agentId = Number(params.get("agentId"));
   const requestedMode = params.get("mode");
@@ -776,10 +775,6 @@ export default function WebexOneAvatarCall() {
           <div className="relative z-10 flex w-full max-w-2xl flex-col items-center gap-3">
             {error && <p role="alert" className="rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-200">{error}</p>}
           </div>
-          <Button variant="ghost" size="sm" className="absolute left-3 top-3 z-10 text-white/40 hover:text-white" onClick={() => {
-            if (document.fullscreenElement) void document.exitFullscreen().catch(() => {});
-            setLocation("/");
-          }}>Back</Button>
         </div>
       )}
 
