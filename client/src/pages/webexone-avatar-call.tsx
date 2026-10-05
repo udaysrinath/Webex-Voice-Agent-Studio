@@ -763,7 +763,7 @@ export default function WebexOneAvatarCall() {
             <span className="relative">
               <span aria-hidden className={`absolute -inset-6 rounded-[2.5rem] bg-cyan-400/25 blur-3xl ${isStarting ? "" : "animate-pulse"}`} />
               <img
-                src={`/api/anam/avatar-image?agentId=${agentId}`}
+                src={`/api/anam/avatar-still?agentId=${agentId}`}
                 alt=""
                 onError={(event) => { event.currentTarget.style.display = "none"; }}
                 className={`relative h-[min(50vh,560px)] w-auto max-w-[80vw] rounded-3xl object-cover shadow-2xl ring-1 ring-white/25 transition-opacity ${isStarting ? "opacity-60" : "opacity-100"}`}

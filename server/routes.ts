@@ -2165,11 +2165,13 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
   // The avatar's still image for the start screen. Served from our own server (not hot-linked) so a kiosk network that
   // blocks third-party image hosts, or a slow Anam image CDN, cannot leave the start screen empty.
   let avatarImage: { avatarId: string; type: string; body: Buffer; fetchedAt: number } | undefined;
-  app.get("/api/anam/avatar-image", async (req, res) => {
+  app.get("/api/anam/avatar-still", async (req, res) => {
     const apiKey = process.env.ANAM_API_KEY;
     if (!apiKey) return res.status(404).end();
     const wanted = process.env.ANAM_AVATAR_ID?.trim();
-    const send = (image: NonNullable<typeof avatarImage>) => res.setHeader("Content-Type", image.type).setHeader("Cache-Control", "public, max-age=3600").send(image.body);
+    // "no-cache" makes the browser revalidate on every load (a cheap 304 when nothing changed), so changing ANAM_AVATAR_ID takes
+    // effect immediately; a time-based cache left the start screen showing the previous avatar next to the new live one.
+    const send = (image: NonNullable<typeof avatarImage>) => res.setHeader("Content-Type", image.type).setHeader("Cache-Control", "no-cache").setHeader("ETag", `"${image.avatarId}-${image.body.length}"`).send(image.body);
     if (avatarImage && avatarImage.avatarId === (wanted || "") && Date.now() - avatarImage.fetchedAt < 3_600_000) return send(avatarImage);
     try {
       const headers = { Authorization: `Bearer ${apiKey}` };
