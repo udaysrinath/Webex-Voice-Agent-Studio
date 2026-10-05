@@ -2179,7 +2179,12 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
       let avatarId = wanted || "";
       if (wanted) {
         const avatar = await fetch(`https://api.anam.ai/v1/avatars/${encodeURIComponent(wanted)}`, { headers, signal: AbortSignal.timeout(8000) });
-        if (avatar.ok) { const body = await avatar.json() as { imageUrl?: string; landscapeImageUrl?: string }; url = body.imageUrl || body.landscapeImageUrl; }
+        if (avatar.ok) {
+          // sourceImageUrl is the full square portrait. imageUrl has pointed at Anam's landscape render of the video
+          // framing for some avatars, which made the start screen a different crop from what was designed.
+          const body = await avatar.json() as { sourceImageUrl?: string; imageUrl?: string; landscapeImageUrl?: string };
+          url = body.sourceImageUrl || body.imageUrl || body.landscapeImageUrl;
+        }
       }
       if (!url) { // no avatar id configured (or unknown): use the persona that matches the agent's name
         const agentId = Number(req.query.agentId);
