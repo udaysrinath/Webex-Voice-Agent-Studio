@@ -760,13 +760,16 @@ export default function WebexOneAvatarCall() {
             aria-label={isStarting ? "Connecting" : "Tap to start"}
             className="relative z-10 my-auto flex min-h-0 flex-col items-center gap-6 rounded-3xl p-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white/70 disabled:cursor-wait"
           >
+            {/* The live video is a 1152x768 (3:2) slice of the square portrait: all of its width, rows 132-900 of 1152 (measured by
+                matching a video frame against the image). The same crop here keeps the avatar framed identically when the call starts. */}
             <span className="relative">
               <span aria-hidden className={`absolute -inset-6 rounded-[2.5rem] bg-cyan-400/25 blur-3xl ${isStarting ? "" : "animate-pulse"}`} />
               <img
                 src={`/api/anam/avatar-still?agentId=${agentId}`}
                 alt=""
                 onError={(event) => { event.currentTarget.style.display = "none"; }}
-                className={`relative h-[min(50vh,560px)] w-auto max-w-[80vw] rounded-3xl object-cover shadow-2xl ring-1 ring-white/25 transition-opacity ${isStarting ? "opacity-60" : "opacity-100"}`}
+                style={{ objectPosition: "50% 34.4%" }}
+                className={`relative aspect-[3/2] h-[min(46vh,520px)] w-auto max-w-[88vw] rounded-3xl object-cover shadow-2xl ring-1 ring-white/25 transition-opacity ${isStarting ? "opacity-60" : "opacity-100"}`}
               />
             </span>
             <span className="text-4xl font-semibold tracking-tight sm:text-6xl">Ask me anything</span>
