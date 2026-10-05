@@ -2164,30 +2164,36 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
 
   // The avatar's still image for the start screen. Served from our own server (not hot-linked) so a kiosk network that
   // blocks third-party image hosts, or a slow Anam image CDN, cannot leave the start screen empty.
-  let avatarImage: { type: string; body: Buffer; fetchedAt: number } | undefined;
+  let avatarImage: { avatarId: string; type: string; body: Buffer; fetchedAt: number } | undefined;
   app.get("/api/anam/avatar-image", async (req, res) => {
     const apiKey = process.env.ANAM_API_KEY;
     if (!apiKey) return res.status(404).end();
-    if (avatarImage && Date.now() - avatarImage.fetchedAt < 3_600_000) {
-      res.setHeader("Content-Type", avatarImage.type).setHeader("Cache-Control", "public, max-age=3600");
-      return res.send(avatarImage.body);
-    }
+    const wanted = process.env.ANAM_AVATAR_ID?.trim();
+    const send = (image: NonNullable<typeof avatarImage>) => res.setHeader("Content-Type", image.type).setHeader("Cache-Control", "public, max-age=3600").send(image.body);
+    if (avatarImage && avatarImage.avatarId === (wanted || "") && Date.now() - avatarImage.fetchedAt < 3_600_000) return send(avatarImage);
     try {
-      const agentId = Number(req.query.agentId);
-      const agent = Number.isInteger(agentId) && agentId > 0 ? await storage.getAgent(agentId) : undefined;
-      const personas = await fetch("https://api.anam.ai/v1/personas?perPage=100", { headers: { Authorization: `Bearer ${apiKey}` }, signal: AbortSignal.timeout(8000) });
-      if (!personas.ok) return res.status(502).end();
-      const list = (await personas.json() as { data?: Array<{ name?: string; avatar?: { id?: string; imageUrl?: string; landscapeImageUrl?: string } }> }).data || [];
-      const wanted = process.env.ANAM_AVATAR_ID?.trim();
-      const match = (wanted ? list.find((persona) => persona.avatar?.id === wanted) : undefined)
-        || list.find((persona) => agent && persona.name?.toLowerCase() === agent.name.toLowerCase());
-      const url = match?.avatar?.imageUrl || match?.avatar?.landscapeImageUrl;
+      const headers = { Authorization: `Bearer ${apiKey}` };
+      let url: string | undefined;
+      let avatarId = wanted || "";
+      if (wanted) {
+        const avatar = await fetch(`https://api.anam.ai/v1/avatars/${encodeURIComponent(wanted)}`, { headers, signal: AbortSignal.timeout(8000) });
+        if (avatar.ok) { const body = await avatar.json() as { imageUrl?: string; landscapeImageUrl?: string }; url = body.imageUrl || body.landscapeImageUrl; }
+      }
+      if (!url) { // no avatar id configured (or unknown): use the persona that matches the agent's name
+        const agentId = Number(req.query.agentId);
+        const agent = Number.isInteger(agentId) && agentId > 0 ? await storage.getAgent(agentId) : undefined;
+        const personas = await fetch("https://api.anam.ai/v1/personas?perPage=100", { headers, signal: AbortSignal.timeout(8000) });
+        if (!personas.ok) return res.status(502).end();
+        const list = (await personas.json() as { data?: Array<{ name?: string; avatar?: { id?: string; imageUrl?: string; landscapeImageUrl?: string } }> }).data || [];
+        const match = list.find((persona) => agent && persona.name?.toLowerCase() === agent.name.toLowerCase());
+        url = match?.avatar?.imageUrl || match?.avatar?.landscapeImageUrl;
+        avatarId = match?.avatar?.id || "";
+      }
       if (!url) return res.status(404).end();
       const image = await fetch(url, { signal: AbortSignal.timeout(8000) });
       if (!image.ok) return res.status(502).end();
-      avatarImage = { type: image.headers.get("content-type") || "image/png", body: Buffer.from(await image.arrayBuffer()), fetchedAt: Date.now() };
-      res.setHeader("Content-Type", avatarImage.type).setHeader("Cache-Control", "public, max-age=3600");
-      return res.send(avatarImage.body);
+      avatarImage = { avatarId: wanted || avatarId, type: image.headers.get("content-type") || "image/png", body: Buffer.from(await image.arrayBuffer()), fetchedAt: Date.now() };
+      return send(avatarImage);
     } catch (error) {
       console.warn("ANAM avatar image unavailable:", error instanceof Error ? error.message : error);
       return res.status(502).end();
