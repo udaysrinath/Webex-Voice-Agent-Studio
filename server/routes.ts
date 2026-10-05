@@ -256,7 +256,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         voice: resolveRealtimeVoice(agent.voiceModel, agent.gender),
         tools: profile.tools.filter((tool) => tool.name === "hr_submit_feedback" || tool.name === "voice_end_call").map((tool) =>
           tool.name === "voice_end_call"
-            ? { ...tool, description: "End the HR feedback call after the summary was delivered and the caller confirms they are done, or when the caller explicitly says goodbye or asks to end the call. Never end with an unanswered question or pending delivery." }
+            ? { ...tool, description: "After successful summary delivery, end the HR call once the full closing message finishes. No additional caller confirmation or goodbye is required. Also allow an explicit caller hang-up request. Never end while delivery is pending or failed." }
             : tool,
         ),
       }, {
@@ -287,6 +287,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return res.status(500).json({ error: "Unable to start the voice session." });
     }
   });
+
 
   app.post("/api/live/hr/guardrail", (req, res) => {
     const parsed = z.object({ text: z.string().max(10_000) }).safeParse(req.body);

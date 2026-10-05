@@ -768,7 +768,7 @@ export const RETAIL_STORE_ASSISTANT_USE_CASE: VoiceUseCase = {
 };
 
 export const HR_FEEDBACK_SUBJECT = "Alex Morgan";
-export const HR_FEEDBACK_CLOSING = `Got it, thank you. I've sent your summary to the Webex space for ${HR_FEEDBACK_SUBJECT}'s development review. Appreciate your time.`;
+export const HR_FEEDBACK_CLOSING = `I've sent your summary to the Webex space for ${HR_FEEDBACK_SUBJECT}'s development review. Appreciate your time. Have a nice day.`;
 
 export const HR_FEEDBACK_USE_CASE: VoiceUseCase = {
   id: "hr-colleague-feedback",

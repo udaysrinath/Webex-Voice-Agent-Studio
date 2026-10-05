@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { TranscriptEntry, VoiceActivity, VoiceAgentState } from "@/hooks/use-voice-agent";
 import { hasHrClosingFinished } from "@/lib/hr-call-completion";
+import { hasHrDeliveryClosing, shouldNudgeHrClosing } from "@/lib/hr-closing-nudge";
+import { HrLiveToolCoordinator, type HrLiveToolCall } from "@/lib/hr-live-tools";
+import { HR_FEEDBACK_CLOSING } from "@shared/use-cases";
 
 interface UseGptLiveVoiceAgentOptions {
   agentId: number;
@@ -42,6 +45,13 @@ export function useGptLiveVoiceAgent(options: UseGptLiveVoiceAgentOptions) {
   const closeSpeechHeardRef = useRef(false);
   const closeTextRef = useRef("");
   const closeEnergyRef = useRef<{ energy: number; duration: number } | null>(null);
+  const toolsRef = useRef<HrLiveToolCoordinator | null>(null);
+  const closingStartedRef = useRef(false);
+  const closingNudgeCountRef = useRef(0);
+  const closingNudgeAtRef = useRef(0);
+  const closingNudgeEventRef = useRef("");
+  const closingFailureReportedRef = useRef(false);
+  const deliveredResultRef = useRef<any>(null);
 
   useEffect(() => {
     onEventRef.current = options.onEvent;
@@ -67,7 +77,9 @@ export function useGptLiveVoiceAgent(options: UseGptLiveVoiceAgentOptions) {
   const sendEvent = useCallback((event: Record<string, unknown>) => {
     if (channelRef.current?.readyState === "open") {
       channelRef.current.send(JSON.stringify(event));
+      return true;
     }
+    return false;
   }, []);
 
   const commitAssistantTranscript = useCallback(() => {
@@ -117,7 +129,7 @@ export function useGptLiveVoiceAgent(options: UseGptLiveVoiceAgentOptions) {
     latestUserTextRef.current = text;
     const explicitHangup = /\b(goodbye|bye|hang up|end (?:the )?call|get off (?:the )?call|disconnect|we can (?:get off|end) (?:the )?call)\b/i.test(text);
     const politeCompletion = /\b(thanks?|thank you|that's all|that is all|i'm done|i am done|no,? that'?s all|nothing else)\b/i.test(text);
-    if (explicitHangup || (feedbackDeliveredRef.current && politeCompletion)) {
+    if (!closingStartedRef.current && !automaticCloseRef.current && (explicitHangup || (feedbackDeliveredRef.current && politeCompletion))) {
       automaticCloseRef.current = true;
       closeRequestedAtRef.current = Date.now();
       closeResponseSeenRef.current = false;
@@ -139,105 +151,63 @@ export function useGptLiveVoiceAgent(options: UseGptLiveVoiceAgentOptions) {
     }, USER_TRANSCRIPT_TURN_GAP_MS);
   }, [runGuardrail]);
 
-  const executeToolCall = useCallback(async (envelope: any) => {
-    const item = envelope?.event?.item;
-    if (envelope?.event?.type !== "response.output_item.done" || item?.type !== "function_call") return;
+  const executeToolCall = useCallback(async (item: HrLiveToolCall): Promise<any> => {
     const name = String(item.name || "");
     let args: Record<string, unknown> = {};
-    try {
-      args = JSON.parse(item.arguments || "{}");
-    } catch {}
-
-    if (name === "voice_end_call") {
-      const explicitHangup = /\b(goodbye|bye|hang up|end (?:the )?call|get off (?:the )?call|disconnect|we can (?:get off|end) (?:the )?call)\b/i.test(latestUserTextRef.current);
-      const allowed = explicitHangup || feedbackDeliveredRef.current;
-      const result = allowed
-        ? { success: true, result: "Close the call after the closing message finishes. Do not ask for another goodbye." }
-        : { success: false, error: "Do not end yet: deliver the confirmed feedback summary first, or wait for an explicit goodbye or hang-up request." };
-      onEventRef.current?.({
-        type: "toolCallStarted",
-        toolName: name,
-        args: {},
-        timestamp: Date.now(),
-      });
-      sendEvent({
-        type: "response.item.create",
-        event_id: `tool_result_${Date.now()}`,
-        item: { type: "function_call_output", call_id: item.call_id, output: JSON.stringify(result) },
-      });
-      if (allowed) {
-        onEventRef.current?.({ type: "toolCallCompleted", toolName: name, success: true, result: result.result, timestamp: Date.now() });
-        if (!automaticCloseRef.current) {
-          automaticCloseRef.current = true;
-          closeRequestedAtRef.current = Date.now();
-          closeResponseSeenRef.current = false;
-          closeQuietSinceRef.current = 0;
-          closeLastTranscriptAtRef.current = 0;
-          closeSpeechHeardRef.current = false;
-          closeTextRef.current = "";
-          closeEnergyRef.current = null;
-        }
-      } else {
-        onEventRef.current?.({ type: "toolCallCompleted", toolName: name, success: false, error: result.error, timestamp: Date.now() });
-        sendEvent({ type: "response.create", event_id: `continue_${Date.now()}` });
-      }
-      return;
-    }
-
-    if (name !== "hr_submit_feedback") return;
-
+    try { args = JSON.parse(item.arguments || "{}"); } catch {}
     onEventRef.current?.({ type: "toolCallStarted", toolName: name, args: {}, timestamp: Date.now() });
-    try {
-      const response = await fetch("/api/live/hr/tool", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, arguments: args }),
-      });
-      const result = await response.json();
-      onEventRef.current?.({
-        type: "toolCallCompleted",
-        toolName: name,
-        success: result.success === true,
-        result: result.result,
-        error: result.error,
-        data: result.data,
-        durationMs: result.durationMs,
-        timestamp: Date.now(),
-      });
-      if (result.success) {
-        feedbackDeliveredRef.current = true;
-        // Successful delivery completes the interview. The caller already
-        // confirmed the summary; no second goodbye is required.
+    let result: any;
+    if (name === "voice_end_call") {
+      const explicitHangup = /\b(goodbye|bye|hang up|end (?:the )?call|get off (?:the )?call|disconnect)\b/i.test(latestUserTextRef.current);
+      const allowed = explicitHangup || feedbackDeliveredRef.current;
+      result = allowed
+        ? { success: true, result: "The application will close after the full closing message finishes. Do not ask for another goodbye." }
+        : { success: false, error: "Deliver the confirmed summary first, or wait for an explicit caller hang-up request." };
+      if (allowed && !automaticCloseRef.current) {
         automaticCloseRef.current = true;
         closeRequestedAtRef.current = Date.now();
         closeResponseSeenRef.current = false;
         closeQuietSinceRef.current = 0;
-        closeLastTranscriptAtRef.current = 0;
-        closeSpeechHeardRef.current = false;
-        closeTextRef.current = "";
-        closeEnergyRef.current = null;
-        onEventRef.current?.({ type: "feedbackDelivered", timestamp: Date.now() });
       }
-      sendEvent({
-        type: "response.item.create",
-        event_id: `tool_result_${Date.now()}`,
-        item: {
-          type: "function_call_output",
-          call_id: item.call_id,
-          output: JSON.stringify(result),
-        },
-      });
-      sendEvent({ type: "response.create", event_id: `continue_${Date.now()}` });
-    } catch {
-      onEventRef.current?.({
-        type: "toolCallCompleted",
-        toolName: name,
-        success: false,
-        error: "The feedback delivery service was unavailable.",
-        timestamp: Date.now(),
-      });
+    } else if (name === "hr_submit_feedback") {
+      // A backend retry must not deliver the same interview a second time.
+      if (feedbackDeliveredRef.current) result = deliveredResultRef.current;
+      else {
+        try {
+          const response = await fetch("/api/live/hr/tool", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name, arguments: args }), signal: AbortSignal.timeout(20000),
+          });
+          result = await response.json();
+          if (!response.ok) result = { success: false, error: result.error || "Feedback delivery failed." };
+          if (closedRef.current) return result;
+          if (result.success === true) {
+            deliveredResultRef.current = result;
+            feedbackDeliveredRef.current = true;
+            automaticCloseRef.current = true;
+            closeRequestedAtRef.current = Date.now();
+            closeResponseSeenRef.current = false;
+            closeQuietSinceRef.current = 0;
+            closeLastTranscriptAtRef.current = 0;
+            closeSpeechHeardRef.current = false;
+            closeTextRef.current = "";
+            closeEnergyRef.current = null;
+            onEventRef.current?.({ type: "feedbackDelivered", timestamp: Date.now() });
+          }
+        } catch {
+          result = { success: false, error: "Delivery could not be confirmed. Do not claim success or automatically retry the submission." };
+        }
+      }
+    } else {
+      result = { success: false, error: "Unsupported HR tool." };
     }
-  }, [sendEvent]);
+    if (!closedRef.current) onEventRef.current?.({
+      type: "toolCallCompleted", toolName: name, success: result.success === true,
+      result: result.result, error: result.error, data: result.data,
+      durationMs: result.durationMs, timestamp: Date.now(),
+    });
+    return result;
+  }, []);
 
   const handleLiveEvent = useCallback((event: any) => {
     switch (event?.type) {
@@ -278,7 +248,14 @@ export function useGptLiveVoiceAgent(options: UseGptLiveVoiceAgentOptions) {
         setActivity("user_speaking");
         break;
       case "response.event":
-        void executeToolCall(event);
+        void toolsRef.current?.handle(event);
+        break;
+      case "session.commentary.appended":
+      case "session.instructions.appended":
+        if (event.client_event_id === closingNudgeEventRef.current) {
+          onEventRef.current?.({ type: "hrClosingAccepted", timestamp: Date.now() });
+          console.info("[HR closing] Live update accepted", closingNudgeCountRef.current);
+        }
         break;
       case "session.closed":
         commitUserTranscript();
@@ -288,12 +265,22 @@ export function useGptLiveVoiceAgent(options: UseGptLiveVoiceAgentOptions) {
         break;
       case "error":
         setError(event.error?.message || "The voice session encountered an error.");
+        console.error("[HR Live]", event.error?.message || "Voice session error", event.client_event_id);
+        onEventRef.current?.({ type: "hrLiveError", clientEventId: event.client_event_id, timestamp: Date.now() });
         break;
     }
   }, [commitAssistantTranscript, commitUserTranscript, executeToolCall, scheduleUserGuardrailCheck, sendEvent]);
 
   const cleanup = useCallback(() => {
     closedRef.current = true;
+    toolsRef.current?.dispose();
+    toolsRef.current = null;
+    closingNudgeCountRef.current = 0;
+    closingNudgeAtRef.current = 0;
+    closingNudgeEventRef.current = "";
+    closingFailureReportedRef.current = false;
+    closingStartedRef.current = false;
+    deliveredResultRef.current = null;
     channelRef.current?.close();
     channelRef.current = null;
     peerRef.current?.close();
@@ -327,9 +314,57 @@ export function useGptLiveVoiceAgent(options: UseGptLiveVoiceAgentOptions) {
     }
   }, []);
 
+  const requestDeliveryClosing = useCallback(() => {
+    if (closedRef.current || !feedbackDeliveredRef.current) return;
+    if (!closingStartedRef.current) {
+      closingStartedRef.current = true;
+      closeRequestedAtRef.current = Date.now();
+      closeTextRef.current = "";
+      closeResponseSeenRef.current = false;
+      closeSpeechHeardRef.current = false;
+      closeQuietSinceRef.current = 0;
+      closeEnergyRef.current = null;
+    }
+    closingNudgeAtRef.current = Date.now();
+    automaticCloseRef.current = true;
+    closingNudgeCountRef.current++;
+    const eventId = "hr_closing_" + Date.now() + "_" + closingNudgeCountRef.current;
+    closingNudgeEventRef.current = eventId;
+    const retry = closingNudgeCountRef.current > 1;
+    const sent = sendEvent({
+      type: retry ? "session.instructions.append" : "session.commentary.append",
+      event_id: eventId, delegation_id: null,
+      content: retry
+        ? "The summary was successfully delivered to Webex. Finish the interview now in your normal voice: confirm the summary was sent to the Webex space for Alex Morgan's development review, thank the caller, and end with Have a nice day. Do not narrate these instructions, ask another question, or send feedback again."
+        : HR_FEEDBACK_CLOSING,
+    });
+    onEventRef.current?.({ type: "hrClosingRequested", attempt: closingNudgeCountRef.current, sent, timestamp: Date.now() });
+    if (!sent) setError("Your summary was sent, but the closing update could not reach the voice connection.");
+  }, [sendEvent]);
+
   const start = useCallback(async () => {
     cleanup();
     closedRef.current = false;
+    toolsRef.current = new HrLiveToolCoordinator({
+      execute: executeToolCall,
+      result: (call, result) => {
+        if (!sendEvent({ type: "response.item.create", event_id: `hr_result_${call.call_id}_${Date.now()}`,
+          item: { type: "function_call_output", call_id: call.call_id, output: JSON.stringify(result) } })) {
+          throw new Error("The HR tool result could not reach the voice connection.");
+        }
+      },
+      continue: () => {
+        if (!sendEvent({ type: "response.create", event_id: `hr_continue_${Date.now()}` })) {
+          setError("The HR backend could not be resumed.");
+        }
+        if (feedbackDeliveredRef.current && !closingStartedRef.current) requestDeliveryClosing();
+      },
+      error: (message) => {
+        setError(message);
+        onEventRef.current?.({ type: "hrBackendError", message, timestamp: Date.now() });
+        if (feedbackDeliveredRef.current && !closingStartedRef.current) requestDeliveryClosing();
+      },
+    });
     setError(null);
     setTranscript([]);
     setUserPartial("");
@@ -380,8 +415,8 @@ export function useGptLiveVoiceAgent(options: UseGptLiveVoiceAgentOptions) {
             }
           });
         } catch {}
+        if (closedRef.current || activePeer !== peerRef.current) return;
         const audioElement = audioRef.current;
-        if (!closeResponseSeenRef.current) return;
         if (audioLevel !== null && audioLevel >= 0.015) closeSpeechHeardRef.current = true;
         const playbackQuiet = audioLevel !== null
           ? audioLevel < 0.015
@@ -393,11 +428,23 @@ export function useGptLiveVoiceAgent(options: UseGptLiveVoiceAgentOptions) {
         const transcriptQuietFor = Date.now() - closeLastTranscriptAtRef.current;
         // Never use a seven-second deadline measured from tool delivery: this
         // closing line itself can take longer than that to speak.
-        const playbackFinished = hasHrClosingFinished({
+        const fullClosing = !feedbackDeliveredRef.current || hasHrDeliveryClosing(closeTextRef.current);
+        const playbackFinished = fullClosing && hasHrClosingFinished({
           responseSeen: closeResponseSeenRef.current, speechHeard: closeSpeechHeardRef.current,
           audioLevel, quietForMs: quietFor, transcriptQuietForMs: transcriptQuietFor,
           closingText: closeTextRef.current,
         });
+        if (feedbackDeliveredRef.current && shouldNudgeHrClosing({
+          attempts: closingNudgeCountRef.current,
+          sinceNudgeMs: Date.now() - closingNudgeAtRef.current,
+          transcriptQuietMs: closeLastTranscriptAtRef.current ? transcriptQuietFor : elapsed,
+          audioLevel, text: closeTextRef.current,
+        })) requestDeliveryClosing();
+        if (feedbackDeliveredRef.current && elapsed > 60000 && !fullClosing && !closingFailureReportedRef.current) {
+          closingFailureReportedRef.current = true;
+          setError("Your summary was sent to Webex, but the voice confirmation has not completed. You can end the call manually.");
+          onEventRef.current?.({ type: "hrClosingFailed", timestamp: Date.now() });
+        }
         if (elapsed > 900 && playbackFinished) {
           if (closeWatchTimerRef.current) clearInterval(closeWatchTimerRef.current);
           closeWatchTimerRef.current = null;
@@ -453,7 +500,7 @@ export function useGptLiveVoiceAgent(options: UseGptLiveVoiceAgentOptions) {
       setActivity("idle");
       cleanup();
     }
-  }, [appendTranscript, cleanup, commitAssistantTranscript, handleLiveEvent, options.agentId, sendEvent]);
+  }, [appendTranscript, cleanup, commitAssistantTranscript, executeToolCall, handleLiveEvent, options.agentId, requestDeliveryClosing, sendEvent]);
 
   const stop = useCallback(() => {
     commitUserTranscript();
