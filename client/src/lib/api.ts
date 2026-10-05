@@ -110,10 +110,12 @@ export interface ChatRequest {
   systemPrompt?: string;
   agentId?: number;
   history?: ChatMessage[];
+  ignoreOffTopic?: boolean;
 }
 
 export interface ChatResponse {
   response: string;
+  ignored?: boolean;
   verified?: boolean;
   toolUsed?: string;
   toolResult?: {

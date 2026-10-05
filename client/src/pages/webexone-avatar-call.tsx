@@ -1,16 +1,26 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useLocation, useSearch } from "wouter";
+import { useSearch } from "wouter";
 import { useQuery } from "@tanstack/react-query";
+import { calculateAdaptiveMicThreshold, MIC_NOISE_WINDOW_SIZE } from "@/lib/microphone-noise-gate";
 import { agentsApi, anamApi, chatApi, type AnamVoiceMode, type ChatMessage } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { resolveAgentProfileId } from "@shared/agent-profiles";
+import { AVATAR_PCM_WORKLET_SOURCE } from "@/lib/avatar-pcm-worklet";
+import { lastUtterance, type TranscriptFragment } from "@shared/live-transcript";
+import { AudioLab, configFromParams, configToParams, pcmToWav, toDb } from "@/lib/avatar-audio-lab";
 
 type VoiceMode = AnamVoiceMode;
+
+const MAX_AUTO_RECONNECTS = 3;
+const DEEPGRAM_GATE_HANGOVER_MS = 600;
+const MIN_TURN_CONFIDENCE = 0.5;
+const MIN_SHORT_TURN_CONFIDENCE = 0.8;
+const DEEPGRAM_KEYTERMS = ["WebexOne", "Webex", "Cisco", "Webex AI Agent", "Webex Contact Center", "Webex Calling"];
 
 async function waitForIceGathering(peer: RTCPeerConnection): Promise<void> {
   if (peer.iceGatheringState === "complete") return;
   await new Promise<void>((resolve) => {
-    const timeout = window.setTimeout(finish, 5000);
+    const timeout = window.setTimeout(finish, 1200); // host candidates arrive in milliseconds; do not wait for stragglers
     function finish() {
       window.clearTimeout(timeout);
       peer.removeEventListener("icegatheringstatechange", onStateChange);
@@ -25,7 +35,6 @@ async function waitForIceGathering(peer: RTCPeerConnection): Promise<void> {
 
 export default function WebexOneAvatarCall() {
   const search = useSearch();
-  const [, setLocation] = useLocation();
   const params = new URLSearchParams(search);
   const agentId = Number(params.get("agentId"));
   const requestedMode = params.get("mode");
@@ -44,7 +53,23 @@ export default function WebexOneAvatarCall() {
   const [inFullscreen, setInFullscreen] = useState(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  // ?debug=1 shows a device diagnostics panel (video size/drops, audio packet timing, OpenAI link stats).
+  const debugEnabled = params.get("debug") === "1";
+  const labRef = useRef<AudioLab | null>(null);
+  const startT0Ref = useRef(0);
+  const startMarksRef = useRef<Record<string, number>>({});
+  const mark = (name: string) => { if (!(name in startMarksRef.current)) startMarksRef.current[name] = Math.round(performance.now() - startT0Ref.current); };
+  const avatarMeterRef = useRef({ rmsDb: -Infinity, peakDb: -Infinity, clipped: 0, ring: [] as Float32Array[], samples: 0, rate: 48000 });
+  const [, setLabTick] = useState(0);
+  const [debugText, setDebugText] = useState("");
+  const [animMuted, setAnimMuted] = useState(false);
   const anamClientRef = useRef<any>(null);
+  const closeReasonRef = useRef<string | null>(null);
+  const reconnectAttemptsRef = useRef(0);
+  // True while silently re-establishing a session ANAM closed: keep history, skip the greeting.
+  const resumingRef = useRef(false);
+  const skipGreetingRef = useRef(false);
+  const startCallRef = useRef<() => Promise<void>>(async () => {});
   const deepgramSocketRef = useRef<WebSocket | null>(null);
   const micStreamRef = useRef<MediaStream | null>(null);
   const micContextRef = useRef<AudioContext | null>(null);
@@ -59,7 +84,6 @@ export default function WebexOneAvatarCall() {
   const lastAnamUserMessageIdRef = useRef<string | null>(null);
   const finalTranscriptRef = useRef("");
   const stoppingRef = useRef(false);
-  const hasStartedRef = useRef(false);
 
   useEffect(() => {
     const updateFullscreen = () => setInFullscreen(document.fullscreenElement === containerRef.current);
@@ -83,25 +107,21 @@ export default function WebexOneAvatarCall() {
     const history = conversationRef.current;
     conversationRef.current = [...history, { role: "user", content: message }];
     try {
-      const answer = await chatApi.send({ message, history, systemPrompt: agent.systemPrompt, agentId: agent.id });
+      const answer = await chatApi.send({ message, history, systemPrompt: agent.systemPrompt, agentId: agent.id, ignoreOffTopic: true });
       if (stoppingRef.current) return;
+      if (answer.ignored) {
+        // Unrelated background talk: stay silent and keep it out of the conversation history.
+        conversationRef.current = history;
+        return;
+      }
       conversationRef.current = [...conversationRef.current, { role: "assistant", content: answer.response }];
-      await anamClientRef.current?.talk(answer.response);
+      const client = anamClientRef.current;
+      if (!client) return;
+      await client.talk(answer.response);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not get an answer from the assistant.");
+      const message = cause instanceof Error ? cause.message : "Could not get an answer from the assistant.";
+      setError(/peer connection is null/i.test(message) && closeReasonRef.current ? closeReasonRef.current : message);
     }
-  }, [agent]);
-
-  const searchWebexOneReference = useCallback(async (query: string): Promise<string> => {
-    if (!agent) throw new Error("WebexOne agent is unavailable.");
-    const response = await fetch("/api/webexone/knowledge/search", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ agentId: agent.id, query: query.slice(0, 500) }),
-    });
-    const body = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(body.error || "WebexOne reference search failed.");
-    return body.excerpts || "No relevant WebexOne reference excerpts were found. Do not guess; tell the attendee this detail is not in the available reference.";
   }, [agent]);
 
   const startDeepgram = useCallback(async () => {
@@ -115,26 +135,48 @@ export default function WebexOneAvatarCall() {
     const silent = context.createGain();
     silent.gain.value = 0;
     const params = new URLSearchParams({
-      model: "nova-2",
+      model: "nova-3",
       language: "en",
       smart_format: "true",
       interim_results: "true",
-      endpointing: "300",
-      utterance_end_ms: "1000",
+      // Longer endpointing avoids cutting turns on short noise bursts and pauses.
+      endpointing: "500",
+      utterance_end_ms: "1200",
       vad_events: "true",
       encoding: "linear16",
       // Browsers may not honor the requested AudioContext rate. Tell Deepgram
       // the actual PCM rate so speech speed/pitch is never misinterpreted.
       sample_rate: String(context.sampleRate),
     });
+    DEEPGRAM_KEYTERMS.forEach((term) => params.append("keyterm", term));
     // Keep Deepgram credentials and token-based auth on the server. This
     // same-origin socket also avoids browser-specific third-party WS failures.
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const socket = new WebSocket(`${protocol}//${window.location.host}/ws/deepgram?${params}`);
     deepgramSocketRef.current = socket;
     let deepgramReady = false;
+    // Adaptive energy gate: while no speech-level energy is present, send silence instead of
+    // background noise. Silence (not skipping) keeps stream timing intact for Deepgram endpointing.
+    const recentRms: number[] = [];
+    let speechActiveUntil = 0;
+    let turnConfidenceSum = 0;
+    let turnConfidenceCount = 0;
     processor.onaudioprocess = (event) => {
-      if (deepgramReady && socket.readyState === WebSocket.OPEN) socket.send(floatToPcm16(event.inputBuffer.getChannelData(0)));
+      if (!deepgramReady || socket.readyState !== WebSocket.OPEN) return;
+      const input = event.inputBuffer.getChannelData(0);
+      let sumSquares = 0;
+      let peak = 0;
+      for (let i = 0; i < input.length; i += 1) {
+        sumSquares += input[i] * input[i];
+        peak = Math.max(peak, Math.abs(input[i]));
+      }
+      const rms = Math.sqrt(sumSquares / Math.max(1, input.length));
+      recentRms.push(rms);
+      if (recentRms.length > MIC_NOISE_WINDOW_SIZE) recentRms.shift();
+      const threshold = calculateAdaptiveMicThreshold(recentRms);
+      const now = Date.now();
+      if (rms >= threshold || peak >= threshold * 3) speechActiveUntil = now + DEEPGRAM_GATE_HANGOVER_MS;
+      socket.send(now < speechActiveUntil ? floatToPcm16(input) : new ArrayBuffer(input.length * 2));
     };
     source.connect(processor);
     processor.connect(silent);
@@ -151,11 +193,25 @@ export default function WebexOneAvatarCall() {
           setError(data.error || "Could not connect to Deepgram streaming.");
           return;
         }
-        const transcript = data.channel?.alternatives?.[0]?.transcript || "";
-        if (transcript && data.is_final) finalTranscriptRef.current = `${finalTranscriptRef.current} ${transcript}`.trim();
+        const alternative = data.channel?.alternatives?.[0];
+        const transcript = alternative?.transcript || "";
+        if (transcript && data.is_final) {
+          finalTranscriptRef.current = `${finalTranscriptRef.current} ${transcript}`.trim();
+          if (typeof alternative?.confidence === "number") {
+            turnConfidenceSum += alternative.confidence;
+            turnConfidenceCount += 1;
+          }
+        }
         if (data.speech_final || data.type === "UtteranceEnd") {
           const turn = finalTranscriptRef.current;
+          const confidence = turnConfidenceCount ? turnConfidenceSum / turnConfidenceCount : 1;
           finalTranscriptRef.current = "";
+          turnConfidenceSum = 0;
+          turnConfidenceCount = 0;
+          // Background chatter tends to come back as short, low-confidence fragments.
+          const words = turn.split(/\s+/).filter(Boolean).length;
+          if (words < 2 && confidence < MIN_SHORT_TURN_CONFIDENCE) return;
+          if (confidence < MIN_TURN_CONFIDENCE) return;
           void sendRecognizedTurn(turn);
         }
       } catch (cause) {
@@ -187,122 +243,231 @@ export default function WebexOneAvatarCall() {
     socket.onerror = () => setError("Deepgram audio connection was interrupted. End the call and try again.");
   }, [floatToPcm16, sendRecognizedTurn]);
 
-  const startRealtimePassthrough = useCallback(async (client: any) => {
-    const audioInput = client.createAgentAudioInputStream({ encoding: "pcm_s16le", sampleRate: 16000, channels: 1 });
-    audioInputRef.current = audioInput;
+  // clientPromise resolves with the ANAM client once the avatar is connected. Everything GPT-Live needs (microphone,
+  // WebRTC session, data channel) is set up WHILE the avatar connects, and the greeting waits for both.
+  const startRealtimePassthrough = useCallback(async (clientPromise: Promise<any>) => {
+    const labConfig = configFromParams(params);
+    let avatarClient: any;
+    let avatarReady = false;
+    let relayReady = false;
+    let contextRate: number | undefined;
+    let audioInputRate = 0;
+    // (re)create the ANAM audio input at the rate the audio context really runs at, once both are known
+    const ensureAudioInput = () => {
+      if (!avatarClient) return;
+      const rate = contextRate ?? labConfig.rate;
+      if (audioInputRef.current && audioInputRate === rate) return;
+      audioInputRef.current = avatarClient.createAgentAudioInputStream({ encoding: "pcm_s16le", sampleRate: rate, channels: 1 });
+      audioInputRate = rate;
+    };
     const mic = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+    mark("micReady");
+    if (stoppingRef.current) { mic.getTracks().forEach((track) => track.stop()); return; }
     realtimeMicRef.current = mic;
     const peer = new RTCPeerConnection();
     realtimePeerRef.current = peer;
     mic.getAudioTracks().forEach((track) => peer.addTrack(track, mic));
 
+    const liveLog = (kind: string, detail: Record<string, unknown> = {}) => { void fetch("/api/webexone/live-log", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind, detail }), keepalive: true }).catch(() => {}); };
     peer.ontrack = async (event) => {
-      const context = new AudioContext({ sampleRate: 48000 });
+      // Browser resampling replaces the old three-sample averaging filter.
+      const context = new AudioContext({ sampleRate: labConfig.rate });
       passthroughContextRef.current = context;
-      const workletSource = `class AnamPcm16k extends AudioWorkletProcessor {
-        constructor() { super(); this.leftover = new Float32Array(0); }
-        process(inputs, outputs) {
-          const input = inputs[0] && inputs[0][0];
-          const output = outputs[0] && outputs[0][0];
-          if (output) output.fill(0);
-          if (!input) return true;
-          const samples = new Float32Array(this.leftover.length + input.length);
-          samples.set(this.leftover); samples.set(input, this.leftover.length);
-          const count = Math.floor(samples.length / 3);
-          const pcm = new ArrayBuffer(count * 2); const view = new DataView(pcm);
-          for (let i = 0; i < count; i++) {
-            const value = Math.max(-1, Math.min(1, (samples[i * 3] + samples[i * 3 + 1] + samples[i * 3 + 2]) / 3));
-            view.setInt16(i * 2, value < 0 ? value * 0x8000 : value * 0x7fff, true);
-          }
-          this.leftover = samples.slice(count * 3);
-          if (count) this.port.postMessage(pcm, [pcm]);
-          return true;
-        }
+      // A page that starts without a click can leave the audio context suspended, which silences everything sent to the avatar.
+      void fetch("/api/webexone/live-log", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind: "audio-context", detail: { state: context.state, sampleRate: context.sampleRate } }), keepalive: true }).catch(() => {});
+      if (context.state === "suspended") {
+        void context.resume().catch(() => {});
+        const resume = () => { void context.resume().catch(() => {}); };
+        window.addEventListener("pointerdown", resume, { once: true });
+        window.addEventListener("keydown", resume, { once: true });
       }
-      registerProcessor("anam-pcm16k", AnamPcm16k);`;
-      const moduleUrl = URL.createObjectURL(new Blob([workletSource], { type: "text/javascript" }));
+      const moduleUrl = URL.createObjectURL(new Blob([AVATAR_PCM_WORKLET_SOURCE], { type: "text/javascript" }));
       try {
         await context.audioWorklet.addModule(moduleUrl);
       } finally {
         URL.revokeObjectURL(moduleUrl);
       }
+      // The worklet packs 20 ms of whatever rate the context really runs at, and the browser may not honour 16 kHz
+      // (some device browsers do not). Tell ANAM the true rate, or the avatar's audio would play at the wrong speed.
+      contextRate = context.sampleRate;
+      if (context.sampleRate !== labConfig.rate) liveLog("sample-rate-mismatch", { requested: labConfig.rate, actual: context.sampleRate });
+      ensureAudioInput();
+      labRef.current = new AudioLab(
+        labConfig,
+        context.sampleRate,
+        (chunk) => { if (!stoppingRef.current) audioInputRef.current?.sendAudioChunk(chunk); },
+        () => audioInputRef.current?.endSequence(),
+      );
       const source = context.createMediaStreamSource(event.streams[0]);
-      const processor = new AudioWorkletNode(context, "anam-pcm16k", { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1] });
+      const processor = new AudioWorkletNode(context, "avatar-pcm", { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1] });
       const silent = context.createGain();
       silent.gain.value = 0;
       passthroughProcessorRef.current = processor;
       passthroughGainRef.current = silent;
-      processor.port.onmessage = (message: MessageEvent<ArrayBuffer>) => {
-        if (!stoppingRef.current && message.data.byteLength) audioInputRef.current?.sendAudioChunk(message.data);
-      };
+      processor.port.onmessage = (message: MessageEvent<ArrayBuffer>) => { if (!stoppingRef.current) labRef.current?.push(message.data); };
       source.connect(processor);
       processor.connect(silent);
       silent.connect(context.destination);
+      relayReady = true;
+      mark("relayReady");
+      tryGreet("relay ready");
     };
 
     const events = peer.createDataChannel("oai-events");
     let responseAudioEnded = false;
-    const pendingTools = new Map<string, { completed: boolean; calls: Map<string, Promise<void>> }>();
-    const continueDelegation = (delegationId: string) => {
-      const pending = pendingTools.get(delegationId);
-      if (!pending?.completed || !pending.calls.size) return;
-      pendingTools.delete(delegationId);
-      void Promise.all(pending.calls.values()).then(() => {
-        if (!stoppingRef.current && events.readyState === "open") {
-          events.send(JSON.stringify({ type: "response.create", event_id: `webexone_continue_${Date.now()}` }));
+    // Client delegation: GPT-Live asks us for help (session.delegation.created) and we answer from the knowledge base.
+    // Its transcript deltas are the only record of what the caller said, so keep them per turn.
+    const fragments: TranscriptFragment[] = [];
+    let assistantTranscript = "";
+    let latestDelegation = "";
+    let lastAnswer: { delegationId: string; fallback: string; retried: boolean } | undefined;
+    const turns: Array<{ role: "user" | "assistant"; content: string }> = [];
+    let delegatedSinceSpeech = false;
+    let unansweredTimer: number | undefined;
+    let spokenBuffer = "";
+    let spokenTimer: number | undefined;
+    let sawSessionStarted = false;
+    let greetFallback = false;
+    let greeted = false;
+    let greetingAcknowledged = false;
+    let channelOpenedAt = performance.now();
+    // The greeting is a commentary append. Over WebRTC an instructions append ("greet the caller now") was accepted but GPT-Live
+    // often did not speak until the caller did (4 of 4 headless Chrome runs, still unreliable with stronger wording),
+    // while commentary was spoken within ~0.7 s every time (3 of 3).
+    const greetingText = `Say this to the caller right now: “Hi, I'm ${agent?.name || "your WebexOne guide"}. I can answer questions about WebexOne 2026. What would you like to know?”`;
+    // Responses-only commands such as response.create are not available under client delegation.
+    // The greeting goes out only when GPT-Live is ready AND the avatar can receive its voice, so none of it is lost.
+    const tryGreet = (reason: string) => {
+      if (greeted || skipGreetingRef.current || !(sawSessionStarted || greetFallback) || !avatarReady || !relayReady) return;
+      greeted = true;
+      mark("greetSent");
+      liveLog("greeting-sent", { reason, tMs: Math.round(performance.now() - channelOpenedAt) });
+      sendEvent({ type: "session.commentary.append", event_id: `webexone_greeting_${Date.now()}`, delegation_id: null, content: greetingText });
+      window.setTimeout(async () => {
+        if ("firstSpeech" in startMarksRef.current || stoppingRef.current) return;
+        let outbound: Record<string, unknown> = {};
+        try { (await peer.getStats()).forEach((report) => { if (report.type === "outbound-rtp" && report.kind === "audio") outbound = { packetsSent: report.packetsSent, bytesSent: report.bytesSent }; }); } catch {}
+        liveLog("greeting-not-spoken", { after: "6 s", micOutbound: outbound });
+      }, 6000);
+      // if it was never acknowledged, say it once more
+      window.setTimeout(() => {
+        if (!greetingAcknowledged && !stoppingRef.current) {
+          liveLog("greeting-resent", { reason: "no acknowledgement after 4 s" });
+          sendEvent({ type: "session.commentary.append", event_id: `webexone_greeting_retry_${Date.now()}`, delegation_id: null, content: greetingText });
         }
-      });
+      }, 4000);
+    };
+    events.onopen = () => {
+      channelOpenedAt = performance.now();
+      mark("channelOpen");
+      liveLog("datachannel-open");
+      // normally session.started arrives first; if it does not, do not wait for the caller to speak
+      window.setTimeout(() => { if (!sawSessionStarted) { greetFallback = true; tryGreet("data channel open, no session.started after 1.5 s"); } }, 1500);
+    };
+    // the avatar connects in parallel; once it does, give it its audio input and greet if everything else is ready
+    void clientPromise.then((client) => {
+      if (stoppingRef.current) return;
+      avatarClient = client;
+      avatarReady = true;
+      ensureAudioInput();
+      mark("avatarReady");
+      tryGreet("avatar ready");
+    }).catch(() => {});
+    const sendEvent = (event: Record<string, unknown>) => { if (events.readyState === "open" && !stoppingRef.current) events.send(JSON.stringify(event)); };
+    const flushAssistant = () => { if (assistantTranscript.trim()) turns.push({ role: "assistant", content: assistantTranscript.trim() }); assistantTranscript = ""; };
+    const answerDelegation = async (delegationId: string, offsetMs?: number) => {
+      latestDelegation = delegationId;
+      // the last transcript fragment can land just after the delegation event
+      for (let waited = 0; !fragments.length && waited < 400; waited += 50) await new Promise((resolve) => window.setTimeout(resolve, 50));
+      const question = lastUtterance(fragments, offsetMs);
+      liveLog("delegation", { question, fragments: fragments.length, offsetMs });
+      fragments.length = 0;
+      flushAssistant();
+      let content: string;
+      if (!question) {
+        if (!stoppingRef.current && latestDelegation === delegationId) sendEvent({ type: "session.commentary.append", event_id: `webexone_repeat_${Date.now()}`, delegation_id: delegationId, content: "Say that you did not catch the question and ask the caller to repeat it." });
+        return;
+      }
+      try {
+        const response = await fetch("/api/webexone/live-answer", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ agentId: agent?.id, question, history: turns.slice(-6) }),
+        });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(body.error || "lookup failed");
+        for (const pack of (body.facts as string[] | undefined) || []) {
+          sendEvent({ type: "session.thinking.append", event_id: `webexone_facts_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`, delegation_id: delegationId, content: pack });
+        }
+        content = body.content;
+        lastAnswer = { delegationId, fallback: String(body.fallback || ""), retried: false };
+      } catch (cause) {
+        console.warn("WebexOne lookup failed", cause);
+        content = "The lookup is unavailable right now. Tell the caller you could not check that and suggest the WebexOne app or the Registration & Information Desk.";
+      }
+      // a newer question arrived while this one was being looked up: its answer is stale
+      if (stoppingRef.current || latestDelegation !== delegationId) { liveLog("answer-dropped", { question, reason: stoppingRef.current ? "call ended" : "a newer delegation arrived" }); return; }
+      liveLog("answer-sent", { question });
+      turns.push({ role: "user", content: question });
+      sendEvent({ type: "session.commentary.append", event_id: `webexone_answer_${Date.now()}`, delegation_id: delegationId, content });
     };
     events.onmessage = (event) => {
       try {
         const message = JSON.parse(event.data);
         if (message.type === "session.started") {
-          events.send(JSON.stringify({ type: "response.create", event_id: `webexone_greeting_${Date.now()}` }));
+          sawSessionStarted = true;
+          mark("sessionStarted");
+          liveLog("session-started", { tMs: Math.round(performance.now() - channelOpenedAt) });
+          tryGreet("session.started");
         }
-        if (message.type === "response.event" && message.delegation_id) {
-          const nested = message.event;
-          const delegationId = String(message.delegation_id);
-          if (nested?.type === "response.output_item.done" && nested.item?.type === "function_call" && nested.item.call_id) {
-            const pending = pendingTools.get(delegationId) || { completed: false, calls: new Map<string, Promise<void>>() };
-            pendingTools.set(delegationId, pending);
-            const callId = String(nested.item.call_id);
-            if (!pending.calls.has(callId)) {
-              const task = (async () => {
-                let output: string;
-                try {
-                  if (nested.item.name !== "search_webexone_reference") throw new Error("Unknown WebexOne tool.");
-                  const args = JSON.parse(nested.item.arguments || "{}");
-                  if (typeof args.query !== "string") throw new Error("A search query is required.");
-                  output = await searchWebexOneReference(args.query);
-                } catch (cause) {
-                  output = `Reference lookup failed: ${cause instanceof Error ? cause.message : "Unknown error"}. Do not invent an answer.`;
-                }
-                if (!stoppingRef.current && events.readyState === "open") {
-                  events.send(JSON.stringify({ type: "response.item.create", event_id: `webexone_result_${callId}`, item: { type: "function_call_output", call_id: callId, output } }));
-                }
-              })();
-              pending.calls.set(callId, task);
-            }
-          }
-          if (nested?.type === "response.completed") {
-            const pending = pendingTools.get(delegationId);
-            if (pending) {
-              pending.completed = true;
-              continueDelegation(delegationId);
-            }
-          }
+        if (message.type === "session.commentary.appended" && String(message.client_event_id || "").startsWith("webexone_greeting")) {
+          greetingAcknowledged = true;
+          mark("greetingAcknowledged");
+          liveLog("greeting-acknowledged", { tMs: Math.round(performance.now() - channelOpenedAt) });
         }
+        if (message.type === "session.input_transcript.delta") {
+          delegatedSinceSpeech = false;
+          window.clearTimeout(unansweredTimer);
+          unansweredTimer = window.setTimeout(() => {
+            if (!delegatedSinceSpeech && fragments.length) liveLog("no-delegation", { heard: lastUtterance(fragments), spokeMeanwhile: spokenBuffer.slice(0, 200) });
+          }, 3000);
+          fragments.push({ text: String(message.delta || ""), startMs: Number(message.start_ms) || 0, endMs: Number(message.end_ms) || 0 });
+          if (fragments.length > 200) fragments.splice(0, fragments.length - 200);
+          responseAudioEnded = false;
+        }
+        if (message.type === "session.output_transcript.delta") {
+          if (!("firstSpeech" in startMarksRef.current)) { mark("firstSpeech"); liveLog("startup", { ...startMarksRef.current }); }
+          assistantTranscript += message.delta || "";
+          spokenBuffer += message.delta || "";
+          window.clearTimeout(spokenTimer);
+          spokenTimer = window.setTimeout(() => { liveLog("avatar-said", { text: spokenBuffer.trim().slice(0, 400) }); spokenBuffer = ""; }, 2000);
+        }
+        if (message.type === "session.delegation.created" && message.delegation?.target === "client" && message.delegation?.id) delegatedSinceSpeech = true;
+        if (message.type === "session.delegation.created" && message.delegation?.target === "client" && message.delegation?.id) void answerDelegation(String(message.delegation.id), typeof message.offset_ms === "number" ? message.offset_ms : undefined);
         if (message.type === "response.created") responseAudioEnded = false;
         if ((message.type === "session.output_audio.done" || message.type === "response.done") && !responseAudioEnded) {
           responseAudioEnded = true;
-          audioInputRef.current?.endSequence();
+          labRef.current?.endSequence();
         }
-        if (message.type === "session.input_transcript.delta") responseAudioEnded = false;
         if (message.type === "session.input_audio.speech_started" || message.type === "input_audio_buffer.speech_started") {
-          anamClientRef.current?.interruptPersona();
-          audioInputRef.current?.endSequence();
+          const wasSpeaking = labRef.current?.speechStarted() ?? false;
+          if (spokenBuffer || wasSpeaking) liveLog("barge-in", { whileSaying: spokenBuffer.slice(-120), localInterrupt: labRef.current?.config.localInterrupt ?? true });
+          // With local interruption off, GPT-Live stops its own audio and the sequence simply runs dry.
+          if (labRef.current?.config.localInterrupt ?? true) {
+            anamClientRef.current?.interruptPersona();
+            labRef.current?.interrupted();
+            labRef.current?.endSequence();
+          }
         }
-        if (message.type === "error") setError(message.error?.message || "The realtime voice session returned an error.");
+        if (message.type === "error") {
+          const detail = String(message.error?.message || "");
+          liveLog("openai-error", { detail: detail.slice(0, 300) });
+          // GPT-Live caps one append at ~500 tokens; if it rejected the answer as too long, resend the shorter version once
+          if (/must not exceed 500 tokens/i.test(detail) && lastAnswer && !lastAnswer.retried && lastAnswer.fallback && latestDelegation === lastAnswer.delegationId) {
+            lastAnswer.retried = true;
+            sendEvent({ type: "session.commentary.append", event_id: `webexone_answer_retry_${Date.now()}`, delegation_id: lastAnswer.delegationId, content: lastAnswer.fallback });
+          } else setError(detail || "The realtime voice session returned an error.");
+        }
       } catch (cause) {
         console.warn("Unable to read realtime event", cause);
       }
@@ -311,9 +476,17 @@ export default function WebexOneAvatarCall() {
     const offer = await peer.createOffer();
     await peer.setLocalDescription(offer);
     await waitForIceGathering(peer);
+    mark("offerReady");
     const answerSdp = await anamApi.createGPTLiveSession(agent?.id || 0, peer.localDescription?.sdp || "");
-    await peer.setRemoteDescription({ type: "answer", sdp: answerSdp });
-  }, [agent, searchWebexOneReference]);
+    mark("sessionCreated");
+    if (stoppingRef.current) { peer.close(); mic.getTracks().forEach((track) => track.stop()); return; }
+    // GPT-Live only runs its timeline (and so only speaks the greeting) when audio arrives. If the answer asks the browser
+    // to use Opus DTX, the browser sends almost nothing while the room is quiet and the greeting waits for the caller.
+    const fmtp = (sdp: string) => (sdp.match(/a=fmtp:\d+ [^\r\n]*/g) || []).slice(0, 4);
+    liveLog("sdp", { offer: fmtp(peer.localDescription?.sdp || ""), answer: fmtp(answerSdp), answerHasDtx: /usedtx=1/.test(answerSdp) });
+    await peer.setRemoteDescription({ type: "answer", sdp: answerSdp.replace(/usedtx=1/g, "usedtx=0") });
+    mark("answerSet");
+  }, [agent]);
 
   const stopCall = useCallback(async () => {
     stoppingRef.current = true;
@@ -336,6 +509,8 @@ export default function WebexOneAvatarCall() {
     passthroughGainRef.current = null;
     if (passthroughContextRef.current && passthroughContextRef.current.state !== "closed") await passthroughContextRef.current.close().catch(() => {});
     passthroughContextRef.current = null;
+    labRef.current?.reset();
+    labRef.current = null;
     audioInputRef.current = null;
     lastAnamUserMessageIdRef.current = null;
     if (anamClientRef.current) {
@@ -352,14 +527,33 @@ export default function WebexOneAvatarCall() {
     setIsStarting(true);
     setError(null);
     stoppingRef.current = false;
-    conversationRef.current = [];
+    closeReasonRef.current = null;
+    const resuming = resumingRef.current;
+    resumingRef.current = false;
+    if (!resuming) conversationRef.current = [];
     lastAnamUserMessageIdRef.current = null;
     try {
       // Request fullscreen synchronously in the click gesture, before network work.
+      startT0Ref.current = performance.now();
+      startMarksRef.current = {};
       await containerRef.current.requestFullscreen().catch(() => {});
       const systemPrompt = agent.systemPrompt || `You are ${agent.name}, a concise and helpful WebexOne event Q&A assistant.`;
-      const { sessionToken } = await anamApi.getSessionToken({ name: agent.name, systemPrompt }, agent.id, mode);
-      const { createClient, AnamEvent } = await import("@anam-ai/js-sdk");
+      // the session token and the SDK download do not depend on each other
+      const [{ sessionToken }, { createClient, AnamEvent }] = await Promise.all([
+        anamApi.getSessionToken({ name: agent.name, systemPrompt }, agent.id, mode),
+        import("@anam-ai/js-sdk"),
+      ]);
+      mark("anamToken");
+      // GPT-Live (microphone, WebRTC session, data channel) does not need the avatar until it speaks, so it starts now and
+      // meets the avatar's connection at the greeting instead of waiting behind it.
+      let avatarConnected!: (client: unknown) => void;
+      const avatarPromise = new Promise<unknown>((resolve) => { avatarConnected = resolve; });
+      let realtimeSetup: Promise<void> | undefined;
+      if (mode === "gpt-live-anam") {
+        skipGreetingRef.current = resuming;
+        realtimeSetup = startRealtimePassthrough(avatarPromise);
+        void realtimeSetup.catch(() => {}); // surfaced below, or by the catch if the avatar fails first
+      }
       const client = createClient(sessionToken, mode === "anam-native" ? undefined : { disableInputAudio: true });
       anamClientRef.current = client;
       if (mode === "anam-native") {
@@ -393,15 +587,34 @@ export default function WebexOneAvatarCall() {
         client.removeListener(AnamEvent.CONNECTION_ESTABLISHED, onConnected);
         client.removeListener(AnamEvent.CONNECTION_CLOSED, onClosed);
       }
+      mark("anamConnected");
       setIsLive(true);
+      avatarConnected(client);
+      // The server can close the session after it was established (plan session limit, idle timeout, etc.).
+      // Record why, so a late talk() failure reports the real cause instead of "peer connection is null".
+      client.addListener(AnamEvent.CONNECTION_CLOSED, (code: unknown, reason?: string) => {
+        if (stoppingRef.current || anamClientRef.current !== client) return;
+        console.error("ANAM connection closed", code, reason);
+        closeReasonRef.current = `ANAM ended the avatar session${reason ? `: ${reason}` : ""}${code ? ` (${String(code)})` : ""}.`;
+        void stopCall().then(() => {
+          if (reconnectAttemptsRef.current >= MAX_AUTO_RECONNECTS) {
+            setError(closeReasonRef.current);
+            return;
+          }
+          reconnectAttemptsRef.current += 1;
+          resumingRef.current = true;
+          window.setTimeout(() => void startCallRef.current(), 500);
+        });
+      });
 
+      const greeting = `Hi, I'm ${agent.name}. What would you like to know about WebexOne 2026?`;
       if (mode === "anam-native") {
-        await client.talk(`Hi, I'm ${agent.name}. What would you like to know about WebexOne 2026?`);
+        if (!resuming) await client.talk(greeting);
       } else if (mode === "deepgram-anam") {
-        await startDeepgram();
-        await client.talk(`Hi, I'm ${agent.name}. What would you like to know about WebexOne 2026?`);
+        // greet while the speech connection is still being set up
+        await Promise.all([startDeepgram(), resuming ? Promise.resolve() : client.talk(greeting)]);
       } else if (mode === "gpt-live-anam") {
-        await startRealtimePassthrough(client);
+        await realtimeSetup;
       }
     } catch (cause) {
       const failure = cause as { message?: string; statusCode?: number; details?: { cause?: unknown } };
@@ -418,11 +631,11 @@ export default function WebexOneAvatarCall() {
     }
   }, [agent, isLive, isStarting, mode, sendRecognizedTurn, startDeepgram, startRealtimePassthrough, stopCall]);
 
-  useEffect(() => {
-    if (!agent || resolveAgentProfileId(agent) !== "webexone-qa" || hasStartedRef.current) return;
-    hasStartedRef.current = true;
-    void startCall();
-  }, [agent, startCall]);
+  startCallRef.current = startCall;
+
+  // The call starts when someone taps the start screen. A tap is a real user gesture, so the browser also allows fullscreen
+  // and keeps the audio context running (an auto-started page left it suspended). Download the SDK while the screen waits.
+  useEffect(() => { void import("@anam-ai/js-sdk").catch(() => {}); }, []);
 
   useEffect(() => () => {
     stoppingRef.current = true;
@@ -434,6 +647,89 @@ export default function WebexOneAvatarCall() {
     passthroughContextRef.current?.close().catch(() => {});
     anamClientRef.current?.stopStreaming().catch(() => {});
   }, []);
+
+  // Debug only: meter and record what the avatar actually plays (ANAM's output), to compare with what we sent it.
+  useEffect(() => {
+    if (!debugEnabled || !isLive) return;
+    let context: AudioContext | undefined;
+    let processor: ScriptProcessorNode | undefined;
+    let retry: number | undefined;
+    const attach = () => {
+      const stream = videoRef.current?.srcObject as MediaStream | null;
+      if (!stream || !stream.getAudioTracks().length) { retry = window.setTimeout(attach, 1000); return; }
+      context = new AudioContext();
+      const meter = avatarMeterRef.current;
+      meter.rate = context.sampleRate;
+      const source = context.createMediaStreamSource(stream);
+      processor = context.createScriptProcessor(4096, 1, 1);
+      const mute = context.createGain();
+      mute.gain.value = 0;
+      processor.onaudioprocess = (event) => {
+        const input = event.inputBuffer.getChannelData(0);
+        let squares = 0, peak = 0;
+        for (let i = 0; i < input.length; i++) { const v = Math.abs(input[i]); squares += v * v; if (v > peak) peak = v; if (v >= 0.9989) meter.clipped += 1; }
+        meter.rmsDb = toDb(Math.sqrt(squares / input.length));
+        meter.peakDb = toDb(peak);
+        meter.ring.push(Float32Array.from(input));
+        meter.samples += input.length;
+        while (meter.samples > meter.rate * 10 && meter.ring.length > 1) meter.samples -= meter.ring.shift()!.length;
+      };
+      source.connect(processor);
+      processor.connect(mute);
+      mute.connect(context.destination);
+    };
+    attach();
+    return () => { window.clearTimeout(retry); processor?.disconnect(); void context?.close().catch(() => {}); };
+  }, [debugEnabled, isLive]);
+
+  useEffect(() => {
+    if (!debugEnabled || !isLive) return;
+    const fmt = (db: number) => (Number.isFinite(db) ? `${db.toFixed(1)}` : "-inf");
+    const timer = window.setInterval(async () => {
+      const video = videoRef.current;
+      const quality = video?.getVideoPlaybackQuality?.();
+      const lab = labRef.current;
+      const context = passthroughContextRef.current;
+      const avatar = avatarMeterRef.current;
+      let openai = "n/a";
+      try {
+        const reports = await realtimePeerRef.current?.getStats();
+        reports?.forEach((report) => {
+          if (report.type === "inbound-rtp" && report.kind === "audio") openai = `jitter ${(report.jitter * 1000).toFixed(0)}ms lost ${report.packetsLost} concealed ${report.concealedSamples}/${report.totalSamplesReceived}`;
+        });
+      } catch {}
+      const stats = lab?.stats;
+      setDebugText([
+        `mode ${mode}  video ${video?.videoWidth}x${video?.videoHeight} dropped ${quality?.droppedVideoFrames}/${quality?.totalVideoFrames} muted ${video?.muted}`,
+        `ctx ${context?.state} ${context?.sampleRate} Hz  openai ${openai}`,
+        stats
+          ? `SENT to avatar: rms ${fmt(stats.rmsDb)} peak ${fmt(stats.peakDb)} dBFS  clipped ${stats.clipped}\n  pkts ${stats.packets} sends ${stats.sentChunks} (${stats.sentMs.toFixed(0)} ms)  maxGap ${stats.maxGapMs.toFixed(0)} ms  gaps>60ms ${stats.gapsOver60}`
+          : "SENT to avatar: (no audio yet)",
+        `AVATAR plays:  rms ${fmt(avatar.rmsDb)} peak ${fmt(avatar.peakDb)} dBFS  clipped ${avatar.clipped}`,
+        stats ? `speech-while-avatar-speaking ${stats.speechWhileSpeaking}  interrupts ${stats.interrupts}  sequence ends ${stats.endSequences}` : "",
+        lab ? `config: gain ${lab.config.gainDb} dB | chunk ${lab.config.chunkMs} ms | prebuffer ${lab.config.prebufferMs} ms | idle end ${lab.config.idleEndMs || "off"} | local interrupt ${lab.config.localInterrupt ? "on" : "off"}` : "",
+      ].filter(Boolean).join("\n"));
+    }, 500);
+    return () => window.clearInterval(timer);
+  }, [debugEnabled, isLive, mode]);
+
+  const cycle = <T,>(values: T[], current: T): T => values[(values.indexOf(current) + 1) % values.length];
+  const download = (blob: Blob | undefined, name: string) => {
+    if (!blob) return;
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = name;
+    link.click();
+    window.setTimeout(() => URL.revokeObjectURL(link.href), 2000);
+  };
+  const avatarWav = () => {
+    const meter = avatarMeterRef.current;
+    if (!meter.samples) return undefined;
+    const merged = new Int16Array(meter.samples);
+    let offset = 0;
+    for (const block of meter.ring) { for (let i = 0; i < block.length; i++) merged[offset + i] = Math.max(-32768, Math.min(32767, Math.round(block[i] * 32767))); offset += block.length; }
+    return pcmToWav(merged, meter.rate);
+  };
 
   if (!Number.isInteger(agentId) || agentId < 1) {
     return <div className="grid min-h-screen place-items-center bg-black p-6 text-white">Missing agent ID.</div>;
@@ -454,18 +750,30 @@ export default function WebexOneAvatarCall() {
       />
 
       {!isLive && (
-        <div className="m-auto w-full max-w-2xl space-y-6 p-6 text-center">
-          <div className="text-center">
-            <h1 className="text-2xl font-semibold">{agent?.name || (isLoading ? "Loading agent…" : "WebexOne Guide")}</h1>
-            <p className="mt-2 text-sm text-white/60">{error ? "Could not connect the video avatar." : "Connecting video avatar…"}</p>
-          </div>
-          {error && <p role="alert" className="rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-200">{error}</p>}
-          <div className="flex justify-center gap-3">
-            <Button variant="outline" onClick={() => {
-              if (document.fullscreenElement) void document.exitFullscreen().catch(() => {});
-              setLocation("/");
-            }}>Back</Button>
-            {error && <Button onClick={() => void startCall()} disabled={!agent || isStarting}>Retry</Button>}
+        <div className="relative flex min-h-0 flex-1 flex-col items-center overflow-hidden bg-black px-6 py-8 text-center">
+          <div aria-hidden className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_50%_55%,rgba(0,188,235,0.20),transparent_62%)]" />
+          <img src="/wx1-26-white.svg" alt="WebexOne 2026" className="relative z-10 w-[min(72vw,560px)]" />
+          <button
+            type="button"
+            onClick={() => void startCall()}
+            disabled={!agent || isStarting}
+            aria-label={isStarting ? "Connecting" : "Tap to start"}
+            className="relative z-10 my-auto flex min-h-0 flex-col items-center gap-6 rounded-3xl p-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white/70 disabled:cursor-wait"
+          >
+            <span className="relative">
+              <span aria-hidden className={`absolute -inset-6 rounded-[2.5rem] bg-cyan-400/25 blur-3xl ${isStarting ? "" : "animate-pulse"}`} />
+              <img
+                src={`/api/anam/avatar-still?agentId=${agentId}`}
+                alt=""
+                onError={(event) => { event.currentTarget.style.display = "none"; }}
+                className={`relative h-[min(50vh,560px)] w-auto max-w-[80vw] rounded-3xl object-cover shadow-2xl ring-1 ring-white/25 transition-opacity ${isStarting ? "opacity-60" : "opacity-100"}`}
+              />
+            </span>
+            <span className="text-4xl font-semibold tracking-tight sm:text-6xl">Ask me anything</span>
+            <span className="rounded-full border border-white/50 px-8 py-3 text-xl text-white/90">{isStarting ? "Connecting…" : error ? "Tap to try again" : "Tap to start"}</span>
+          </button>
+          <div className="relative z-10 flex w-full max-w-2xl flex-col items-center gap-3">
+            {error && <p role="alert" className="rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-200">{error}</p>}
           </div>
         </div>
       )}
@@ -474,6 +782,36 @@ export default function WebexOneAvatarCall() {
         <Button variant="destructive" onClick={() => void stopCall()} className={`fixed bottom-6 left-1/2 z-[101] -translate-x-1/2 ${inFullscreen ? "" : ""}`}>
           End call
         </Button>
+      )}
+      {debugEnabled && isLive && (
+        <div className="fixed left-2 top-2 z-[102] max-w-[95vw] space-y-2 rounded bg-black/85 p-2 font-mono text-xs text-green-300">
+          <pre className="whitespace-pre-wrap">{debugText}</pre>
+          <div className="flex flex-wrap gap-1">
+            {labRef.current && (() => {
+              const lab = labRef.current!;
+              const set = (patch: Partial<typeof lab.config>) => { Object.assign(lab.config, patch); setLabTick((n) => n + 1); };
+              return (
+                <>
+                  <Button size="sm" variant="outline" onClick={() => set({ gainDb: cycle([0, 6, 9], lab.config.gainDb) })}>Gain {lab.config.gainDb} dB</Button>
+                  <Button size="sm" variant="outline" onClick={() => set({ chunkMs: cycle([20, 100, 200, 400], lab.config.chunkMs) })}>Chunk {lab.config.chunkMs} ms</Button>
+                  <Button size="sm" variant="outline" onClick={() => set({ prebufferMs: cycle([0, 150, 300], lab.config.prebufferMs) })}>Prebuffer {lab.config.prebufferMs} ms</Button>
+                  <Button size="sm" variant="outline" onClick={() => set({ idleEndMs: cycle([0, 600], lab.config.idleEndMs) })}>Idle end {lab.config.idleEndMs ? `${lab.config.idleEndMs} ms` : "off"}</Button>
+                  <Button size="sm" variant="outline" onClick={() => set({ localInterrupt: !lab.config.localInterrupt })}>Local interrupt {lab.config.localInterrupt ? "on" : "off"}</Button>
+                  <Button size="sm" variant="outline" onClick={() => {
+                    // the sample rate is fixed when the audio context is created, so changing it reloads the page with these settings
+                    const next = configToParams({ ...lab.config, rate: lab.config.rate === 16000 ? 24000 : 16000 });
+                    next.set("agentId", String(agentId));
+                    next.set("debug", "1");
+                    window.location.search = next.toString();
+                  }}>Send rate {lab.config.rate} (tap to switch + reload)</Button>
+                </>
+              );
+            })()}
+            <Button size="sm" variant="outline" onClick={() => { const next = !animMuted; if (videoRef.current) videoRef.current.muted = next; setAnimMuted(next); }}>{animMuted ? "Unmute avatar video" : "Mute avatar video"}</Button>
+            <Button size="sm" variant="outline" onClick={() => download(labRef.current?.recentWav(), "sent-to-avatar.wav")}>Save SENT audio</Button>
+            <Button size="sm" variant="outline" onClick={() => download(avatarWav(), "avatar-output.wav")}>Save AVATAR audio</Button>
+          </div>
+        </div>
       )}
       {isLive && error && <p role="alert" className="fixed left-1/2 top-4 z-[101] -translate-x-1/2 rounded-lg bg-red-950/90 px-4 py-2 text-sm text-red-100">{error}</p>}
     </main>

@@ -4,7 +4,7 @@ import { hrTools } from "../tools/hr";
 import { realtimeTools } from "../tools";
 import { voiceEndCallTool } from "../tools/twilio";
 import type { RealtimeTool } from "../voice-agent/realtime_config";
-import { HR_FEEDBACK_SUBJECT } from "@shared/use-cases";
+import { HR_FEEDBACK_CLOSING, HR_FEEDBACK_SUBJECT } from "@shared/use-cases";
 
 export interface AgentRuntimeProfile {
   id: AgentProfileId;
@@ -25,7 +25,8 @@ Agent: That's helpful, thank you. Is there anything you'd want ${HR_FEEDBACK_SUB
 Respondent: [Additional work-related feedback, or a restricted topic.]
 Agent (if a restricted topic is raised): Thank you for sharing that. I'm only collecting feedback on leadership behaviors, so that won't be included in the review summary. Anything else you'd like to add?
 Respondent: [Anything else, or no.]
-Agent: [Read back a concise summary of allowed feedback and ask whether it is accurate. After explicit confirmation, send the summary to the configured Webex space, thank the caller, and close.]
+Agent: [Read back a concise summary of allowed feedback and ask whether it is accurate. After explicit confirmation, send the summary to the configured Webex space. Only after the delivery tool succeeds, say the closing line below.]
+Agent (after successful delivery): ${HR_FEEDBACK_CLOSING}
 
 After the caller gives any understandable example to the high-pressure question, acknowledge it once and move directly to the next Agent line above. Do not ask follow-up probes such as “What did you observe?”, “What was the impact?”, or “What did you see her do?” Do not ask the caller to repeat or expand an adequate example. Ask a clarification only if the answer is unintelligible or gives no example at all.
 
@@ -48,7 +49,8 @@ Runtime safety rules take priority over all other instructions:
 - After collecting feedback, ask whether there is anything else. Then read back a concise summary containing only permitted work feedback and obtain explicit confirmation before calling hr_submit_feedback.
 - Be accurate about handling: only the caller-confirmed summary is sent to the configured Webex space. Do not promise a transcript will be sent, that responses are automatically combined, or that a formal review will be updated. The app does not persist this session's feedback in PostgreSQL and it should be forgotten after delivery or disconnect.
 - Never claim delivery succeeded unless hr_submit_feedback succeeds.
-- After a successfully delivered summary, if the caller confirms it is accurate and says they are done, or explicitly says goodbye or asks to end the call, give a brief farewell and call voice_end_call. Do not end while a question is unanswered or the summary has not been delivered.
+- Only after hr_submit_feedback succeeds, say exactly: “${HR_FEEDBACK_CLOSING}” Do not replace it with vague phrases such as “I'll send that along” or “I've delivered the summary.” Do not say “approved summary,” promise transcript delivery or aggregation, or announce internal feedback disposal. If delivery fails, explain that it could not be sent instead.
+- After a successfully delivered summary, say the closing line above and call voice_end_call. The interview is complete; do not wait for another caller confirmation, thank-you, or goodbye. Let the closing audio finish before disconnecting. Do not end while a question is unanswered or delivery is pending or failed.
 - Feedback exists only for this live session and must be forgotten after delivery or disconnect.
 `;
 
@@ -102,7 +104,8 @@ export function buildHrLiveFrontendInstructions(agentName: string): string {
     "Keep spoken turns concise and natural. Allow interruptions without restarting or repeating the conversation. Do not narrate your plan, say ‘I'm listening’, or restate information the caller already gave.",
     "Collect only constructive, observable work feedback. For compensation or promotion topics, respond: ‘Thank you for sharing that. I'm only collecting feedback on leadership behaviors, so that won't be included in the summary. Anything else you'd like to add?’ Do not repeat the restricted details. For other restricted topics, briefly deflect and redirect without repeating them. Retain only clearly separate leadership behaviors from a mixed answer.",
     "Handle ordinary conversation directly and keep it moving. Delegate only when the HR feedback delivery tool must run. Never claim a summary was delivered until the backend confirms it.",
+    `Only after the backend confirms successful summary delivery, say exactly: “${HR_FEEDBACK_CLOSING}” Do not say “approved summary,” use a vague delivery acknowledgment, or announce internal feedback disposal. If delivery fails, explain that it could not be sent instead.`,
     "Read back the exact concise summary and obtain explicit confirmation before sending. Never promise to send a raw transcript, automatically combine responses, or update a formal review; the current delivery sends only the confirmed summary to the configured Webex space. Do not claim confidentiality beyond what that destination supports, and do not claim delivery until the tool succeeds.",
-    "After a successfully delivered summary, close briefly and call voice_end_call only when the caller has clearly finished or explicitly asks to end. Never end during feedback gathering, after an ordinary answer, or while a question is unanswered or delivery is pending.",
+    "After successful summary delivery, speak the closing line and call voice_end_call. Do not wait for another caller confirmation, thank-you, or goodbye. Let the closing audio finish before disconnecting. Never end during feedback gathering, after an ordinary answer, or while a question is unanswered or delivery is pending or failed.",
   ].join(" ");
 }

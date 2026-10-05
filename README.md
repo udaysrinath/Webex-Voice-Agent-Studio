@@ -82,14 +82,65 @@ graph TD
 
 ### Updating the WebexOne Guide reference
 
-The Guide reads the Markdown exports in `server/data/webexone/`. After changing those files, regenerate its embedding index and restart the app:
+The Guide answers from one consolidated knowledge base in `server/data/webexone/kb/` (`cards.json` and `vectors.json`, loaded by `server/webexone-kb.ts`). It is generated from every source by:
 
 ```bash
-docker compose exec app node --import tsx scripts/build-webexone-index.ts
-docker compose restart app
+npm run kb:build   # needs OPENAI_API_KEY; reuses cached LLM/embedding results for unchanged text
+npm run kb:eval    # retrieval quality against server/data/webexone/kb/golden.json (and heldout.json)
 ```
 
-Without Docker, run `npm run kb:index` after editing `.env`, then restart the server. The builder reuses embeddings for unchanged passages. The generated `server/data/webexone/embeddings.json` must be included when deploying updated sources. At call time, the app combines BM25 with semantic matches from that index. If the index is missing or stale, it logs a warning and uses BM25 results until the index is rebuilt. Query embedding failures also fall back to BM25.
+Restart the app afterwards. Both generated files must be deployed with the code. At call time the retriever combines BM25, semantic similarity over each card's spoken-question aliases and content, exact name/code matches, and day/room facets. If query embedding fails it falls back to BM25.
+
+### How the sources are combined
+
+The event data is frozen, so nothing here is "kept fresh". Instead, each kind of fact has one authority and the other sources only enrich it:
+
+| Facts | Authority | Source files | Treatment |
+|-------|-----------|--------------|-----------|
+| Sessions, times, rooms, speakers, topics, capacity | Socio event platform (`raw/socio.json`) | one export via `npm run kb:socio` | Structured cards, no LLM: one card per session (all deliveries together), speaker and room. Enriched with training session codes/levels/lengths and speaker categories from OneDrive. |
+| Meals, registration, activations, logistics | Socio activities + curated OneDrive documents | `onedrive/event-info-activations.md`, `things-to-do-each-day.md` | Overlapping passages are consolidated, then merged into one authoritative card per topic. |
+| FAQs, venue, training page, awards, sponsors, products, devices, launches | OneDrive documents (Oct 1) | `server/data/webexone/onedrive/*.md` (converted from the Word files with `scripts/docx_to_md.py`) | Kept verbatim where they are already agent-ready. |
+| Older website text | webexone.com crawl | `www.webexone.com_*.md` | Lowest precedence. Duplicates of OneDrive text are dropped; stale or conflicting text loses. |
+
+The build (`scripts/build-webexone-kb.ts`) does, in order: structured cards; prose units; embedding-based clustering of overlapping units with an LLM merge (every merge is fact-checked, so no time, room, price, phone number or URL is silently dropped); a topic stage that writes one card per narrow logistics topic; spoken-question aliases; embeddings; and a coverage audit that compares the facts in every source file with the facts in the final cards. `kb/REPORT.md` lists every conflict between sources, what was kept, and any audit gaps. Agent-instruction sections inside the documents ("how the concierge should use this guide") are set aside in `kb/guidance.json`, not indexed as facts.
+
+Live check-in and attendance numbers still come from the Socio API at call time (`get_webexone_live_stats`).
+
+Set the Socio credentials in `.env` (never commit the key):
+
+```bash
+SOCIO_API_KEY=sk_live_...   # server-side only, never sent to the browser
+SOCIO_EVENT_ID=60274        # WebexOne 2026
+# Optional: SOCIO_EVENT_TIMEZONE=America/Chicago  (display timezone, default shown)
+```
+
+**Tools.** `server/webexone-tools.ts` is the single registry of WebexOne tools (`search_webexone_reference`, `get_webexone_live_stats`) and the shared prompt guidance. All three avatar flows use it:
+
+| Flow | How tools are called |
+|------|----------------------|
+| ANAM native | Anam transcribes, the app sends each turn to `/api/chat`, which runs a tool-calling loop over the registry |
+| ANAM + Deepgram | Deepgram transcribes, then the same `/api/chat` loop |
+| ANAM + GPT-Live | GPT-Live client delegation (see below): the browser answers each delegation from the knowledge base and hands GPT-Live the facts |
+
+**Start screen.** `/webexone-avatar?agentId=<id>` opens on a start screen (the WebexOne 2026 logo from `client/public/wx1-26-white.svg`, the avatar's still image, "Ask me anything", "Tap to start") and nothing connects until someone taps it. The tap is a real user gesture, so the browser allows fullscreen and keeps the audio context running, and "End call" returns to the same screen for the next person. The avatar image comes from `GET /api/anam/avatar-still` (revalidated on every load, so changing the avatar shows immediately) (the persona matching `ANAM_AVATAR_ID`, or the agent's name), served from this server (cached server-side for an hour) rather than hot-linked.
+
+**ANAM + GPT-Live (client delegation).** The WebexOne session is created with `delegation: { type: "client" }`, so the app, not a second Responses model, is the backend. GPT-Live decides to delegate any WebexOne question (and acknowledges almost at once), emits `session.delegation.created`, and the browser:
+
+1. reads the caller's last utterance from the `session.input_transcript.delta` fragments, using their timeline positions (`shared/live-transcript.ts`),
+2. calls `POST /api/webexone/live-answer`, which retrieves from the knowledge base for every plausible reading of that transcript (each clause and the last few words, embedded in one batched call), plus live attendance numbers when asked,
+3. sends GPT-Live the best reading's facts in `session.commentary.append` and the facts for the other readings as quiet `session.thinking.append` context, and GPT-Live composes the spoken answer from what it actually heard.
+
+The transcript is GPT-Live's text guess at the audio and is much weaker than the model's own hearing: in a noisy room background words leak into it, and "when is WebexOne" once came back as a person's name. A single search on the transcript therefore lost accuracy in noise (6/11 against 9/11 for the old design on the same babble audio). Searching every reading, and letting the voice model choose among the facts, restored it (8/11, and every failure was GPT-Live not delegating). When the lookup looks unreliable (weak match, a name-like match, or the embedding timed out) a short core reference (dates, venue, meals, registration, Wi-Fi, keynotes) is added and GPT-Live is told to ask the caller to repeat if unsure. One append is capped at about 500 tokens, so the answer message is kept near 1450 characters and the browser resends a shorter one if GPT-Live still rejects it.
+
+**Buzzing on the Webex device.** The avatar's audio passes through `client/src/lib/avatar-audio-lab.ts`. Saved recordings from the `?debug=1` panel showed clean audio on both sides (no clipping, dropouts or hum), but the avatar's output carried a click train: the 9 to 20 kHz band, which our 16 kHz input cannot contain, was modulated at 51.7, 100, 149, 202 and 248 Hz, a harmonic series matching the 20 ms audio chunks. ANAM appears to add a transient at every chunk boundary, and sending 200 ms chunks reduced the buzz a lot on the device, and sending ANAM 24 kHz (its engine rate, and GPT-Live's native rate) removed it completely, so 200 ms chunks at 24 kHz are now the defaults. Remaining switches (URL parameters or panel buttons): `gain`, `chunk`, `prebuffer`, `idleend`, `interrupt=off`, and `rate` (16000, 24000 or 48000). Check a recording with `python3 scripts/analyze-avatar-wav.py <file.wav>`.
+
+Small talk and background conversation are not delegated (see the delegation policy in `server/webexone-live.ts`). The headless benchmark `node --env-file=.env --import tsx scripts/live-bench.mts <responses|app> [repeats]` to time it: it speaks synthesized questions into a GPT-Live session in real time and reports, from the end of the caller's speech, when delegation started, when the backend result arrived and when the first useful audio came back, plus whether the spoken answer contained the expected facts. Add `BENCH_BABBLE=1` to mix background talk into the questions (about 5 dB below the speech). Measured on this repo's knowledge base with clean audio: Responses delegation about 2.8 s, client delegation with facts handed to GPT-Live about 1.3 s. Real-device testing found failures the benchmark missed, so every field failure goes into `server/data/webexone/kb/regression.json` (run by `npm run kb:eval`) before it is fixed.
+
+The browser and the chat loop both execute tools through the server (`POST /api/webexone/tools/:name`, or `executeWebexOneTool` in the chat loop), so validation and secrets stay server-side. To add a tool, add one entry to the registry and one line to the guidance text. WebexOne agents only get these tools; the retail, HR, banking and messaging tools are not offered to them.
+
+`get_webexone_live_stats` returns aggregate numbers only: event-wide check-ins and, per session, room or speaker, registered, checked in now, capacity and seats left, cached for 15 seconds. Attendee records and custom-field answers (names, emails) are never queried, and `tests/server/socio/socio.test.ts` asserts this. With Groq as the chat provider (no tool calling), attendance questions fall back to a keyword-triggered lookup.
+
+Tests: `node --import tsx tests/server/socio/socio.test.ts` and `node --import tsx tests/server/webexone-tools.test.ts`; retrieval quality: `npm run kb:eval`.
 
 ### Prerequisites
 
@@ -198,6 +249,8 @@ Replit stores env vars as **Secrets** (encrypted, not in source control):
 | `DATABASE_URL` | **Yes** | Neon PostgreSQL connection string |
 | `OPENAI_API_KEY` | Strongly recommended | TTS, chat, prompt generation |
 | `OPENAI_LIVE_BACKEND_MODEL` | Optional | Responses backend for the GPT-Live HR browser agent; defaults to `gpt-5.6-luna` |
+| `SOCIO_API_KEY` | For WebexOne live data | Socio event API key (KB sync and live check-in numbers) |
+| `SOCIO_EVENT_ID` | For WebexOne live data | Socio event ID for WebexOne 2026 (`60274`) |
 | `WEBEX_ACCESS_TOKEN` | For Webex features | Server-owned bot or personal access token |
 | `WEBEX_SPACE_ID` | Webex room for demo | Configured manager room used for store-manager summaries |
 | `DEEPGRAM_API_KEY` | For voice input | Speech-to-text |

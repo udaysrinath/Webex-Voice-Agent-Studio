@@ -9,6 +9,8 @@ export interface LiveSessionOptions {
   frontendInstructions: string;
   backendInstructions: string;
   backendModel?: string;
+  /** "client" makes the application the backend: GPT-Live emits a delegation event and we answer with session.commentary.append. */
+  delegation?: "responses" | "client";
 }
 
 export function buildLiveSessionConfig(
@@ -29,7 +31,7 @@ export function buildLiveSessionConfig(
       ...(transport === "websocket" ? { format: { type: "audio/pcm", rate: 24000 } } : {}),
       output: { voice: config.voice || "marin" },
     },
-    delegation: {
+    delegation: options.delegation === "client" ? { type: "client" } : {
       type: "responses",
       responses: {
         model: options.backendModel || process.env.OPENAI_LIVE_BACKEND_MODEL || "gpt-5.6-luna",
