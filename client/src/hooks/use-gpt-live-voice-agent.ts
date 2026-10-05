@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { TranscriptEntry, VoiceActivity, VoiceAgentState } from "@/hooks/use-voice-agent";
+import { hasHrClosingFinished } from "@/lib/hr-call-completion";
 
 interface UseGptLiveVoiceAgentOptions {
   agentId: number;
@@ -37,6 +38,10 @@ export function useGptLiveVoiceAgent(options: UseGptLiveVoiceAgentOptions) {
   const closeWatchTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const closeResponseSeenRef = useRef(false);
   const closeQuietSinceRef = useRef(0);
+  const closeLastTranscriptAtRef = useRef(0);
+  const closeSpeechHeardRef = useRef(false);
+  const closeTextRef = useRef("");
+  const closeEnergyRef = useRef<{ energy: number; duration: number } | null>(null);
 
   useEffect(() => {
     onEventRef.current = options.onEvent;
@@ -145,11 +150,10 @@ export function useGptLiveVoiceAgent(options: UseGptLiveVoiceAgentOptions) {
 
     if (name === "voice_end_call") {
       const explicitHangup = /\b(goodbye|bye|hang up|end (?:the )?call|get off (?:the )?call|disconnect|we can (?:get off|end) (?:the )?call)\b/i.test(latestUserTextRef.current);
-      const politeCompletion = /\b(thanks?|thank you|that's all|that is all|i'm done|i am done|no,? that'?s all|nothing else)\b/i.test(latestUserTextRef.current);
-      const allowed = explicitHangup || (feedbackDeliveredRef.current && politeCompletion);
+      const allowed = explicitHangup || feedbackDeliveredRef.current;
       const result = allowed
-        ? { success: true, result: "The caller confirmed they are done. Close the call after the farewell finishes." }
-        : { success: false, error: "Do not end yet: confirm the feedback summary was delivered and the caller clearly indicated they are done, or wait for an explicit goodbye or hang-up request." };
+        ? { success: true, result: "Close the call after the closing message finishes. Do not ask for another goodbye." }
+        : { success: false, error: "Do not end yet: deliver the confirmed feedback summary first, or wait for an explicit goodbye or hang-up request." };
       onEventRef.current?.({
         type: "toolCallStarted",
         toolName: name,
@@ -163,9 +167,16 @@ export function useGptLiveVoiceAgent(options: UseGptLiveVoiceAgentOptions) {
       });
       if (allowed) {
         onEventRef.current?.({ type: "toolCallCompleted", toolName: name, success: true, result: result.result, timestamp: Date.now() });
-        automaticCloseRef.current = true;
-        closeRequestedAtRef.current = Date.now();
-        closeQuietSinceRef.current = 0;
+        if (!automaticCloseRef.current) {
+          automaticCloseRef.current = true;
+          closeRequestedAtRef.current = Date.now();
+          closeResponseSeenRef.current = false;
+          closeQuietSinceRef.current = 0;
+          closeLastTranscriptAtRef.current = 0;
+          closeSpeechHeardRef.current = false;
+          closeTextRef.current = "";
+          closeEnergyRef.current = null;
+        }
       } else {
         onEventRef.current?.({ type: "toolCallCompleted", toolName: name, success: false, error: result.error, timestamp: Date.now() });
         sendEvent({ type: "response.create", event_id: `continue_${Date.now()}` });
@@ -195,6 +206,16 @@ export function useGptLiveVoiceAgent(options: UseGptLiveVoiceAgentOptions) {
       });
       if (result.success) {
         feedbackDeliveredRef.current = true;
+        // Successful delivery completes the interview. The caller already
+        // confirmed the summary; no second goodbye is required.
+        automaticCloseRef.current = true;
+        closeRequestedAtRef.current = Date.now();
+        closeResponseSeenRef.current = false;
+        closeQuietSinceRef.current = 0;
+        closeLastTranscriptAtRef.current = 0;
+        closeSpeechHeardRef.current = false;
+        closeTextRef.current = "";
+        closeEnergyRef.current = null;
         onEventRef.current?.({ type: "feedbackDelivered", timestamp: Date.now() });
       }
       sendEvent({
@@ -230,7 +251,11 @@ export function useGptLiveVoiceAgent(options: UseGptLiveVoiceAgentOptions) {
         commitUserTranscript();
         assistantTranscriptRef.current += String(event.delta || "");
         setAssistantPartial(assistantTranscriptRef.current);
-        if (automaticCloseRef.current) closeResponseSeenRef.current = true;
+        if (automaticCloseRef.current) {
+          closeResponseSeenRef.current = true;
+          closeLastTranscriptAtRef.current = Date.now();
+          closeTextRef.current += String(event.delta || "");
+        }
         setState("speaking");
         setActivity("agent_speaking");
         break;
@@ -292,6 +317,10 @@ export function useGptLiveVoiceAgent(options: UseGptLiveVoiceAgentOptions) {
     closeRequestedAtRef.current = 0;
     closeResponseSeenRef.current = false;
     closeQuietSinceRef.current = 0;
+    closeLastTranscriptAtRef.current = 0;
+    closeSpeechHeardRef.current = false;
+    closeTextRef.current = "";
+    closeEnergyRef.current = null;
     if (closeWatchTimerRef.current) {
       clearInterval(closeWatchTimerRef.current);
       closeWatchTimerRef.current = null;
@@ -340,11 +369,20 @@ export function useGptLiveVoiceAgent(options: UseGptLiveVoiceAgentOptions) {
           stats?.forEach((report) => {
             if (report.type === "inbound-rtp" && report.kind === "audio" && typeof report.audioLevel === "number") {
               audioLevel = report.audioLevel;
+            } else if (report.type === "inbound-rtp" && report.kind === "audio"
+              && typeof report.totalAudioEnergy === "number" && typeof report.totalSamplesDuration === "number") {
+              const previous = closeEnergyRef.current;
+              if (previous && report.totalSamplesDuration > previous.duration) {
+                audioLevel = Math.sqrt(Math.max(0, report.totalAudioEnergy - previous.energy)
+                  / (report.totalSamplesDuration - previous.duration));
+              }
+              closeEnergyRef.current = { energy: report.totalAudioEnergy, duration: report.totalSamplesDuration };
             }
           });
         } catch {}
         const audioElement = audioRef.current;
         if (!closeResponseSeenRef.current) return;
+        if (audioLevel !== null && audioLevel >= 0.015) closeSpeechHeardRef.current = true;
         const playbackQuiet = audioLevel !== null
           ? audioLevel < 0.015
           : Boolean(audioElement && audioElement.ended);
@@ -352,7 +390,15 @@ export function useGptLiveVoiceAgent(options: UseGptLiveVoiceAgentOptions) {
         else if (!closeQuietSinceRef.current) closeQuietSinceRef.current = Date.now();
         const elapsed = Date.now() - closeRequestedAtRef.current;
         const quietFor = closeQuietSinceRef.current ? Date.now() - closeQuietSinceRef.current : 0;
-        if (elapsed > 900 && (quietFor > 700 || elapsed > 7000)) {
+        const transcriptQuietFor = Date.now() - closeLastTranscriptAtRef.current;
+        // Never use a seven-second deadline measured from tool delivery: this
+        // closing line itself can take longer than that to speak.
+        const playbackFinished = hasHrClosingFinished({
+          responseSeen: closeResponseSeenRef.current, speechHeard: closeSpeechHeardRef.current,
+          audioLevel, quietForMs: quietFor, transcriptQuietForMs: transcriptQuietFor,
+          closingText: closeTextRef.current,
+        });
+        if (elapsed > 900 && playbackFinished) {
           if (closeWatchTimerRef.current) clearInterval(closeWatchTimerRef.current);
           closeWatchTimerRef.current = null;
           automaticCloseRef.current = false;
