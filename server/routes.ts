@@ -2162,6 +2162,38 @@ Failing to add the refinement as a strict rule in the # Rules section is the wor
     }
   });
 
+  // The avatar's still image for the start screen. Served from our own server (not hot-linked) so a kiosk network that
+  // blocks third-party image hosts, or a slow Anam image CDN, cannot leave the start screen empty.
+  let avatarImage: { type: string; body: Buffer; fetchedAt: number } | undefined;
+  app.get("/api/anam/avatar-image", async (req, res) => {
+    const apiKey = process.env.ANAM_API_KEY;
+    if (!apiKey) return res.status(404).end();
+    if (avatarImage && Date.now() - avatarImage.fetchedAt < 3_600_000) {
+      res.setHeader("Content-Type", avatarImage.type).setHeader("Cache-Control", "public, max-age=3600");
+      return res.send(avatarImage.body);
+    }
+    try {
+      const agentId = Number(req.query.agentId);
+      const agent = Number.isInteger(agentId) && agentId > 0 ? await storage.getAgent(agentId) : undefined;
+      const personas = await fetch("https://api.anam.ai/v1/personas?perPage=100", { headers: { Authorization: `Bearer ${apiKey}` }, signal: AbortSignal.timeout(8000) });
+      if (!personas.ok) return res.status(502).end();
+      const list = (await personas.json() as { data?: Array<{ name?: string; avatar?: { id?: string; imageUrl?: string; landscapeImageUrl?: string } }> }).data || [];
+      const wanted = process.env.ANAM_AVATAR_ID?.trim();
+      const match = (wanted ? list.find((persona) => persona.avatar?.id === wanted) : undefined)
+        || list.find((persona) => agent && persona.name?.toLowerCase() === agent.name.toLowerCase());
+      const url = match?.avatar?.imageUrl || match?.avatar?.landscapeImageUrl;
+      if (!url) return res.status(404).end();
+      const image = await fetch(url, { signal: AbortSignal.timeout(8000) });
+      if (!image.ok) return res.status(502).end();
+      avatarImage = { type: image.headers.get("content-type") || "image/png", body: Buffer.from(await image.arrayBuffer()), fetchedAt: Date.now() };
+      res.setHeader("Content-Type", avatarImage.type).setHeader("Cache-Control", "public, max-age=3600");
+      return res.send(avatarImage.body);
+    } catch (error) {
+      console.warn("ANAM avatar image unavailable:", error instanceof Error ? error.message : error);
+      return res.status(502).end();
+    }
+  });
+
   app.get("/api/anam/status", async (_req, res) => {
     res.json({ configured: !!process.env.ANAM_API_KEY });
   });

@@ -85,7 +85,6 @@ export default function WebexOneAvatarCall() {
   const lastAnamUserMessageIdRef = useRef<string | null>(null);
   const finalTranscriptRef = useRef("");
   const stoppingRef = useRef(false);
-  const hasStartedRef = useRef(false);
 
   useEffect(() => {
     const updateFullscreen = () => setInFullscreen(document.fullscreenElement === containerRef.current);
@@ -635,11 +634,9 @@ export default function WebexOneAvatarCall() {
 
   startCallRef.current = startCall;
 
-  useEffect(() => {
-    if (!agent || resolveAgentProfileId(agent) !== "webexone-qa" || hasStartedRef.current) return;
-    hasStartedRef.current = true;
-    void startCall();
-  }, [agent, startCall]);
+  // The call starts when someone taps the start screen. A tap is a real user gesture, so the browser also allows fullscreen
+  // and keeps the audio context running (an auto-started page left it suspended). Download the SDK while the screen waits.
+  useEffect(() => { void import("@anam-ai/js-sdk").catch(() => {}); }, []);
 
   useEffect(() => () => {
     stoppingRef.current = true;
@@ -754,19 +751,35 @@ export default function WebexOneAvatarCall() {
       />
 
       {!isLive && (
-        <div className="m-auto w-full max-w-2xl space-y-6 p-6 text-center">
-          <div className="text-center">
-            <h1 className="text-2xl font-semibold">{agent?.name || (isLoading ? "Loading agent…" : "WebexOne Guide")}</h1>
-            <p className="mt-2 text-sm text-white/60">{error ? "Could not connect the video avatar." : "Connecting video avatar…"}</p>
+        <div className="relative flex min-h-0 flex-1 flex-col items-center overflow-hidden bg-black px-6 py-8 text-center">
+          <div aria-hidden className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_50%_55%,rgba(0,188,235,0.20),transparent_62%)]" />
+          <img src="/wx1-26-white.svg" alt="WebexOne 2026" className="relative z-10 w-[min(72vw,560px)]" />
+          <button
+            type="button"
+            onClick={() => void startCall()}
+            disabled={!agent || isStarting}
+            aria-label={isStarting ? "Connecting" : "Tap to start"}
+            className="relative z-10 my-auto flex min-h-0 flex-col items-center gap-6 rounded-3xl p-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white/70 disabled:cursor-wait"
+          >
+            <span className="relative">
+              <span aria-hidden className={`absolute -inset-6 rounded-[2.5rem] bg-cyan-400/25 blur-3xl ${isStarting ? "" : "animate-pulse"}`} />
+              <img
+                src={`/api/anam/avatar-image?agentId=${agentId}`}
+                alt=""
+                onError={(event) => { event.currentTarget.style.display = "none"; }}
+                className={`relative h-[min(50vh,560px)] w-auto max-w-[80vw] rounded-3xl object-cover shadow-2xl ring-1 ring-white/25 transition-opacity ${isStarting ? "opacity-60" : "opacity-100"}`}
+              />
+            </span>
+            <span className="text-4xl font-semibold tracking-tight sm:text-6xl">Ask me anything</span>
+            <span className="rounded-full border border-white/50 px-8 py-3 text-xl text-white/90">{isStarting ? "Connecting…" : error ? "Tap to try again" : "Tap to start"}</span>
+          </button>
+          <div className="relative z-10 flex w-full max-w-2xl flex-col items-center gap-3">
+            {error && <p role="alert" className="rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-200">{error}</p>}
           </div>
-          {error && <p role="alert" className="rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-200">{error}</p>}
-          <div className="flex justify-center gap-3">
-            <Button variant="outline" onClick={() => {
-              if (document.fullscreenElement) void document.exitFullscreen().catch(() => {});
-              setLocation("/");
-            }}>Back</Button>
-            {error && <Button onClick={() => void startCall()} disabled={!agent || isStarting}>Retry</Button>}
-          </div>
+          <Button variant="ghost" size="sm" className="absolute left-3 top-3 z-10 text-white/40 hover:text-white" onClick={() => {
+            if (document.fullscreenElement) void document.exitFullscreen().catch(() => {});
+            setLocation("/");
+          }}>Back</Button>
         </div>
       )}
 
