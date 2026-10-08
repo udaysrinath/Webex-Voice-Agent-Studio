@@ -17,10 +17,11 @@ const phoneTranscriptionPrompt = buildPhoneTranscriptionPrompt("Keywords: iPad, 
 assert.equal(browserTranscriptionPrompt, phoneTranscriptionPrompt);
 assert.match(browserTranscriptionPrompt, /do not infer, complete, or insert a product name/i);
 assert.match(browserTranscriptionPrompt, /unless it is clearly spoken/i);
+assert.doesNotMatch(browserTranscriptionPrompt, /customer name hints/i);
 assert.doesNotMatch(buildRetailTranscriptionKeywords(), /Bose QuietComfort 45/);
 assert.doesNotMatch(buildRetailTranscriptionKeywords(), /Sony WH-1000XM5/);
-assert.match(buildRetailTranscriptionKeywords(), /Mayada Abdelrahman/);
-assert.match(buildRetailTranscriptionKeywords(), /Abdelrahman/);
+assert.doesNotMatch(buildRetailTranscriptionKeywords(), /Mayada Abdelrahman/);
+assert.doesNotMatch(buildRetailTranscriptionKeywords(), /Abdelrahman/);
 assert.equal(
   buildRetailTranscriptionKeywords({
     DEMO_CUSTOMER_NAME: "Avery Chen",

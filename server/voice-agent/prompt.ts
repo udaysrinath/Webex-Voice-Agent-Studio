@@ -3,7 +3,6 @@ import {
   type ReservationSpokenDeliveryRoute,
 } from "./reservation-delivery";
 import {
-  getDemoCustomerProfile,
   getDemoRetailAssociatePlaybook,
   getDemoRetailCustomer,
 } from "./dto";
@@ -20,15 +19,8 @@ export const OPENING_GREETING_TEXT =
 export const RETAIL_TRANSCRIPTION_KEYWORDS =
   "Keywords: Acme Electronics, electronics store, phone, tablet, laptop, headphones, earbuds, accessory, case, charger, pickup, reservation, reserve, in stock, out of stock, available, availability, tomorrow, 2 PM, 3 PM, 4 PM, Fremont, Palo Alto, San Jose.";
 
-export function buildRetailTranscriptionKeywords(env: NodeJS.ProcessEnv = process.env): string {
-  const profile = getDemoCustomerProfile(env);
-  const nameHints = [
-    profile.name,
-    profile.firstName,
-    profile.lastName,
-  ];
-  const uniqueNameHints = Array.from(new Set(nameHints.map((hint) => hint.trim()).filter(Boolean)));
-  return `${RETAIL_TRANSCRIPTION_KEYWORDS} Customer name hints: ${uniqueNameHints.join(", ")}.`;
+export function buildRetailTranscriptionKeywords(_env: NodeJS.ProcessEnv = process.env): string {
+  return RETAIL_TRANSCRIPTION_KEYWORDS;
 }
 
 export const TRANSCRIPT_REVIEW_SYSTEM_PROMPT =
@@ -261,7 +253,7 @@ export function buildBrowserTranscriptionPrompt(retailTranscriptionKeywords: str
 }
 
 function buildRealtimeTranscriptionPrompt(retailTranscriptionKeywords: string): string {
-  return `The caller is speaking English (en-US) to a retail store voice assistant. Transcribe only the caller's English speech. Ignore silence, background noise, and assistant audio. Do not translate or infer Spanish. Customer name hints are allowed for spelling/phonetic correction during profile confirmation. Product keywords are hints only: do not infer, complete, or insert a product name unless it is clearly spoken by the caller. If a product word is unclear, transcribe the uncertain words literally instead of choosing from the keyword list. ${retailTranscriptionKeywords}`;
+  return `The caller is speaking English (en-US) to a retail store voice assistant. Transcribe only the caller's English speech. Ignore silence, background noise, and assistant audio. Do not translate or infer Spanish. Do not infer, complete, or insert a customer name unless it is clearly spoken by the caller. Product keywords are hints only: do not infer, complete, or insert a product name unless it is clearly spoken by the caller. If a product word is unclear, transcribe the uncertain words literally instead of choosing from the keyword list. ${retailTranscriptionKeywords}`;
 }
 
 export function getVoiceSessionStartedPrompt(channel: RealtimeCallChannel): string {
