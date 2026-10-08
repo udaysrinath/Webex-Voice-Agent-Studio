@@ -40,6 +40,8 @@ import {
   FINAL_CHECK_IN_TEXT,
   PROFILE_CONFIRMATION_TEXT,
   TRANSCRIPT_REVIEW_SYSTEM_PROMPT,
+  getAcceptedUserTurnInputText,
+  getAcceptedUserTurnResponseInstructions,
   buildOpenAIVoiceAgentInstructions,
   buildBrowserTranscriptionPrompt,
   buildPhoneTranscriptionPrompt,
@@ -54,7 +56,6 @@ import {
   getIdleFollowUpResponseInstructions,
   getOpeningGreetingInstructions,
   getProfileConfirmationPrompt,
-  getRetryAcceptedUserTurnPrompt,
   getVoiceSessionStartedPrompt,
 } from "./prompt";
 import type {
@@ -161,6 +162,28 @@ function logToolLine(
   payload: Record<string, unknown>
 ): void {
   console.log(`[${kind}][${channel}] ${compactJson({ toolName, ...payload })}`);
+}
+
+function buildAcceptedUserTurnResponseCreate(
+  lastUserTranscript: string,
+  lastAssistantTranscript: string
+): Record<string, unknown> {
+  return {
+    input: [
+      {
+        type: "message",
+        role: "user",
+        content: [
+          {
+            type: "input_text",
+            text: getAcceptedUserTurnInputText(lastUserTranscript),
+          },
+        ],
+      },
+    ],
+    output_modalities: ["audio"],
+    instructions: getAcceptedUserTurnResponseInstructions(lastAssistantTranscript),
+  };
 }
 
 function getCatalogProductName(text: string): string {
@@ -2113,21 +2136,7 @@ function handleTwilioSession(ws: WebSocket): void {
       userTurnResponseTimer = null;
       if (!openai || pendingEndCall || endingCall || twilioResponseActive) return;
       console.warn(`[VoiceAgent/Twilio] Retrying stalled response after accepted user turn: ${reason}`);
-      openai.triggerResponse({
-        input: [
-          {
-            type: "message",
-            role: "user",
-            content: [
-              {
-                type: "input_text",
-                text: getRetryAcceptedUserTurnPrompt(lastUserTranscript),
-              },
-            ],
-          },
-        ],
-        output_modalities: ["audio"],
-      });
+      openai.triggerResponse(buildAcceptedUserTurnResponseCreate(lastUserTranscript, lastAssistantTranscript));
     }, ACCEPTED_USER_TURN_RESPONSE_TIMEOUT_MS);
   }
 
@@ -2244,13 +2253,13 @@ function handleTwilioSession(ws: WebSocket): void {
       setTimeout(() => {
         if (!openai || pendingEndCall || endingCall) return;
         suppressAssistantOutput = false;
-        openai.triggerResponse();
+        openai.triggerResponse(buildAcceptedUserTurnResponseCreate(lastUserTranscript, lastAssistantTranscript));
         scheduleTwilioUserTurnResponseWatchdog("cancelled interrupted assistant response did not restart");
       }, interruptedAssistant ? 150 : 0);
       return;
     }
 
-    openai.triggerResponse();
+    openai.triggerResponse(buildAcceptedUserTurnResponseCreate(lastUserTranscript, lastAssistantTranscript));
     scheduleTwilioUserTurnResponseWatchdog("accepted user turn response did not start");
   }
 
@@ -3639,21 +3648,7 @@ function handleBrowserSession(ws: WebSocket): void {
       userTurnResponseTimer = null;
       if (!openai || pendingEndCall || endingCall || responseActive) return;
       console.warn(`[VoiceAgent/Browser] Retrying stalled response after accepted user turn: ${reason}`);
-      openai.triggerResponse({
-        input: [
-          {
-            type: "message",
-            role: "user",
-            content: [
-              {
-                type: "input_text",
-                text: getRetryAcceptedUserTurnPrompt(lastUserTranscript),
-              },
-            ],
-          },
-        ],
-        output_modalities: ["audio"],
-      });
+      openai.triggerResponse(buildAcceptedUserTurnResponseCreate(lastUserTranscript, lastAssistantTranscript));
     }, ACCEPTED_USER_TURN_RESPONSE_TIMEOUT_MS);
   }
 
@@ -4028,13 +4023,13 @@ function handleBrowserSession(ws: WebSocket): void {
       setTimeout(() => {
         if (!openai || pendingEndCall || endingCall) return;
         suppressAssistantOutput = false;
-        openai.triggerResponse();
+        openai.triggerResponse(buildAcceptedUserTurnResponseCreate(lastUserTranscript, lastAssistantTranscript));
         scheduleBrowserUserTurnResponseWatchdog("cancelled interrupted assistant response did not restart");
       }, interruptedAssistant ? 150 : 0);
       return;
     }
 
-    openai.triggerResponse();
+    openai.triggerResponse(buildAcceptedUserTurnResponseCreate(lastUserTranscript, lastAssistantTranscript));
     scheduleBrowserUserTurnResponseWatchdog("accepted user turn response did not start");
   }
 
